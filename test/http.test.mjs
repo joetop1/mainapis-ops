@@ -17,6 +17,7 @@ test('请求处理链路：登录隔离、CSRF、商品导入、审核、编辑�
    return {status:res.status,headers:{get:k=>res.headers[k.toLowerCase()]},json:async()=>JSON.parse(res.body||'{}')};
  }
  try {
+  assert.equal((await request(origin+'/pricing.js')).headers.get('content-type'),'text/javascript');
   assert.equal((await request(origin+'/api/state')).status,401);
   const login=await request(origin+'/auth/login',{redirect:'manual'});assert.equal(login.status,302);const cookie=login.headers.get('set-cookie').split(';')[0];
   const me=await(await request(origin+'/api/me',{headers:{cookie}})).json();assert.equal(me.user.sub,'demo');
