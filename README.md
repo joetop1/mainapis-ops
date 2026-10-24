@@ -1,4 +1,4 @@
-# MainAPIs 商品运营台 · v0.1.0
+# MainAPIs 商品运营台 · v0.2.0
 
 独立、自部署的内部商品运营后台。Casdoor 认证，SQLite 持久化，n8n 在后台执行商品发布任务。无需 npm 依赖，运行环境 Node.js 22.13+（推荐 Node 22 LTS）。
 
@@ -6,13 +6,15 @@
 
 已实现：Casdoor OIDC 授权码登录（PKCE、state、nonce、RS256 签名校验）、账号允许名单、服务端会话、CSRF、账号数据隔离；1688 来源链接规范化与去重；JSON 商品批量导入；SKU 编辑、审核、版本校验；多商城任务选择；n8n Webhook 派发、回调认证与任务状态；Docker 部署。
 
-尚未实现：直接从 1688 采集资料的插件、AI 整理工作流、多门店和 Tigshop 入库连接器。CRMEB Pro 4.3 的候选连接器及新工作流已放在 `connectors/crmeb-pro/` 和 `workflows/publish-crmeb-pro.json`，需先完成服务器 PHP 校验与商城联调，尚未部署或验证实际入库。安装步骤见连接器 README。添加链接只创建待整理记录，不会自动抓取。任务成功必须由连接器回传真实商城商品 ID。此版本不能当作完整自动铺货系统。
+CRMEB 会员商城改用官方 `/outapi`，无需安装商城端代码。官方接口限制使创建与核验分两步：先下架新增，再填回商品 ID 读取详情核对。完整步骤见 [官方接口接入说明](docs/crmeb-official.md)，导入 `workflows/publish-crmeb-official.json`。旧自定义 PHP 连接器和对应工作流已从当前版本移除。
+
+尚未实现：1688 自动采集插件、AI 整理、多门店/Tigshop 写入、图片转存。商品添加链接只保存待整理记录，不自动抓取。图片当前引用已有 HTTPS 地址。官方实际新增尚未线上联调，不应当作完整自动铺货系统。
 
 本包不包含 CRMEB 商业源码，不更改任何现有商城、不修改 n8n 授权或登录方式。商城入口来自本次会话，Tigshop 地址尚未提供。跨境币种、分类 ID、运费模板及 SKU 映射由后续连接器处理；当前输入价格按人民币保存。
 
 ## 在服务器部署
 
-已确定域名 `ops.mainapis.com`，尚未创建 DNS 或部署。解压到单独目录，例如 `/www/wwwroot/goods-ops`。
+已部署的 OPS 域名为 `ops.mainapis.com`，服务器项目目录 `/www/wwwroot/mainapis-ops`。下面为首次部署参考；已部署用户通过 Git 拉取更新，不覆盖现有 `.env`。
 
 ```bash
 cp .env.example .env
@@ -25,7 +27,7 @@ docker compose up -d --build
 docker compose logs --tail 50 goods-ops
 ```
 
-端口仅绑定服务器 `127.0.0.1:3080`。在宝塔创建站点、签发 HTTPS 证书，再参考 `deploy/nginx.conf.example` 反向代理。若端口占用，仅修改 compose 左侧宿主机端口和 Nginx 上游；容器内部维持 3080。
+端口绑定服务器 `127.0.0.1:3080`。当前沿用现有 Cloudflare Tunnel 指向端口，不另建宝塔反向代理。其他部署才参考 `deploy/nginx.conf.example`。不要改变现有隧道工作方式；端口变更时需要同步隧道源服务地址。
 
 数据库持久化在 Docker 命名卷 `goods_ops_data`。备份前停止应用后复制整个卷，或使用 SQLite backup 工具；不要单独复制正在写入的 sqlite 主文件而漏掉 WAL。不要运行 `docker compose down -v`，否则会删除数据库。
 
@@ -74,9 +76,9 @@ Webhook 使用 POST，并启用 Header Auth：头名 `X-Ops-Token`，值与 `.en
 
 失败用 `{"status":"failed","message":"可供运营查看的失败原因"}`。只有确认没有产生未记录的商城副作用时才返回 failed；若商品已经创建但后续操作失败，应保留商品 ID 并人工核对，避免重试重复创建。不要回传密钥、Token 或内部堆栈。
 
-相同终态回调可重放；冲突终态返回 409。相同商品版本与目标已有 accepted/succeeded/unknown 任务时拒绝重复提交。请求超时可能已经被 n8n 接收，标记为“需核对”，不会自动重试。可通过原 job_id 继续回调；人工核对 n8n 记录后再决定处理。n8n Webhook 的 2xx 仅代表接收，不能作为商品发布成功。
+相同终态回调可重放；冲突终态返回 409。相同版本的未完成/已成功任务拒绝重复提交；已领取官方创建的同一商品不可再次创建，即使编辑过版本也需先核对。请求超时可能已经被 n8n 接收，标记为“需核对”，不会自动重试。可通过原 job_id 继续回调；人工核对 n8n 记录后再决定处理。n8n Webhook 的 2xx 仅代表接收，不能作为商品发布成功。
 
-本包有可导入的 `workflows/publish-contract.json` **失败回传联调模板**：仅检查 action 与 target 并回传“连接器未配置”的 failed，用于测试全链路和授权。导入后必须设置 Webhook 的 Header Auth 凭据并激活，默认未激活；它不会创建商城商品。真正连接器尚需实现。
+本包有可导入的 `workflows/publish-contract.json` **失败回传联调模板**：仅检查 action 与 target 并回传“连接器未配置”的 failed，用于测试全链路和授权。导入后必须设置 Webhook 的 Header Auth 凭据并激活，默认未激活；它不会创建商城商品。此模板仅供链路测试，实际入库使用新的官方工作流。
 
 ## 本地体验
 
@@ -96,4 +98,4 @@ node --check server.mjs
 node --check public/app.js
 ```
 
-自动测试覆盖 OIDC 签名/过期/接收者/nonce、来源验证、SKU 校验、允许去重约束，以及 HTTP 登录、CSRF、商品创建与审核、过时版本拦截、未配置发布关闭。已通过 9 项自动测试（请求处理链路使用内存请求/响应，不依赖监听端口）。当前执行环境禁止监听本地端口，因此未启动预览、未执行真实 HTTP 网络与浏览器视觉验收；未与线上 Casdoor、n8n、三个商城联调，未执行 Docker 镜像构建。
+自动测试覆盖 OIDC、来源与 SKU 校验、请求处理链路、任务快照、创建领取去重、回调 nonce、官方字段转换和商品核验。当前环境禁止监听本地端口，使用内存请求/响应测试，未进行浏览器视觉验收。用户已验证线上 Casdoor 登录、旧 n8n 提交/回调，以及官方 Token 和分类详情；新版实际入库待线上验证。

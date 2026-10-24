@@ -43,7 +43,9 @@ export function openStore(path) {
   const db=new DatabaseSync(path); db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
   CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, owner TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(owner,source));
   CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), revision INTEGER NOT NULL, target TEXT NOT NULL, status TEXT NOT NULL, token TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL);
-  CREATE UNIQUE INDEX IF NOT EXISTS jobs_active ON jobs(product_id,revision,target) WHERE status IN ('dispatching','accepted','succeeded','unknown');
+  DROP INDEX IF EXISTS jobs_active;
+  CREATE UNIQUE INDEX jobs_active ON jobs(product_id,revision,target) WHERE status IN ('dispatching','accepted','succeeded','unknown','awaiting_review','verifying');
+  CREATE TABLE IF NOT EXISTS job_snapshots(job_id TEXT PRIMARY KEY REFERENCES jobs(id), product TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0, candidate_id TEXT NOT NULL DEFAULT '', verification_nonce TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, owner TEXT NOT NULL, action TEXT NOT NULL, object_id TEXT NOT NULL, created TEXT NOT NULL);
   `); return db;
