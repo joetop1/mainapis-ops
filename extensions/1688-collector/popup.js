@@ -4,6 +4,7 @@ const status=message=>{$('#status').textContent=message;};
 function preview(result){
  if(result?.error)throw Error(result.error);if(!result?.product)throw Error('页面未返回商品数据，请刷新后重试');
  $('#preview').hidden=false;$('#title').textContent=result.product.title||'标题待补充';$('#counts').textContent=`${result.product.images.length} 张图片 · ${result.product.skus.length} 个规格`;
+ $('#skuPreview').replaceChildren(...result.product.skus.slice(0,5).map(s=>{const p=document.createElement('p');p.textContent=s.spec+' · 参考成本 ¥'+s.cost;return p;}));
  $('#warnings').replaceChildren(...(result.warnings||[]).map(message=>{const li=document.createElement('li');li.textContent=message;return li;}));
  $('#json').value=JSON.stringify({products:[result.product]},null,2);
 }

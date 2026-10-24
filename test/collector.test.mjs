@@ -38,6 +38,13 @@ test('SKU数组读取明确名称；数组下标及无法还原的数字ID不可
  const parsed=capture({skuInfoMap:[{...row,specAttrs:'条纹黑色>均码'}]});assert.equal(parsed.product.skus[0].spec,'条纹黑色 / 均码');
  const partial=capture({skuInfoMap:[{...row,specAttrs:'黑色'},{...row,skuId:'124'}]});assert.equal(partial.product.skus.length,0);assert.ok(partial.warnings.some(x=>x.includes('不导入整组')));
 });
+test('真实诊断布局：优先完整skuModel，避免先发现的交易SKU数组抢占',()=>{
+ const tradeMap=Array.from({length:64},(_,i)=>({skuId:String(1000+i),price:'4.73'}));
+ const named=Object.fromEntries(Array.from({length:64},(_,i)=>['条纹款'+i+'&gt;均码',{skuId:String(1000+i),price:'3.98'}]));
+ const root={result:{global:{globalData:{model:{offerDetail:{offerId:'123456',subject:'真实商品',skuProps:[]},tradeModel:{skuMap:tradeMap}}}},data:{Root:{fields:{dataJson:{offerBaseInfo:{offerId:'123456'},skuModel:{skuInfoMap:named,skuProps:[]}}}}}}};
+ const result=capture(root);assert.equal(result.product.skus.length,64);assert.equal(result.product.skus[0].spec,'条纹款0 / 均码');assert.equal(result.product.skus[63].spec,'条纹款63 / 均码');assert.equal(result.product.skus[0].cost,3.98);
+ const d=capture(root,{},location,true).diagnostics;assert.match(d.selectedSkuPath,/Root.fields.dataJson.skuModel$/);assert.equal(d.skuSchemas[0].rowCount,64);assert.ok(d.skuSchemas[0].rowKeys[0].includes('skuId'));assert.equal(JSON.stringify(d).includes('3.98'),false);
+});
 test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
  assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.permissions.includes('cookies'),false);

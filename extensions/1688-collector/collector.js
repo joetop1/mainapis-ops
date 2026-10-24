@@ -13,7 +13,19 @@ export function collect1688(diagnostic=false) {
     if(script.textContent.length>2000000)continue;
     try{roots.push(JSON.parse(script.textContent));}catch{}
   }
-  let title='',description='',skuContainer=null;const seen=new Set(),queue=roots.map((v,i)=>[v,0,rootNames[i]||'json']);let count=0;
+  let title='',description='',skuContainer=null,skuPriority=-1,skuPath='';const skuSchemas=[];
+  const selectSku=(o,path,priority)=>{
+    if(!o||typeof o!=='object')return;
+    const map=o.skuInfoMap||o.skuMap;
+    if(!map||typeof map!=='object'||map.$ref||!Object.keys(map).length)return;
+    if(diagnostic&&skuSchemas.length<12){
+      const rows=Object.values(map).filter(v=>v&&typeof v==='object').slice(0,2);
+      const shape=v=>Object.keys(v).filter(k=>!/token|cookie|password|secret|auth|user|member/i.test(k)).slice(0,30);
+      skuSchemas.push({path,isArray:Array.isArray(map),rowCount:Object.keys(map).length,rowKeys:rows.map(shape),propsKeys:Array.isArray(o.skuProps)?o.skuProps.slice(0,2).map(shape):[]});
+    }
+    if(priority>skuPriority){skuContainer={...o,skuMap:map};skuPriority=priority;skuPath=path;}
+  };
+  const seen=new Set(),queue=roots.map((v,i)=>[v,0,rootNames[i]||'json']);let count=0;
   // Hydration assignments are accepted only when the right hand side is strict JSON. Never eval page code.
   for(const script of [...document.querySelectorAll('script:not([src])')].slice(0,100)){
     const source=script.textContent||'';if(source.length>2000000)continue;
@@ -22,13 +34,22 @@ export function collect1688(diagnostic=false) {
       for(let i=start;i<source.length;i++){const c=source[i];if(inString){if(slash)slash=false;else if(c==='\\')slash=true;else if(c==='"')inString=false;}else if(c==='"')inString=true;else if(c==='{'||c==='[')level++;else if(c==='}'||c===']'){if(--level===0){try{queue.push([JSON.parse(source.slice(start,i+1)),0,'script.'+key]);rootNames.push('script.'+key);}catch{}break;}}}
     }
   }
+  // Current PC detail layout: the complete variant model is separate from tradeModel.skuMap.
+  for(const [root,,path]of [...queue]){
+    const data=root?.result?.data?.Root?.fields?.dataJson;
+    const offerDetail=root?.result?.global?.globalData?.model?.offerDetail;
+    const rootOffer=String(data?.offerBaseInfo?.offerId||offerDetail?.offerId||'');
+    if(rootOffer&&rootOffer!==offer)continue;
+    if(data?.skuModel)selectSku({...data.skuModel,skuProps:Array.isArray(data.skuModel.skuProps)?data.skuModel.skuProps:offerDetail?.skuProps},path+'.result.data.Root.fields.dataJson.skuModel',100);
+    if(!title)title=clean(root?.result?.data?.productTitle?.fields?.title)||clean(offerDetail?.subject);
+  }
   while(queue.length&&count++<6000){
     const [o,depth,path]=queue.shift();if(!o||typeof o!=='object'||seen.has(o))continue;seen.add(o);
     const productNode=String(o.offerId||o.offerID||'')===offer||o.skuMap||o.skuInfoMap||o.skuModel||o.skuInfo||o['@type']==='Product';
     if(!title)title=clean(o.offerTitle)||(productNode?clean(o.subject):'')||((o['@type']==='Product')?clean(o.name):'');
     if(diagnostic&&schemas.length<80&&(depth===0||/sku|offer|product|image|title/i.test(path)))schemas.push({path,keys:Object.keys(o).filter(k=>!/token|cookie|password|secret|auth|user|member/i.test(k)).slice(0,25)});
     if(!description&&o['@type']==='Product')description=clean(o.description,10000);
-    if(!skuContainer&&(o.skuMap||o.skuInfoMap))skuContainer={...o,skuMap:o.skuMap||o.skuInfoMap};
+    if(o.skuMap||o.skuInfoMap)selectSku(o,path,o.skuInfoMap?20:1);
     // Only known product image fields, never every image on the page.
     for(const key of ['offerImgList','offerImageList','imageList','images'])if((productNode||/imageModel|offerImage|gallery/i.test(path)||key.startsWith('offer'))&&Array.isArray(o[key]))for(const item of o[key].slice(0,30))addImage(typeof item==='string'?item:item?.originalImageURI||item?.imageUrl||item?.fullPath||item?.url);
     if(o['@type']==='Product'){for(const item of Array.isArray(o.image)?o.image:[o.image])addImage(item);}
@@ -64,7 +85,7 @@ export function collect1688(diagnostic=false) {
         if(labels.length&&labels.every(Boolean))spec=labels.join(' / ').slice(0,100);
       }
       if(!spec&&!Array.isArray(skuContainer.skuMap)){
-        const parts=key.split(/[;>]/).filter(Boolean);
+        const parts=key.replace(/&gt;/g,'>').split(/[;>]/).filter(Boolean);
         // Numeric keys can be array indexes or property IDs, never assume they are labels.
         if(parts.length&&parts.every(x=>props.has(x)||!/^\d+(?::\d+)?$/.test(x)))spec=parts.map(x=>props.get(x)||x).join(' / ').slice(0,100);
       }
@@ -82,6 +103,6 @@ export function collect1688(diagnostic=false) {
   if(!title)warnings.push('未识别到商品标题，请在 OPS 补充。');
   warnings.push('采购成本仅为页面识别值：阶梯价、起订量和规格须人工核对；售价与库存统一为 0，填写后才能审核。');
   warnings.push('目标分类、品牌和标签需在 OPS 设置；详情仅含当前已加载内容，嵌入页面中的详情可能缺失。');
-  if(diagnostic)return {diagnostics:{version:'0.1.2',offer_id:offer,roots:rootNames,schemas,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
+  if(diagnostic)return {diagnostics:{version:'0.1.3',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
   return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,skus},warnings};
 }
