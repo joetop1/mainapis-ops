@@ -1,0 +1,162 @@
+{
+  "name": "商品运营台 · CRMEB Pro 下架入库（待商城安装）",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "ops-webhook",
+      "name": "接收发布任务",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "goods-ops-crmeb-publish",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "goods-ops-crmeb-publish",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate",
+      "name": "验证任务与固定回调地址",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const b = $json.body;\nif (!b || b.action !== 'publish_draft' || b.target !== 'crmeb-pro') throw new Error('本流程只支持 CRMEB 会员商城下架入库');\nif (typeof b.job_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(b.job_id)) throw new Error('Invalid job ID');\nif (b.callback?.url !== 'https://ops.mainapis.com/api/callback/' + b.job_id || typeof b.callback?.token !== 'string' || b.callback.token.length < 32) throw new Error('Invalid callback destination');\nif (!b.product || typeof b.product !== 'object') throw new Error('Missing product');\nreturn [{json:{callbackUrl:b.callback.url,callbackToken:b.callback.token,request:{job_id:b.job_id,action:b.action,target:b.target,product:b.product}}}];"
+      }
+    },
+    {
+      "id": "crmeb-import",
+      "name": "CRMEB 下架入库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.xlupw.com/ops-bridge/import",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 90000
+        }
+      }
+    },
+    {
+      "id": "check-result",
+      "name": "校验商城返回结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const r = $json;\nif (!['succeeded','failed'].includes(r.status)) throw new Error('商城返回不明确，请核对执行和商城记录，勿重试');\nif (r.status === 'succeeded' && (!r.remote_id || !/^\\d+$/.test(String(r.remote_id)))) throw new Error('缺少真实商城商品 ID');\nconst initial = $('验证任务与固定回调地址').first().json;\nreturn [{json:{callbackUrl:initial.callbackUrl,callbackToken:initial.callbackToken,result:{status:r.status,remote_id:r.status==='succeeded'?String(r.remote_id):'',message:String(r.message || '').slice(0,500)}}}];"
+      }
+    },
+    {
+      "id": "callback",
+      "name": "回传真实入库结果",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.result }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 15000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "接收发布任务": {
+      "main": [
+        [
+          {
+            "node": "验证任务与固定回调地址",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "验证任务与固定回调地址": {
+      "main": [
+        [
+          {
+            "node": "CRMEB 下架入库",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRMEB 下架入库": {
+      "main": [
+        [
+          {
+            "node": "校验商城返回结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "校验商城返回结果": {
+      "main": [
+        [
+          {
+            "node": "回传真实入库结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
