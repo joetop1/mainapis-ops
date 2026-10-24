@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
+import {collect1688} from '../extensions/1688-collector/collector.js';
+import {validateProduct,assertPublishable} from '../core.mjs';
+const location={protocol:'https:',hostname:'detail.1688.com',pathname:'/offer/123456.html',href:'https://detail.1688.com/offer/123456.html?tracking=1'};
+function capture(root={},doc={},loc=location){return vm.runInNewContext('('+collect1688.toString()+')()',{
+ location:loc,URL,window:{__INIT_DATA:root},document:{title:'测试商品 - 1688',querySelector:()=>null,querySelectorAll:()=>[],...doc}
+});}
+test('1688采集：仅返回商品字段，规范来源，保留规格并阻止未经定价审核',()=>{
+ const data={offer:{subject:' 测试商品 ',imageList:['//cbu01.alicdn.com/img/a.jpg','https://cbu01.alicdn.com/img/a.jpg','https://evil.com/a.jpg'],skuInfo:{skuProps:[{pid:1,prop:'颜色',value:[{vid:2,name:'黑色'}]},{pid:3,prop:'尺码',value:[{vid:4,name:'M'}]}],skuMap:{'1:2;3:4':{skuId:'777',price:'12.50',canBookCount:123}}},token:'never-export',recommend:{subject:'错误商品',imageList:['https://cbu01.alicdn.com/wrong.jpg']}}};
+ const result=JSON.parse(JSON.stringify(capture(data)));
+ assert.equal(result.product.source_url,'https://detail.1688.com/offer/123456.html');assert.equal(result.product.title,'测试商品');assert.equal(result.product.images.length,1);
+ assert.deepEqual(result.product.skus,[{sku:'ALI-777',spec:'颜色：黑色 / 尺码：M',cost:12.5,price:0,stock:0}]);
+ assert.equal(JSON.stringify(result).includes('never-export'),false);assert.throws(()=>assertPublishable(validateProduct(result.product)));
+});
+test('1688采集：缺少页面状态时保守降级，不伪造价格或规格',()=>{
+ const result=JSON.parse(JSON.stringify(capture({}, {querySelector:s=>s==='h1'?{textContent:'从页面读取标题'}:null})));
+ assert.equal(result.product.title,'从页面读取标题');assert.equal(result.product.skus.length,0);assert.ok(result.warnings.some(x=>x.includes('未识别到完整 SKU')));
+ const wrong=capture({}, {},{...location,hostname:'evil.com'});assert.ok(wrong.error);
+ const large={skuMap:Object.fromEntries(Array.from({length:101},(_,i)=>['规格'+i,{skuId:i+1,price:2}]))};assert.equal(capture(large).product.skus.length,0);
+});
+test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
+ const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
+ assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.permissions.includes('cookies'),false);
+ const source=readFileSync(new URL('../extensions/1688-collector/popup.js',import.meta.url),'utf8');
+ const fn=source.slice(source.indexOf('export async function importIntoOps'),source.indexOf("\n$('#send')")).replace('export ','');
+ const run=context=>vm.runInNewContext('('+fn+')({source_url:"https://detail.1688.com/offer/123.html"})',context);
+ return (async()=>{
+  let writes=0;const response=await run({location:{origin:'https://ops.mainapis.com'},AbortSignal,fetch:async()=>({ok:true,json:async()=>({user:null})})});assert.match(response.error,/登录/);
+  const out=await run({location:{origin:'https://ops.mainapis.com'},AbortSignal,fetch:async(url,options)=>{if(url==='/api/me')return {ok:true,json:async()=>({user:{sub:'allowed'},csrf:'csrf'})};writes++;assert.equal(options.headers['X-CSRF-Token'],'csrf');assert.equal(options.credentials,'same-origin');assert.equal(url,'/api/products');return {ok:true,json:async()=>({id:'draft-id'})};}});
+  assert.equal(writes,1);assert.equal(out.id,'draft-id');
+  const wrong=await run({location:{origin:'https://evil.com'}});assert.ok(wrong.error);
+ })();
+});

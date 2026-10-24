@@ -1,0 +1,46 @@
+import {collect1688} from './collector.js';
+const $=s=>document.querySelector(s),OPS='https://ops.mainapis.com';
+const status=message=>{$('#status').textContent=message;};
+function preview(result){
+ if(result?.error)throw Error(result.error);if(!result?.product)throw Error('页面未返回商品数据，请刷新后重试');
+ $('#preview').hidden=false;$('#title').textContent=result.product.title||'标题待补充';$('#counts').textContent=`${result.product.images.length} 张图片 · ${result.product.skus.length} 个规格`;
+ $('#warnings').replaceChildren(...(result.warnings||[]).map(message=>{const li=document.createElement('li');li.textContent=message;return li;}));
+ $('#json').value=JSON.stringify({products:[result.product]},null,2);
+}
+async function busy(button,work){button.disabled=true;try{await work();}catch(e){status(e.message||'操作失败，请重试');}finally{button.disabled=false;}}
+$('#open').onclick=()=>chrome.tabs.create({url:OPS+'/'});
+$('#collect').onclick=e=>busy(e.currentTarget,async()=>{
+ const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+ if(!tab?.id||!/^https:\/\/detail\.1688\.com\/offer\/\d+\.html(?:[?#]|$)/.test(tab.url||''))throw Error('请切换到 1688 商品详情页，再打开插件。');
+ status('正在读取已加载的商品资料…');
+ const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:collect1688});
+ preview(out.result);await chrome.storage.local.set({draft:out.result});status('采集预览已生成，请核对后导入。');
+});
+// Runs in an isolated OPS tab. Existing login + CSRF apply; no server-side token or CORS exception.
+export async function importIntoOps(product){
+ if(location.origin!=='https://ops.mainapis.com')return {error:'OPS 地址不匹配'};
+ try{
+  const meResponse=await fetch('/api/me',{credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000)});
+  if(!meResponse.ok)return {error:'无法读取 OPS 登录状态'};const me=await meResponse.json();
+  if(!me.user||!me.csrf)return {error:'请先在 OPS 标签页完成 Casdoor 登录，再返回插件点击导入。'};
+  const res=await fetch('/api/products',{method:'POST',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify(product)});
+  const data=await res.json();return res.ok?{id:data.id}:{error:data.error||'导入失败'};
+ }catch{return {error:'未确认导入结果，请先在 OPS 按来源链接查找；重复来源会被拦截。'};}
+}
+$('#send').onclick=e=>busy(e.currentTarget,async()=>{
+ const data=JSON.parse($('#json').value);
+ if(!Array.isArray(data.products)||data.products.length!==1)throw Error('当前仅支持一次导入 1 件商品。');
+ const product=data.products[0];
+ if(!/^https:\/\/detail\.1688\.com\/offer\/\d+\.html$/.test(product?.source_url||''))throw Error('来源必须是 1688 商品链接');
+ if(JSON.stringify(product).length>1000000)throw Error('商品资料过大，请缩减到 1 MB 以内。');
+ const tabs=await chrome.tabs.query({url:OPS+'/*'});
+ const tab=tabs.find(t=>{try{return new URL(t.url).pathname==='/';}catch{return false;}});
+ if(!tab){await chrome.tabs.create({url:OPS+'/'});throw Error('已打开 OPS。完成登录后，回到 1688 打开插件，预览会保留，再点击导入。');}
+ status('正在导入 OPS 待整理采集箱…');
+ const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'ISOLATED',func:importIntoOps,args:[product]});
+ if(out.result?.error)throw Error(out.result.error);if(!out.result?.id)throw Error('未收到导入结果，请在 OPS 检查。');
+ status('已导入待整理采集箱。到 OPS 点击刷新，设置分类、售价和库存后审核。');
+});
+$('#download').onclick=()=>{try{const data=JSON.parse($('#json').value);const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-1688-product.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{status('JSON 格式不正确，请检查预览内容。');}};
+$('#json').addEventListener('input',()=>{try{const data=JSON.parse($('#json').value);if(data.products?.length===1)chrome.storage.local.set({draft:{product:data.products[0],warnings:['已恢复你编辑的采集草稿，请再次核对。']}});}catch{}});
+const {draft}=await chrome.storage.local.get('draft');if(draft){try{preview(draft);status('已恢复上次采集预览；点击「读取当前商品」可替换。');}catch{}}
