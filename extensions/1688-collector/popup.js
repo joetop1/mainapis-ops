@@ -1,4 +1,5 @@
 import {collect1688} from './collector.js';
+import {fillMerchant554Images} from './merchant-images.js';
 const $=s=>document.querySelector(s),OPS='https://ops.mainapis.com';
 const status=message=>{$('#status').textContent=message;};
 function preview(result){
@@ -53,3 +54,13 @@ $('#diagnose').onclick=e=>busy(e.currentTarget,async()=>{
  $('#diagnostics').hidden=false;$('#diagnosticText').value=JSON.stringify(out.result.diagnostics,null,2);status('诊断已生成，可下载文件用于适配当前页面。');
 });
 $('#downloadDiagnostic').onclick=()=>{const url=URL.createObjectURL(new Blob([$('#diagnosticText').value],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-1688-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+$('#merchantImagesFile').onchange=async e=>{
+ try{const file=e.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw Error('文件请小于 2 MB');const data=JSON.parse(await file.text());if(data.products?.length!==1)throw Error('请选择单件商品的采集 JSON');await chrome.storage.local.set({merchantImageProduct:data.products[0]});status('配图文件已就绪，请确认当前打开商品 554 的编辑页，再点击填入。');}catch(e){status(e.message);}
+};
+$('#fillMerchant').onclick=e=>busy(e.currentTarget,async()=>{
+ const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+ const url=new URL(tab?.url||'https://invalid.invalid');if(!['xlupw.com','www.xlupw.com'].includes(url.hostname)||!url.pathname.startsWith('/admin/'))throw Error('请切换到 CRMEB 商品 554 编辑页，再打开插件。');
+ const {merchantImageProduct}=await chrome.storage.local.get('merchantImageProduct');if(!merchantImageProduct)throw Error('请先选择含 64 个配图的采集 JSON 文件');
+ const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:fillMerchant554Images,args:[merchantImageProduct]});
+ if(out.result?.error)throw Error(out.result.error);if(!out.result?.ok)throw Error('未确认填入结果，请检查商城表单');status(out.result.message);
+});
