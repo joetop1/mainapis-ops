@@ -75,6 +75,10 @@
             {
               "name": "Authorization",
               "value": "={{ \"Bearer \" + $json.token }}"
+            },
+            {
+              "name": "Authori-zation",
+              "value": "={{ \"Bearer \" + $json.token }}"
             }
           ]
         },

@@ -9,7 +9,7 @@ const data=response.data||response;
 const token=data.token||data.access_token;
 if(typeof token!=='string'||!token)throw Error('多门店未返回 token；请查看 get_token 返回字段结构，不要分享令牌内容');
 return [{json:{token,exp_time:data.exp_time??null}}];`}},
- request('categories','只读查询多门店分类',660,{method:'GET',url:'https://www.xlyp.cc/outapi/category/list',sendHeaders:true,headerParameters:{parameters:[{name:'Authorization',value:'={{ "Bearer " + $json.token }}'}]}}),
+ request('categories','只读查询多门店分类',660,{method:'GET',url:'https://www.xlyp.cc/outapi/category/list',sendHeaders:true,headerParameters:{parameters:[{name:'Authorization',value:'={{ "Bearer " + $json.token }}'},{name:'Authori-zation',value:'={{ "Bearer " + $json.token }}'}]}}),
  {id:'summary',name:'连接结果（可截图）',type:'n8n-nodes-base.code',typeVersion:2,position:[880,0],parameters:{jsCode:`const response=$json;
 const success=Number(response.status)===200;
 const data=response.data;

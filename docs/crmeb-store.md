@@ -47,3 +47,21 @@ N8N_STORE_WEBHOOK_TOKEN=多门店工作流HeaderAuth的Value
 目录通过固定目标域名的 `/api/category`、`/api/brand` 只读查询；多门店这两个前台端点尚需线上验证，失败会显示错误，不回退到另一商城的数据。分类品牌为前台可见范围，后台未使用品牌可能不可见。切换商城会清空表单分类、品牌、标签 ID，防止跨商城误用；已创建任务快照保持不变。当前一个商品编辑版本对应一个商城分类资料，可切换并生成新版本；不是同时编辑多个商城的独立草稿。
 
 本地 41 项测试通过，覆盖多门店字段白名单、单 SKU/独立图、独立 Token、分类域名、跨商城拒绝、独立 Webhook、一次领取与核验回调。未向线上商城发起创建或修改。
+
+
+## 已确认的 410003 鉴权失败修复
+
+当前服务器 AuthTokenMiddleware 读取 `cookie.token_name`，默认值是历史拼写 `Authori-zation`。发布模板、详情查询及只读探测现同时发送 `Authorization` 和 `Authori-zation`，值完全相同。新模板在一次性领取创建之前先 GET 所选分类详情，通过同一鉴权中间件；鉴权失败会停在领取前。
+
+线上已有工作流最小修复：在「官方新增下架商品」「官方读取商品详情」的 Headers 中保留原 Authorization，再增加 Authori-zation，值复制原头表达式，然后 Publish。不改 CRMEB 代码。完整模板额外含只读预检节点，后续更新时保留现有凭据与真实运费模板 ID。
+
+2026-10-24 用户提供的执行 12 返回 410003「请登录」，堆栈明确在 AuthTokenMiddleware 调用 OutAccountServices::parseToken 时失败，尚未进入 Product::productSave。对应任务是 `1bc58a43-d560-43be-bdbb-aed14c025f7a`。为此特定任务提供一次性恢复脚本，非通用解锁工具：
+
+```bash
+cd /www/wwwroot/mainapis-ops
+git pull --ff-only
+docker compose up -d --build
+docker compose exec -T goods-ops node recover-store-auth.mjs
+```
+
+先修复并发布 n8n 工作流，再执行恢复脚本。脚本核对任务、目标、状态、来源以及尚无核验信息，仅将该任务 claimed 恢复为 0，并写审计；保留同一任务 ID、商品快照及全部商品信息。不调用商城接口。成功后在 OPS 点击该任务「重发未领取任务」。脚本只允许恢复一次，无法用于成功任务、结果不明超时或其他任务。不要单独重新执行官方新增节点。
