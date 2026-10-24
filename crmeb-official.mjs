@@ -28,7 +28,9 @@ export function buildOfficialProduct(lease,config){
     const value=multi?String(s.spec||'').trim():'默认';
     if(!value||value.length>100||/[,;=]/.test(value)||specs.has(value))throw Error('规格为空、重复或含不支持的分隔符');specs.add(value);
     if(!Number.isFinite(s.price)||s.price<=0||s.price>99999999||!Number.isFinite(s.cost)||s.cost<0||s.cost>99999999||!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('价格、成本或库存错误');
-    return {attr_arr:[value],detail:{'规格':value},price:s.price,cost:s.cost,stock:s.stock,pic:images[0],ot_price:s.price,code:s.sku,bar_code:'',weight:0,volume:0,is_show:1,is_default_select:0,is_virtual:0,brokerage:0,brokerage_two:0,vip_price:0,vip_proportion:0,unique:''};
+    const pic=s.image||images[0];
+    if(typeof pic!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(pic)||/[\u0000-\u0020]/.test(pic))throw Error('SKU图片必须是无账号密码的HTTPS地址');
+    return {attr_arr:[value],detail:{'规格':value},price:s.price,cost:s.cost,stock:s.stock,pic,ot_price:s.price,code:s.sku,bar_code:'',weight:0,volume:0,is_show:1,is_default_select:0,is_virtual:0,brokerage:0,brokerage_two:0,vip_price:0,vip_proportion:0,unique:''};
   });
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const description=escape(p.description||'').replaceAll('\n','<br>')+images.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
@@ -37,7 +39,7 @@ export function buildOfficialProduct(lease,config){
     freight:3,temp_id:config.shippingTemplateId,delivery_type:[1],product_clear:['is_general_product'],
     // Deliberately empty: CRMEB treats matching soure_link as an UPDATE even through POST create.
     // The original source remains in the immutable OPS snapshot, linked by the task marker.
-    soure_link:'',code:lease.marker,items:[{value:'规格',detail:attrs.map(s=>({value:s.attr_arr[0],pic:''}))}],attrs:multi?attrs:[],attr:multi?[]:attrs[0]};
+    soure_link:'',code:lease.marker,items:[{value:'规格',detail:attrs.map(s=>({value:s.attr_arr[0],pic:s.pic}))}],attrs:multi?attrs:[],attr:multi?[]:attrs[0]};
 }
 export function verifyOfficialProduct(response,lease,config){
   const pending=message=>({status:'awaiting_review',message});
@@ -55,6 +57,7 @@ export function verifyOfficialProduct(response,lease,config){
   const actual=expected.spec_type?d.attrs:[d.attr],want=expected.spec_type?expected.attrs:[expected.attr];
   if(!Array.isArray(actual)||actual.length!==want.length)return pending('SKU 数量不一致，未确认成功');
   for(const sku of want){const row=actual.find(s=>s?.code===sku.code);if(!row||Number(row.price)!==sku.price||Number(row.cost)!==sku.cost||Number(row.stock)!==sku.stock)return pending('SKU 编码、价格、成本或库存不一致');if(expected.spec_type&&row.detail?.['规格']!==sku.detail['规格'])return pending('SKU 规格内容不一致');}
+  for(const source of lease.product.skus.filter(s=>s.image)){const row=actual.find(s=>s?.code===source.sku);if((row?.pic||row?.image)!==source.image)return pending('SKU 图片地址不一致，请检查该规格图片');}
   return {status:'succeeded',remote_id:String(d.id),message:'官方商品详情已核验：任务编码、下架状态、标题、分类、SKU 和价格库存一致；图片尚需人工检查'};
 }
 export const CR_DEFAULTS = {"product_type":0,"supplier_id":0,"cate_id":[],"store_name":"","store_info":"","keyword":"","unit_name":"件","recommend_image":"","slider_image":[],"is_brokerage":0,"is_sub":[],"is_vip":0,"sort":0,"sales":0,"ficti":100,"give_integral":0,"is_show":0,"is_hot":0,"is_benefit":0,"is_best":0,"is_new":0,"mer_use":0,"is_postage":0,"is_good":0,"is_picks":0,"description":"","spec_type":0,"video_open":0,"video_link":"","items":[],"attrs":[],"attr":[],"recommend":[],"activity":[],"coupon_ids":[],"label_id":[],"command_word":"","tao_words":"","is_copy":0,"delivery_type":[],"freight":1,"postage":0,"temp_id":0,"recommend_list":[],"brand_id":[],"soure_link":"","bar_code":"","code":"","is_support_refund":1,"is_presale_product":0,"presale_time":[],"presale_day":0,"is_vip_product":0,"product_clear":["is_general_product"],"auto_on_time":0,"auto_off_time":0,"custom_form":[],"system_form_id":0,"store_label_id":[],"ensure_id":[],"specs":[],"specs_id":0,"is_limit":0,"limit_type":0,"limit_num":0,"share_content":"","min_qty":1,"presale_status":0,"is_send_gift":0,"send_gift_price":0,"level_type":1};

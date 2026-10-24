@@ -41,6 +41,13 @@ test('详情核验：真实ID、编码、下架、分类和每行SKU价格库存
  for(const patch of [{id:99},{code:'OTHER'},{is_show:1},{store_name:'其他商品'},{cate_id:[1]},{attrs:[]}])assert.equal(verifyOfficialProduct({status:200,data:{...d,...patch}},lease,cfg).status,'awaiting_review');
  for(const key of ['price','stock','cost']){const wrong=structuredClone(d);wrong.attrs[0][key]++;assert.equal(verifyOfficialProduct({status:200,data:wrong},lease,cfg).status,'awaiting_review');}
 });
+test('SKU独立图片经过保存、发布及详情核验，不统一写成首图',()=>{
+ const l=structuredClone(lease);l.product.skus[0].image='https://example.com/red.jpg';l.product.skus[1].image='https://example.com/blue.jpg';l.product=validateProduct(l.product);
+ const p=buildOfficialProduct(l,cfg);assert.equal(p.attrs[0].pic,l.product.skus[0].image);assert.equal(p.attrs[1].pic,l.product.skus[1].image);assert.equal(p.items[0].detail[1].pic,l.product.skus[1].image);
+ const d={...p,id:42};assert.equal(verifyOfficialProduct({status:200,data:{productInfo:d}},l,cfg).status,'succeeded');
+ d.attrs[1].pic=d.attrs[0].pic;assert.equal(verifyOfficialProduct({status:200,data:{productInfo:d}},l,cfg).status,'awaiting_review');
+ for(const image of ['http://example.com/a.jpg','https://user:password@example.com/a.jpg','javascript:alert(1)']){const wrong=structuredClone(l.product);wrong.skus[0].image=image;assert.throws(()=>validateProduct(wrong));}
+});
 test('可导入工作流：凭据不入文件，预检先于领取，HTTP不自动重试',()=>{
  const w=JSON.parse(readFileSync(new URL('../workflows/publish-crmeb-official.json',import.meta.url)));
  assert.equal(w.active,false);assert.equal(w.nodes.some(n=>n.parameters?.url?.includes('/ops-bridge/')),false);

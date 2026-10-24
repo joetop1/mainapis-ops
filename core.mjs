@@ -32,6 +32,7 @@ export function validateProduct(input) {
   p.images=(Array.isArray(input.images)?input.images:[]).slice(0,30).map(v=>{ const u=new URL(v); if(u.protocol!=='https:' || u.username || u.password) throw Error('图片地址必须使用 HTTPS'); return u.href; });
   p.skus=(Array.isArray(input.skus)?input.skus:[]).slice(0,500).map(s=>{
     const v={sku:String(s.sku||'').trim().slice(0,100),spec:String(s.spec||'').slice(0,300),cost:Number(s.cost),price:Number(s.price),stock:Number(s.stock)};
+    if(s.image){const u=new URL(s.image);if(u.protocol!=='https:'||u.username||u.password)throw Error('SKU 图片必须是无账号密码的 HTTPS 地址');v.image=u.href;}
     if(!v.sku || !Number.isFinite(v.cost) || !Number.isFinite(v.price) || v.cost<0 || v.price<0 || !Number.isSafeInteger(v.stock) || v.stock<0) throw Error('SKU 编码、成本、售价或库存格式错误');
     return v;
   });

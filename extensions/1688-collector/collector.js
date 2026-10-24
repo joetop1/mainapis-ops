@@ -63,13 +63,16 @@ export function collect1688(diagnostic=false) {
   for(const img of [...document.querySelectorAll('.detail-gallery img, .detail-gallery-preview img, .detail-gallery-img img, .detail-gallery-turn img')].slice(0,100))addImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.currentSrc||img.src);
   const detail=document.querySelector('#desc-lazyload-container, #description, .offer-description');
   if(detail){const detailText=clean(detail.innerText||detail.textContent,10000);if(!/平台活动下价格|非分销场景|划线价格|价格说明/.test(detailText))description=detailText||description;for(const img of [...detail.querySelectorAll('img')].slice(0,30))addImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.src);}
-  const skus=[],specNames=new Set(),codes=new Set(),props=new Map();
+  const skus=[],specNames=new Set(),codes=new Set(),props=new Map(),propImages=new Map();
+  const rememberImage=(key,url)=>{if(!key||!url)return;const urls=propImages.get(key)||new Set();urls.add(url);propImages.set(key,urls);};
   if(skuContainer){
     for(const prop of Array.isArray(skuContainer.skuProps)?skuContainer.skuProps:[]){
       const name=clean(prop.prop||prop.name||prop.propName);
       for(const v of Array.isArray(prop.value)?prop.value:Array.isArray(prop.values)?prop.values:[]){
         const label=clean(v.name||v.value||v.valueName);if(!label)continue;
-        for(const id of [v.vid,v.id,v.valueId])if(id!==undefined){props.set(String(id),name?name+'：'+label:label);if((prop.pid??prop.propId)!==undefined)props.set((prop.pid??prop.propId)+':'+id,name?name+'：'+label:label);}
+        const pic=image(v.imageUrl||v.image||v.pic||v.bigImageUrl||v.imageURI||v.imageUrlOriginal);
+        rememberImage(label,pic);rememberImage(name?name+'：'+label:label,pic);
+        for(const id of [v.vid,v.id,v.valueId])if(id!==undefined){props.set(String(id),name?name+'：'+label:label);rememberImage(String(id),pic);if((prop.pid??prop.propId)!==undefined){const k=(prop.pid??prop.propId)+':'+id;props.set(k,name?name+'：'+label:label);rememberImage(k,pic);}}
       }
     }
     const entries=Object.entries(skuContainer.skuMap);
@@ -94,15 +97,23 @@ export function collect1688(diagnostic=false) {
       if(!spec||/[,;=]/.test(spec)||specNames.has(spec)||codes.has(sku)){unresolved++;continue;}
       const rawPrice=row.discountPrice??row.price??row.salePrice??row.priceInfo?.price;
       const cost=(typeof rawPrice==='number'||typeof rawPrice==='string'&&/^\d+(\.\d{1,2})?$/.test(rawPrice))?Number(rawPrice):0;
-      skus.push({sku,spec,cost:Number.isFinite(cost)&&cost>=0&&cost<=99999999?cost:0,price:0,stock:0});specNames.add(spec);codes.add(sku);
+      let skuImage=image(row.imageUrl||row.image||row.skuImage||row.pic||row.bigImageUrl);
+      if(!skuImage){
+        const matched=new Set();
+        const tokens=[...spec.split(' / '),...(!Array.isArray(skuContainer.skuMap)?key.replace(/&gt;/g,'>').split(/[;>]/):[])];
+        for(const token of tokens)for(const url of propImages.get(token)||[])matched.add(url);
+        if(matched.size===1)skuImage=[...matched][0];
+      }
+      skus.push({sku,spec,cost:Number.isFinite(cost)&&cost>=0&&cost<=99999999?cost:0,price:0,stock:0,...(skuImage?{image:skuImage}:{})});specNames.add(spec);codes.add(sku);
     }
     if(unresolved){skus.length=0;warnings.push('有 '+unresolved+' 条规格名称未解析或重复，本次不导入整组 SKU，避免漏规格或把数组下标当名称。请下载页面结构诊断。');}
   }
   if(!skus.length)warnings.push('未识别到完整 SKU 数据，需在 OPS 手工添加规格和采购成本。');
+  if(skus.some(s=>!s.image))warnings.push('有 '+skus.filter(s=>!s.image).length+' 个规格未匹配到唯一图片，需在 OPS 检查或补充；未设置的规格发布时会使用商品首图。');
   if(!pictures.length)warnings.push('未识别到商品图片，请等待页面加载后重试，或在 OPS 补充。');
   if(!title)warnings.push('未识别到商品标题，请在 OPS 补充。');
   warnings.push('采购成本仅为页面识别值：阶梯价、起订量和规格须人工核对；售价与库存统一为 0，填写后才能审核。');
   warnings.push('目标分类、品牌和标签需在 OPS 设置；详情仅含当前已加载内容，嵌入页面中的详情可能缺失。');
-  if(diagnostic)return {diagnostics:{version:'0.1.3',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
+  if(diagnostic)return {diagnostics:{version:'0.1.4',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
   return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,skus},warnings};
 }

@@ -45,6 +45,13 @@ test('真实诊断布局：优先完整skuModel，避免先发现的交易SKU数
  const result=capture(root);assert.equal(result.product.skus.length,64);assert.equal(result.product.skus[0].spec,'条纹款0 / 均码');assert.equal(result.product.skus[63].spec,'条纹款63 / 均码');assert.equal(result.product.skus[0].cost,3.98);
  const d=capture(root,{},location,true).diagnostics;assert.match(d.selectedSkuPath,/Root.fields.dataJson.skuModel$/);assert.equal(d.skuSchemas[0].rowCount,64);assert.ok(d.skuSchemas[0].rowKeys[0].includes('skuId'));assert.equal(JSON.stringify(d).includes('3.98'),false);
 });
+test('SKU配图按属性名或ID精确匹配，不按主图顺序猜测',()=>{
+ const a='https://cbu01.alicdn.com/red.jpg',b='https://cbu01.alicdn.com/blue.jpg';
+ const result=capture({skuModel:{skuProps:[{prop:'颜色',value:[{name:'红色',vid:1,imageUrl:a},{name:'蓝色',vid:2,imageUrl:b}]}],skuInfoMap:{'红色>M':{skuId:'1',price:5},'蓝色>M':{skuId:'2',price:6},'未知>M':{skuId:'3',price:7}}}});
+ assert.equal(result.product.skus[0].image,a);assert.equal(result.product.skus[1].image,b);assert.equal(result.product.skus[2].image,undefined);assert.ok(result.warnings.some(x=>x.includes('1 个规格未匹配')));
+ const ids=capture({skuProps:[{pid:7,prop:'颜色',value:[{vid:1,name:'红色',imageUrl:a}]}],skuInfoMap:{'7:1':{skuId:'4',price:5}}});assert.equal(ids.product.skus[0].image,a);
+ const ambiguous=capture({skuProps:[{prop:'颜色',value:[{name:'红色',imageUrl:a},{name:'红色',imageUrl:b}]}],skuInfoMap:{'红色>M':{skuId:'5',price:5}}});assert.equal(ambiguous.product.skus[0].image,undefined);
+});
 test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
  assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.permissions.includes('cookies'),false);
