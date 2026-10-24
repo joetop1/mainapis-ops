@@ -31,6 +31,13 @@ test('诊断只导出结构，不包含商品字段值或敏感字段',()=>{
  const root={offer:{offerId:'123456',subject:'DO-NOT-EXPORT-TITLE',token:'DO-NOT-EXPORT-SECRET',skuModel:{skuInfoMap:{'颜色':{price:'987.65'}}}}};
  const d=capture(root,{},location,true);const out=JSON.stringify(d);assert.ok(d.diagnostics);assert.equal(d.product,undefined);assert.equal(out.includes('DO-NOT-EXPORT'),false);assert.equal(out.includes('987.65'),false);assert.equal(out.includes('token'),false);assert.equal(d.diagnostics.matchedSkuMap,true);
 });
+test('SKU数组读取明确名称；数组下标及无法还原的数字ID不可作规格名',()=>{
+ const row={skuId:'123',price:'4.73'};
+ assert.equal(capture({skuInfoMap:[row]}).product.skus.length,0);
+ assert.equal(capture({skuInfoMap:{'0':row}}).product.skus.length,0);
+ const parsed=capture({skuInfoMap:[{...row,specAttrs:'条纹黑色>均码'}]});assert.equal(parsed.product.skus[0].spec,'条纹黑色 / 均码');
+ const partial=capture({skuInfoMap:[{...row,specAttrs:'黑色'},{...row,skuId:'124'}]});assert.equal(partial.product.skus.length,0);assert.ok(partial.warnings.some(x=>x.includes('不导入整组')));
+});
 test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
  assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.permissions.includes('cookies'),false);
