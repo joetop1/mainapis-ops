@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {parseOfficialExport} from './official-export.mjs';
 import {readFile,mkdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join,dirname,resolve} from 'node:path';
@@ -155,7 +156,7 @@ export const handler=async(req,res)=>{
     if(path==='/api/state' && req.method==='GET')return json(res,200,{products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-','')})),targets,connections:{casdoor:demo?'demo':'connected',n8n:!demo&&webhook&&hookToken?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);return json(res,201,{id:putProduct(owner,b)});}
     if(path==='/api/import' && req.method==='POST') {
-      const b=await body(req);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
+      const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
       const results=b.products.map((p,i)=>{try{return{index:i,id:putProduct(owner,p),ok:true};}catch(e){return{index:i,ok:false,error:e.message};}});return json(res,200,{results});
     }
     const match=path.match(/^\/api\/products\/([^/]+)(?:\/(approve|publish))?$/);

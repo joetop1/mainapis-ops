@@ -31,6 +31,10 @@ test('请求处理链路：登录隔离、CSRF、商品导入、审核、编辑�
   assert.equal((await call(`/api/products/${id}`,'PUT',{...p,revision:1})).status,409);
   r=await call('/api/state');assert.equal(r.data.products[0].revision,2);assert.equal(r.data.products[0].status,'draft');assert.equal(r.data.jobs.length,0);
   r=await call('/api/import','POST',{products:[p,{source_url:'https://evil.com'}]});assert.deepEqual(r.data.results.map(x=>x.ok),[false,false]);
+  r=await call('/api/import','POST',{table:'商品标题\t宝贝ID\t价格\t代发价\n官方导出测试\t456\t3.98\t4.98'});assert.equal(r.data.results[0].ok,true);
+  const imported=(await call('/api/state')).data.products.find(x=>x.source_url.includes('/456.html'));assert.equal(imported.status,'draft');assert.equal(imported.sourcing.purchase_price,'3.98');assert.equal(imported.skus.length,0);
+  assert.equal((await call(`/api/products/${imported.id}/approve`,'POST',{revision:1})).status,400);
+  assert.equal((await call('/api/import','POST',{table:'商品标题\t宝贝ID\n重复来源\t456'})).data.results[0].ok,false);
   assert.equal((await call('/api/callback/fake','POST',{status:'succeeded'})).status,403);
   await call('/auth/logout','POST',{});assert.equal((await call('/api/state')).status,401);
  } finally {closeStore();await rm(data,{recursive:true,force:true});}

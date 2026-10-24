@@ -14,6 +14,10 @@ export function validateProduct(input) {
   if(input.skus!==undefined && !Array.isArray(input.skus)) throw Error('skus 必须是数组');
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
   const p={source_url:sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
+  if(input.sourcing!==undefined){
+    if(!input.sourcing||typeof input.sourcing!=='object'||Array.isArray(input.sourcing))throw Error('采购参考资料格式错误');
+    p.sourcing=Object.fromEntries(['purchase_price','dropship_price','category','tags','supplier_sales','shipping_time','listed_at'].map(key=>[key,String(input.sourcing[key]??'').slice(0,300)]));
+  }
   for(const key of ['brand_ids','tag_ids']){
     const ids=input[key]??[];
     if(!Array.isArray(ids)||ids.length>50||ids.some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(ids).size!==ids.length)throw Error('品牌和标签必须是互不重复的正整数 ID');

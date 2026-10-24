@@ -8,7 +8,7 @@
 
 CRMEB 会员商城改用官方 `/outapi`，无需安装商城端代码。官方接口限制使创建与核验分两步：先下架新增，再填回商品 ID 读取详情核对。完整步骤见 [官方接口接入说明](docs/crmeb-official.md)，导入 `workflows/publish-crmeb-official.json`。旧自定义 PHP 连接器和对应工作流已从当前版本移除。
 
-1688 手动采集插件试用版已加入 [extensions/1688-collector](extensions/1688-collector/README.md)：读取当前商品页，预览后导入待整理采集箱。尚未完成真实浏览器端到端验证，页面结构不匹配时需手动补充。商品添加链接仍只保存待整理记录，不自动抓取。1688 官方采购助手的 Excel 导入适配尚未实现。
+1688 手动采集插件试用版已加入 [extensions/1688-collector](extensions/1688-collector/README.md)：读取当前商品页，预览后导入待整理采集箱。尚未完成真实浏览器端到端验证，页面结构不匹配时需手动补充。商品添加链接仍只保存待整理记录，不自动抓取。1688 官方采购助手导出的表格支持复制粘贴、UTF-8 TSV/CSV 导入，见 [导入说明](docs/1688-import.md)；不支持直接上传二进制 XLSX。
 
 尚未实现：AI 整理、多门店/Tigshop 写入、图片转存。图片当前引用已有 HTTPS 地址。CRMEB 官方接口创建及核验已由运营者通过商品 553 线上验证。
 
