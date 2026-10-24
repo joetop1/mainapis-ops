@@ -65,3 +65,21 @@ docker compose exec -T goods-ops node recover-store-auth.mjs
 ```
 
 先修复并发布 n8n 工作流，再执行恢复脚本。脚本核对任务、目标、状态、来源以及尚无核验信息，仅将该任务 claimed 恢复为 0，并写审计；保留同一任务 ID、商品快照及全部商品信息。不调用商城接口。成功后在 OPS 点击该任务「重发未领取任务」。脚本只允许恢复一次，无法用于成功任务、结果不明超时或其他任务。不要单独重新执行官方新增节点。
+
+
+## 执行 13：缺少 presale_status
+
+用户已核对当前服务源码：`saveData` 从 926 行开始，1022 行读取 `presale_status`；保存事务从 1221 行开始，新商品插入在 1263 行。本次截图的 Undefined array key presale_status 在商品保存前失败。用户已在 `/www/wwwroot/xlyp.cc/app/controller/out/Product.php` 的 productSave 参数列表中补入 `['presale_status', 0]`，并通过 PHP 语法检查。该改动是商城现有对外接口的缺省字段修复，n8n 中仅补字段不足以替代控制器修复。
+
+多门店适配器也明确发送 presale_status=0；现有线上工作流即使尚未更新，控制器默认值仍能处理。为此次已核实的执行 13 提供第二个独立恢复入口：
+
+```bash
+cd /www/wwwroot/mainapis-ops
+git pull --ff-only
+docker compose up -d --build
+docker compose exec -T goods-ops node recover-store-presale.mjs
+```
+
+需先从 Mac 推送本次提交。此脚本固定该任务 UUID，并核对最新领取时间必须仍为用户提供的 `2026-10-24T14:52:02.259Z`、已有首次鉴权恢复记录、未核验、未成功、未填写商品 ID、商品来源和原提示。后续尝试及其他状态均拒绝；仅一次，不是通用解锁工具。不调用商城，不修改原快照、售价或库存，写入独立审计。完成后在 OPS 对同一任务点击「重发未领取任务」。原 recover-store-auth.mjs 不应再次运行。
+
+本次本地 45 项测试通过；线上补字段后的发布仍待验证。
