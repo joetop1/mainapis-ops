@@ -12,6 +12,12 @@ test('多门店字段独立适配：单SKU强制多规格、下架、独立图�
  assert.throws(()=>buildStoreProduct({...lease,product:{...lease.product,catalog_target:'crmeb-pro'}},config));assert.throws(()=>buildStoreProduct(lease,{shippingTemplateId:0}));
  assert.equal(requireStoreToken({status:200,data:{token:'secret'}}),'secret');assert.throws(()=>requireStoreToken({status:400,data:{token:'bad'}}));
 });
+test('多门店轮播最多5张且限制序列化长度，详情和SKU图片完整保留',()=>{
+ const l=structuredClone(lease);l.product.images=Array.from({length:29},(_,i)=>'https://cbu01.alicdn.com/img/ibank/photo-'+i+'.jpg');
+ const original=JSON.stringify(l),p=buildStoreProduct(l,config);assert.equal(p.slider_image.length,5);assert.equal(p.attrs[0].pic,l.product.skus[0].image);assert.ok(p.description.includes('photo-28.jpg'));assert.equal(JSON.stringify(l),original);
+ l.product.images=['https://example.com/'+('a'.repeat(600))+'.jpg','https://example.com/'+('b'.repeat(600))+'.jpg'];assert.equal(buildStoreProduct(l,config).slider_image.length,1);
+ l.product.images=['https://example.com/'+('a'.repeat(1100))+'.jpg'];assert.throws(()=>buildStoreProduct(l,config),/地址过长/);
+});
 test('多门店工作流隔离域名、Token路径、目标和字段，不携带会员凭据',()=>{
  const w=JSON.parse(readFileSync(new URL('../workflows/publish-crmeb-store.json',import.meta.url)));
  const get=id=>w.nodes.find(x=>x.id===id);assert.equal(get('token').parameters.url,'https://www.xlyp.cc/outapi/get_token');assert.equal(get('token').credentials,undefined);assert.equal(get('create').parameters.url,'https://www.xlyp.cc/outapi/product');assert.equal(get('webhook').parameters.path,'ops-crmeb-store');

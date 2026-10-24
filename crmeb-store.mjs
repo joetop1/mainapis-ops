@@ -14,6 +14,15 @@ export function storeLease(lease){
 }
 export function buildStoreProduct(lease,config){
  const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true});payload.type=0;
+ // Keep the full source gallery in description; the database carousel is a short list.
+ // Match PHP json_encode escaping when applying the conservative serialized budget.
+ const serializedLength=value=>JSON.stringify(value).replace(/\//g,'\\/').replace(/[\u007f-\uffff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')).length;
+ const carousel=[];
+ for(const image of payload.slider_image.slice(0,5)){
+  if(serializedLength([...carousel,image])>1000){if(!carousel.length)throw Error('商品首图地址过长，请先转存图片');break;}
+  carousel.push(image);
+ }
+ payload.slider_image=carousel;
  return Object.fromEntries(STORE_FIELDS.map(key=>[key,payload[key]]));
 }
 export function verifyStoreProduct(response,lease,config){
