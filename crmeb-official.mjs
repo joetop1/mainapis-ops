@@ -19,6 +19,9 @@ export function buildOfficialProduct(lease,config){
   const images=p.images.map(x=>{if(typeof x!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(x)||/[\u0000-\u0020]/.test(x))throw Error('图片必须是无账号密码的HTTPS地址');return x;});
   if(!Array.isArray(p.skus)||!p.skus.length||p.skus.length>100)throw Error('请使用1–100个SKU');
   const codes=new Set(),specs=new Set();
+  for(const key of ['brand_ids','tag_ids'])if(p[key]!==undefined&&(!Array.isArray(p[key])||p[key].length>50||p[key].some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(p[key]).size!==p[key].length))throw Error('品牌或商品标签 ID 无效');
+  const virtualSales=p.virtual_sales??0;
+  if(!Number.isSafeInteger(virtualSales)||virtualSales<0||virtualSales>2147483647)throw Error('虚拟销量无效');
   const multi=p.skus.length>1||Boolean(String(p.skus[0].spec||'').trim());
   const attrs=p.skus.map(s=>{
     if(typeof s.sku!=='string'||!/^[A-Za-z0-9_.-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU编码不正确或重复');codes.add(s.sku);
@@ -30,7 +33,7 @@ export function buildOfficialProduct(lease,config){
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const description=escape(p.description||'').replaceAll('\n','<br>')+images.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
   return {...JSON.parse(JSON.stringify(CR_DEFAULTS)),store_name:p.title,store_info:String(p.description||'').slice(0,100),cate_id:ids,slider_image:images,description,
-    is_show:0,auto_on_time:0,auto_off_time:0,is_copy:0,ficti:0,sales:0,min_qty:1,spec_type:multi?1:0,
+    is_show:0,auto_on_time:0,auto_off_time:0,is_copy:0,ficti:virtualSales,sales:0,brand_id:p.brand_ids??[],store_label_id:p.tag_ids??[],min_qty:1,spec_type:multi?1:0,
     freight:3,temp_id:config.shippingTemplateId,delivery_type:[1],product_clear:['is_general_product'],
     // Deliberately empty: CRMEB treats matching soure_link as an UPDATE even through POST create.
     // The original source remains in the immutable OPS snapshot, linked by the task marker.
@@ -39,12 +42,16 @@ export function buildOfficialProduct(lease,config){
 export function verifyOfficialProduct(response,lease,config){
   const pending=message=>({status:'awaiting_review',message});
   if(Number(response?.status)!==200||!response.data||typeof response.data!=='object')return pending('未读取到商品详情，请检查权限或商品 ID');
-  const d=response.data;
+  // Pro 4.3 getInfo wraps the editable product in data.productInfo.
+  const d=response.data.productInfo??response.data;
   if(String(d.id)!==lease.candidate_id||d.code!==lease.marker)return pending('商品 ID 或任务编码不匹配，未确认成功');
   if(d.is_show===undefined||Number(d.is_show)!==0)return pending('商品未处于下架状态，请在商城核对');
   let expected;try{expected=buildOfficialProduct(lease,config);}catch{return pending('本地字段映射配置未通过，请核对配置');}
   const ids=Array.isArray(d.cate_id)?d.cate_id.map(Number):String(d.cate_id||'').split(',').map(Number);
   if(d.store_name!==expected.store_name||expected.cate_id.some(id=>!ids.includes(id))||Number(d.spec_type)!==expected.spec_type)return pending('标题、分类或规格类型不一致，请在商城核对');
+  const readIds=value=>Array.isArray(value)?value.map(x=>Number(typeof x==='object'?x.id:x)):String(value??'').split(',').filter(Boolean).map(Number);
+  for(const key of ['brand_id','store_label_id'])if(expected[key].length){const actualIds=readIds(d[key]);if(actualIds.length!==expected[key].length||expected[key].some(id=>!actualIds.includes(id)))return pending('品牌或商品标签不一致，请在商城核对');}
+  if(lease.product.virtual_sales!==undefined&&Number(d.ficti)!==expected.ficti)return pending('虚拟销量不一致，请在商城核对');
   const actual=expected.spec_type?d.attrs:[d.attr],want=expected.spec_type?expected.attrs:[expected.attr];
   if(!Array.isArray(actual)||actual.length!==want.length)return pending('SKU 数量不一致，未确认成功');
   for(const sku of want){const row=actual.find(s=>s?.code===sku.code);if(!row||Number(row.price)!==sku.price||Number(row.cost)!==sku.cost||Number(row.stock)!==sku.stock)return pending('SKU 编码、价格、成本或库存不一致');if(expected.spec_type&&row.detail?.['规格']!==sku.detail['规格'])return pending('SKU 规格内容不一致');}

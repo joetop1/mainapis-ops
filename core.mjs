@@ -14,6 +14,13 @@ export function validateProduct(input) {
   if(input.skus!==undefined && !Array.isArray(input.skus)) throw Error('skus 必须是数组');
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
   const p={source_url:sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
+  for(const key of ['brand_ids','tag_ids']){
+    const ids=input[key]??[];
+    if(!Array.isArray(ids)||ids.length>50||ids.some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(ids).size!==ids.length)throw Error('品牌和标签必须是互不重复的正整数 ID');
+    p[key]=ids;
+  }
+  p.virtual_sales=input.virtual_sales??0;
+  if(!Number.isSafeInteger(p.virtual_sales)||p.virtual_sales<0||p.virtual_sales>2147483647)throw Error('虚拟销量必须是 0–2147483647 的整数');
   p.images=(Array.isArray(input.images)?input.images:[]).slice(0,30).map(v=>{ const u=new URL(v); if(u.protocol!=='https:' || u.username || u.password) throw Error('图片地址必须使用 HTTPS'); return u.href; });
   p.skus=(Array.isArray(input.skus)?input.skus:[]).slice(0,500).map(s=>{
     const v={sku:String(s.sku||'').trim().slice(0,100),spec:String(s.spec||'').slice(0,300),cost:Number(s.cost),price:Number(s.price),stock:Number(s.stock)};
