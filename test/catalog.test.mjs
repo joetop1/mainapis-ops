@@ -14,3 +14,8 @@ test('商城列表失败不伪装为空列表、不缓存错误，空品牌可�
  const first=await load();assert.ok(first.categoryError);assert.throws(()=>applyCatalog({category_id:1},first));
  fail=false;const next=await load();assert.equal(next.categoryError,'');assert.deepEqual(next.brands,[]);assert.doesNotThrow(()=>applyCatalog({brand_ids:[]},next));
 });
+test('多门店目录固定独立域名，禁止将会员分类资料冒用到多门店',async()=>{
+ const load=createCatalogLoader(async url=>{assert.ok(url.startsWith('https://www.xlyp.cc/api/'));return {status:200,data:url.endsWith('category')?[{id:91,cate_name:'多门店袜子'}]:[]};},'crmeb-store');
+ const c=await load();assert.equal(c.target,'crmeb-store');assert.throws(()=>applyCatalog({category_id:91,catalog_target:'crmeb-pro'},c));
+ assert.equal(applyCatalog({category_id:91,catalog_target:'crmeb-store'},c).category,'多门店袜子');
+});

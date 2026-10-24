@@ -22,7 +22,7 @@ export function buildOfficialProduct(lease,config){
   for(const key of ['brand_ids','tag_ids'])if(p[key]!==undefined&&(!Array.isArray(p[key])||p[key].length>50||p[key].some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(p[key]).size!==p[key].length))throw Error('品牌或商品标签 ID 无效');
   const virtualSales=p.virtual_sales??0;
   if(!Number.isSafeInteger(virtualSales)||virtualSales<0||virtualSales>2147483647)throw Error('虚拟销量无效');
-  const multi=p.skus.length>1||Boolean(String(p.skus[0].spec||'').trim());
+  const multi=config.forceMulti===true||p.skus.length>1||Boolean(String(p.skus[0].spec||'').trim());
   const attrs=p.skus.map(s=>{
     if(typeof s.sku!=='string'||!/^[A-Za-z0-9_.-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU编码不正确或重复');codes.add(s.sku);
     const value=multi?String(s.spec||'').trim():'默认';

@@ -1,5 +1,5 @@
 // Read-only, fixed upstreams. Credentials and user-supplied URLs are never accepted.
-const base='https://xlupw.com';
+const sources={'crmeb-pro':'https://xlupw.com','crmeb-store':'https://www.xlyp.cc'};
 function options(response,kind){
  if(Number(response?.status)!==200)throw Error('商城返回失败');
  const rows=Array.isArray(response.data)?response.data:response.data?.list;
@@ -16,14 +16,15 @@ function options(response,kind){
   }
  };walk(rows);return result;
 }
-export function createCatalogLoader(fetchJSON){
+export function createCatalogLoader(fetchJSON,target='crmeb-pro'){
+ const base=sources[target];if(!base)throw Error('不支持的商城');
  let cache=null,pending=null;
  return async(force=false)=>{
   if(!force&&cache&&Date.now()-cache.time<300000)return cache.value;
   if(pending)return pending;
   pending=(async()=>{
    const responses=await Promise.allSettled(['/api/category','/api/brand'].map(path=>fetchJSON(base+path)));
-   const value={target:'crmeb-pro',categories:[],brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:'分类为商城前台可见分类；品牌为当前上架商品使用的可见品牌，暂不包含全部后台品牌。'};
+   const value={target,categories:[],brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:'分类为商城前台可见分类；品牌为当前上架商品使用的可见品牌，暂不包含全部后台品牌。'};
    for(const [i,kind]of ['category','brand'].entries()){
     try{if(responses[i].status!=='fulfilled')throw Error();value[kind==='category'?'categories':'brands']=options(responses[i].value,kind);}
     catch{value[kind+'Error']='读取商城'+(kind==='category'?'分类':'品牌')+'失败，请稍后刷新；不会使用手工填写的 ID';}
@@ -34,11 +35,12 @@ export function createCatalogLoader(fetchJSON){
  };
 }
 export function applyCatalog(product,catalog){
+ if((product.catalog_target||'crmeb-pro')!==catalog.target)throw Error('分类品牌与商品所属商城不匹配');
  if(product.category_id){
   if(catalog.categoryError)throw Error(catalog.categoryError);
   const category=catalog.categories.find(x=>x.id===product.category_id);
   if(!category)throw Error('所选商城分类已不可用，请刷新分类重新选择');
-  product.category=category.label;product.catalog_target='crmeb-pro';
+  product.category=category.label;product.catalog_target=catalog.target;
  }
  if(product.brand_ids?.length){
   if(catalog.brandError)throw Error(catalog.brandError);

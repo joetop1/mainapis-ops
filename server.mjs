@@ -14,10 +14,14 @@ const issuer=(process.env.CASDOOR_ISSUER||'https://auth.mainapis.com').replace(/
 const client=process.env.CASDOOR_CLIENT_ID||'', clientSecret=process.env.CASDOOR_CLIENT_SECRET||'';
 const allowed=(process.env.ALLOWED_SUBJECTS||'').split(',').map(s=>s.trim()).filter(Boolean);
 const webhook=process.env.N8N_WEBHOOK_URL||'', hookToken=process.env.N8N_WEBHOOK_TOKEN||'';
+const storeWebhook=process.env.N8N_STORE_WEBHOOK_URL||'',storeHookToken=process.env.N8N_STORE_WEBHOOK_TOKEN||'';
+const officialTargets=['crmeb-pro','crmeb-store'];
+const connectionFor=target=>target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:{url:'',token:''};
+const connected=target=>!!(connectionFor(target).url&&connectionFor(target).token);
 const host=demo?'127.0.0.1':(process.env.HOST||'0.0.0.0');
 if(!demo && new URL(origin).protocol!=='https:') throw Error('生产 APP_ORIGIN 必须是 HTTPS');
 if(!demo && new URL(issuer).protocol!=='https:') throw Error('Casdoor 必须是 HTTPS');
-if(webhook && new URL(webhook).protocol!=='https:') throw Error('n8n Webhook 必须是 HTTPS');
+if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(storeWebhook).protocol!=='https:')) throw Error('n8n Webhook 必须是 HTTPS');
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
 const targets=[{id:'crmeb-pro',name:'CRMEB 会员商城',version:'4.3',url:'https://www.xlupw.com/admin'},{id:'crmeb-store',name:'CRMEB 多门店',version:'4.2',url:'https://www.xlyp.cc/admin'},{id:'tigshop',name:'Tigshop 跨境 Java',version:'5.8.60',url:''}];
@@ -46,8 +50,8 @@ async function remoteJSON(url,options={}) {
   if(!r.ok)throw Error(`远程服务返回 HTTP ${r.status}`);
   const text=await r.text();if(text.length>2e6)throw Error('远程响应过大');return JSON.parse(text);
 }
-const loadCatalog=createCatalogLoader(remoteJSON);
-async function validateCatalog(p){if(p.category_id||p.brand_ids?.length)applyCatalog(p,await loadCatalog());return p;}
+const catalogLoaders=Object.fromEntries(officialTargets.map(target=>[target,createCatalogLoader(remoteJSON,target)]));
+async function validateCatalog(p){if(p.category_id||p.brand_ids?.length)applyCatalog(p,await catalogLoaders[p.catalog_target||'crmeb-pro']());return p;}
 async function discovery() {
   const meta=await remoteJSON(issuer+'/.well-known/openid-configuration');
   if(meta.issuer!==issuer)throw Error('Casdoor discovery issuer 与配置不一致');
@@ -64,7 +68,8 @@ function putProduct(owner,input) {
 async function dispatch(job,p,action='publish_draft',verification={}) {
   const payload={job_id:job.id,idempotency_key:job.id,action,target:job.target,product_revision:job.revision,product:p,...verification,callback:{url:origin+'/api/callback/'+job.id,token:job.token}};
   try {
-    const r=await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json','X-Ops-Token':hookToken,'Idempotency-Key':job.id},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(15000)});
+    const connection=connectionFor(job.target);if(!connection.url||!connection.token)throw Error('目标商城未配置');
+    const r=await fetch(connection.url,{method:'POST',headers:{'Content-Type':'application/json','X-Ops-Token':connection.token,'Idempotency-Key':job.id},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(15000)});
     if(r.ok)db.prepare("UPDATE jobs SET status='accepted',message='n8n 已接收，等待执行结果',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
     else db.prepare("UPDATE jobs SET status='unknown',message='n8n 返回非成功状态；请核对执行记录后再处理，避免重复创建商品',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
   } catch {db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
@@ -105,7 +110,7 @@ export const handler=async(req,res)=>{
       job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
       const snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
       if(route[2]){
-        if(job.target!=='crmeb-pro'||!snapshot)return json(res,409,{error:'此任务没有官方发布快照'});
+        if(!officialTargets.includes(job.target)||!snapshot)return json(res,409,{error:'此任务没有官方发布快照'});
         if(b.action==='inspect_publish'){
           if(snapshot.claimed || !['dispatching','accepted','unknown'].includes(job.status))return json(res,409,{error:'此任务不可重新创建，请先核对商城记录'});
         }else if(b.action==='publish_draft'){
@@ -137,19 +142,22 @@ export const handler=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     const owner=s.user.sub;
-    if(path==='/api/catalog/crmeb-pro'&&req.method==='GET')return json(res,200,await loadCatalog(new URL(req.url,origin).searchParams.get('refresh')==='1'));
+    const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store)$/);
+    if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoaders[catalogRoute[1]](new URL(req.url,origin).searchParams.get('refresh')==='1'));
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
     if(retryRoute && req.method==='POST'){
-      if(demo||!webhook||!hookToken)return json(res,503,{error:'尚未配置 n8n'});
+      if(demo)return json(res,503,{error:'演示模式不执行发布'});
       const job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(retryRoute[1],owner),snap=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(retryRoute[1]);
-      if(!job||job.target!=='crmeb-pro'||!snap||snap.claimed||!['accepted','unknown'].includes(job.status))return json(res,409,{error:'任务可能已开始创建，禁止重新发送'});
+      if(!job||!officialTargets.includes(job.target)||!snap||snap.claimed||!['accepted','unknown'].includes(job.status))return json(res,409,{error:'任务可能已开始创建，禁止重新发送'});
+      if(!connected(job.target))return json(res,503,{error:'该目标商城的 n8n 连接尚未配置'});
       audit(owner,'job.retry_unclaimed',job.id);await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
     }
     const verificationRoute=path.match(/^\/api\/jobs\/([^/]+)\/verify$/);
     if(verificationRoute && req.method==='POST'){
-      if(demo||!webhook||!hookToken)return json(res,503,{error:'尚未配置 n8n'});
+      if(demo)return json(res,503,{error:'演示模式不执行发布'});
       const id=verificationRoute[1],b=await body(req),job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(id,owner),snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
-      if(!job||job.target!=='crmeb-pro'||!snapshot?.claimed||!['awaiting_review','verifying','unknown','accepted'].includes(job.status))return json(res,409,{error:'该任务暂不可核对'});
+      if(!job||!officialTargets.includes(job.target)||!snapshot?.claimed||!['awaiting_review','verifying','unknown','accepted'].includes(job.status))return json(res,409,{error:'该任务暂不可核对'});
+      if(!connected(job.target))return json(res,503,{error:'该目标商城的 n8n 连接尚未配置'});
       const candidate=String(b.remote_id||'');if(!/^[1-9][0-9]{0,14}$/.test(candidate))throw Error('请填写商城中的数字商品 ID');
       const nonce=secret();db.prepare('UPDATE job_snapshots SET candidate_id=?,verification_nonce=? WHERE job_id=?').run(candidate,nonce,id);
       db.prepare("UPDATE jobs SET status='verifying',message='正在读取官方商品详情核对',updated=? WHERE id=?").run(now(),id);
@@ -157,7 +165,7 @@ export const handler=async(req,res)=>{
       await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
-    if(path==='/api/state' && req.method==='GET')return json(res,200,{products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-','')})),targets,connections:{casdoor:demo?'demo':'connected',n8n:!demo&&webhook&&hookToken?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
+    if(path==='/api/state' && req.method==='GET')return json(res,200,{products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-','')})),targets:targets.map(t=>({...t,configured:!demo&&connected(t.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&officialTargets.some(connected)?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b));return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
@@ -174,10 +182,12 @@ export const handler=async(req,res)=>{
       }
       if(match[2]==='approve'&&req.method==='POST'){const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'版本已变化，请重新检查'});await validateCatalog(p);assertPublishable(p);const result=db.prepare("UPDATE products SET status='approved',updated=? WHERE id=? AND revision=?").run(now(),r.id,b.revision);if(!result.changes)return json(res,409,{error:'版本已变化，请重新检查'});audit(owner,'product.approve',r.id);return json(res,200,{ok:true});}
       if(match[2]==='publish'&&req.method==='POST') {
-        if(demo||!webhook||!hookToken)return json(res,503,{error:'尚未配置 n8n 发布连接，未发送任务'});
+        if(demo)return json(res,503,{error:'尚未配置 n8n 发布连接，未发送任务'});
         const b=await body(req);const current=productFor(owner,r.id);if(current.status!=='approved'||b.revision!==current.revision)throw Error('请先审核当前版本商品');const publishingProduct=decodeProduct(current);assertPublishable(publishingProduct);
         if(!targets.some(t=>t.id===b.target))throw Error('目标商城无效');
-        if(publishingProduct.category_id&&b.target!=='crmeb-pro')throw Error('此分类属于 CRMEB 会员商城，请选择对应目标商城');
+        if(!connected(b.target))return json(res,503,{error:'该目标商城尚未配置独立 n8n 发布连接，未发送任务'});
+        if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
+        if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct);
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
         const id=uid(),t=now();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
