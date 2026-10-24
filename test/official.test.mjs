@@ -26,6 +26,10 @@ test('缺少真实运费/分类、无效SKU、负数或重复规格在创建前�
 test('单SKU有自定义规格也保留名称；无规格采用默认',()=>{
  const l=structuredClone(lease);l.product.skus=[l.product.skus[0]];assert.equal(buildOfficialProduct(l,cfg).spec_type,1);l.product.skus[0].spec='';const p=buildOfficialProduct(l,cfg);assert.equal(p.spec_type,0);assert.equal(p.attr.code,'SKU-A');
 });
+test('商城选中的分类ID直接发布，不依赖名称映射',()=>{
+ const l={...lease,product:{...lease.product,category:'服饰 / 袜子',category_id:97}};
+ assert.deepEqual(buildOfficialProduct(l,{...cfg,categoryMap:{}}).cate_id,[97]);
+});
 test('官方200不当成已核验成功；错误响应保守归为未知',()=>{
  assert.equal(officialCreateReceipt({status:200,msg:'保存成功'}).status,'awaiting_review');assert.equal(officialCreateReceipt({status:400}).status,'unknown');
  assert.equal(requireOfficialToken({status:200,data:{access_token:'secret',appwd:'not-returned'}}),'secret');assert.throws(()=>requireOfficialToken({status:200,data:{token:'legacy-only'}}));

@@ -37,6 +37,19 @@ test('请求处理链路：登录隔离、CSRF、商品导入、审核、编辑�
   assert.equal((await call(`/api/products/${imported.id}/approve`,'POST',{revision:1})).status,400);
   assert.equal((await call('/api/import','POST',{table:'商品标题\t宝贝ID\n重复来源\t456'})).data.results[0].ok,false);
   assert.equal((await call('/api/callback/fake','POST',{status:'succeeded'})).status,403);
+  const originalFetch=globalThis.fetch;let removed=false;
+  try{
+   globalThis.fetch=async url=>{assert.ok(String(url).startsWith('https://xlupw.com/api/'));return {ok:true,text:async()=>JSON.stringify({status:200,data:String(url).endsWith('category')?(removed?[]:[{id:97,cate_name:'服饰',children:[{id:116,cate_name:'袜子'}]}]):[{id:12,brand_name:'品牌A'}]})};};
+   assert.equal((await request(origin+'/api/catalog/crmeb-pro')).status,401);
+   assert.equal((await call('/api/catalog/crmeb-pro')).data.categories[1].label,'服饰 / 袜子');
+   const selected={...p,source_url:'https://detail.1688.com/offer/789.html',category:'客户端伪造分类名称',category_id:116,brand_ids:[12]};
+   r=await call('/api/products','POST',selected);assert.equal(r.status,201);const selectedId=r.data.id;
+   const stored=(await call('/api/state')).data.products.find(x=>x.id===selectedId);assert.equal(stored.category,'服饰 / 袜子');assert.equal(stored.category_id,116);
+   assert.equal((await call('/api/products','POST',{...selected,category_id:999})).status,400);
+   assert.equal((await call('/api/products','POST',{...selected,brand_ids:[999]})).status,400);
+   removed=true;await call('/api/catalog/crmeb-pro?refresh=1');
+   assert.equal((await call(`/api/products/${selectedId}/approve`,'POST',{revision:1})).status,400);
+  }finally{globalThis.fetch=originalFetch;}
   await call('/auth/logout','POST',{});assert.equal((await call('/api/state')).status,401);
  } finally {closeStore();await rm(data,{recursive:true,force:true});}
 });

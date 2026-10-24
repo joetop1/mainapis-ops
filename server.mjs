@@ -1,5 +1,6 @@
 import http from 'node:http';
 import {parseOfficialExport} from './official-export.mjs';
+import {createCatalogLoader,applyCatalog} from './catalog.mjs';
 import {readFile,mkdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join,dirname,resolve} from 'node:path';
@@ -45,6 +46,8 @@ async function remoteJSON(url,options={}) {
   if(!r.ok)throw Error(`远程服务返回 HTTP ${r.status}`);
   const text=await r.text();if(text.length>2e6)throw Error('远程响应过大');return JSON.parse(text);
 }
+const loadCatalog=createCatalogLoader(remoteJSON);
+async function validateCatalog(p){if(p.category_id||p.brand_ids?.length)applyCatalog(p,await loadCatalog());return p;}
 async function discovery() {
   const meta=await remoteJSON(issuer+'/.well-known/openid-configuration');
   if(meta.issuer!==issuer)throw Error('Casdoor discovery issuer 与配置不一致');
@@ -134,6 +137,7 @@ export const handler=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     const owner=s.user.sub;
+    if(path==='/api/catalog/crmeb-pro'&&req.method==='GET')return json(res,200,await loadCatalog(new URL(req.url,origin).searchParams.get('refresh')==='1'));
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
     if(retryRoute && req.method==='POST'){
       if(demo||!webhook||!hookToken)return json(res,503,{error:'尚未配置 n8n'});
@@ -154,25 +158,27 @@ export const handler=async(req,res)=>{
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/state' && req.method==='GET')return json(res,200,{products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-','')})),targets,connections:{casdoor:demo?'demo':'connected',n8n:!demo&&webhook&&hookToken?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
-    if(path==='/api/products' && req.method==='POST') {const b=await body(req);return json(res,201,{id:putProduct(owner,b)});}
+    if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b));return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
-      const results=b.products.map((p,i)=>{try{return{index:i,id:putProduct(owner,p),ok:true};}catch(e){return{index:i,ok:false,error:e.message};}});return json(res,200,{results});
+      const results=[];for(const [i,input]of b.products.entries()){try{const p=await validateCatalog(validateProduct(input));results.push({index:i,id:putProduct(owner,p),ok:true});}catch(e){results.push({index:i,ok:false,error:e.message});}}return json(res,200,{results});
     }
     const match=path.match(/^\/api\/products\/([^/]+)(?:\/(approve|publish))?$/);
     if(match){const r=productFor(owner,match[1]),p=decodeProduct(r);
       if(!match[2] && req.method==='PUT') {
         const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'商品已被更新，请刷新后重试'});
-        const v=validateProduct(b);if(v.source_url!==r.source)throw Error('来源链接不能修改');
+        const v=await validateCatalog(validateProduct(b));if(v.source_url!==r.source)throw Error('来源链接不能修改');
         const result=db.prepare("UPDATE products SET data=?,status='draft',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
         if(!result.changes)return json(res,409,{error:'商品已被更新，请刷新后重试'});
         audit(owner,'product.edit',r.id);return json(res,200,{ok:true});
       }
-      if(match[2]==='approve'&&req.method==='POST'){const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'版本已变化，请重新检查'});assertPublishable(p);const result=db.prepare("UPDATE products SET status='approved',updated=? WHERE id=? AND revision=?").run(now(),r.id,b.revision);if(!result.changes)return json(res,409,{error:'版本已变化，请重新检查'});audit(owner,'product.approve',r.id);return json(res,200,{ok:true});}
+      if(match[2]==='approve'&&req.method==='POST'){const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'版本已变化，请重新检查'});await validateCatalog(p);assertPublishable(p);const result=db.prepare("UPDATE products SET status='approved',updated=? WHERE id=? AND revision=?").run(now(),r.id,b.revision);if(!result.changes)return json(res,409,{error:'版本已变化，请重新检查'});audit(owner,'product.approve',r.id);return json(res,200,{ok:true});}
       if(match[2]==='publish'&&req.method==='POST') {
         if(demo||!webhook||!hookToken)return json(res,503,{error:'尚未配置 n8n 发布连接，未发送任务'});
         const b=await body(req);const current=productFor(owner,r.id);if(current.status!=='approved'||b.revision!==current.revision)throw Error('请先审核当前版本商品');const publishingProduct=decodeProduct(current);assertPublishable(publishingProduct);
         if(!targets.some(t=>t.id===b.target))throw Error('目标商城无效');
+        if(publishingProduct.category_id&&b.target!=='crmeb-pro')throw Error('此分类属于 CRMEB 会员商城，请选择对应目标商城');
+        await validateCatalog(publishingProduct);
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
         const id=uid(),t=now();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
         audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);await dispatch(job,publishingProduct);return json(res,202,{id});

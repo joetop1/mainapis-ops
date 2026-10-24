@@ -11,7 +11,7 @@ export function officialCreateReceipt(response){
 export function buildOfficialProduct(lease,config){
   const p=lease?.product;
   if(!p || !lease.marker || !/^OPS-[0-9a-f]{32}$/.test(lease.marker))throw Error('缺少可信任务标记');
-  const ids=config.categoryMap?.[p.category];
+  const ids=Number.isSafeInteger(p.category_id)&&p.category_id>0?[p.category_id]:config.categoryMap?.[p.category];
   if(!Array.isArray(ids)||!ids.length||ids.some(x=>!Number.isSafeInteger(x)||x<=0))throw Error('分类尚未映射到真实商城 ID');
   if(!Number.isSafeInteger(config.shippingTemplateId)||config.shippingTemplateId<=0)throw Error('请先设置商城真实运费模板 ID');
   if(typeof p.title!=='string'||!p.title.trim()||p.title.length>200)throw Error('标题为空或过长');
