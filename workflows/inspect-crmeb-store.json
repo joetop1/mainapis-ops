@@ -1,0 +1,152 @@
+{
+  "name": "OPS · 多门店4.2只读连接检查",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  },
+  "nodes": [
+    {
+      "id": "manual",
+      "name": "手动检查多门店连接",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "token",
+      "name": "获取多门店 Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.xlyp.cc/outapi/get_token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "validate",
+      "name": "校验多门店授权",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const response=$json;\nif(response.status!==undefined&&Number(response.status)!==200)throw Error('多门店授权失败，请核对专用接口账号、密码和权限；不要转发完整响应');\nconst data=response.data||response;\nconst token=data.token||data.access_token;\nif(typeof token!=='string'||!token)throw Error('多门店未返回 token；请查看 get_token 返回字段结构，不要分享令牌内容');\nreturn [{json:{token,exp_time:data.exp_time??null}}];"
+      }
+    },
+    {
+      "id": "categories",
+      "name": "只读查询分类（路径待实测）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.xlyp.cc/outapi/product/category",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "summary",
+      "name": "连接结果（可截图）",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const response=$json;\nconst success=Number(response.status)===200;\nconst data=response.data;\nconst rows=Array.isArray(data)?data:Array.isArray(data?.list)?data.list:[];\nreturn [{json:{target:'CRMEB 多门店 4.2',authorization:'已获取 Token',category_query:success?'返回成功':'返回业务失败，请核对分类接口路径和权限',category_count:rows.length,categories:rows.slice(0,10).map(x=>({id:x.id,name:x.cate_name||x.name||'',pid:x.pid??null})),note:'此流程只验证授权和读取分类，不创建、不更新商品。分类路径依据旧版官方文档，仍需在当前 4.2 实测。'}}];"
+      }
+    }
+  ],
+  "connections": {
+    "手动检查多门店连接": {
+      "main": [
+        [
+          {
+            "node": "获取多门店 Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取多门店 Token": {
+      "main": [
+        [
+          {
+            "node": "校验多门店授权",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "校验多门店授权": {
+      "main": [
+        [
+          {
+            "node": "只读查询分类（路径待实测）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "只读查询分类（路径待实测）": {
+      "main": [
+        [
+          {
+            "node": "连接结果（可截图）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
