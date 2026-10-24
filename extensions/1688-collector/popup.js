@@ -44,3 +44,11 @@ $('#send').onclick=e=>busy(e.currentTarget,async()=>{
 $('#download').onclick=()=>{try{const data=JSON.parse($('#json').value);const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-1688-product.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{status('JSON 格式不正确，请检查预览内容。');}};
 $('#json').addEventListener('input',()=>{try{const data=JSON.parse($('#json').value);if(data.products?.length===1)chrome.storage.local.set({draft:{product:data.products[0],warnings:['已恢复你编辑的采集草稿，请再次核对。']}});}catch{}});
 const {draft}=await chrome.storage.local.get('draft');if(draft){try{preview(draft);status('已恢复上次采集预览；点击「读取当前商品」可替换。');}catch{}}
+$('#diagnose').onclick=e=>busy(e.currentTarget,async()=>{
+ const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+ if(!tab?.id||!/^https:\/\/detail\.1688\.com\/offer\/\d+\.html(?:[?#]|$)/.test(tab.url||''))throw Error('请在 1688 商品详情页执行诊断。');
+ const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:collect1688,args:[true]});
+ if(!out.result?.diagnostics)throw Error(out.result?.error||'未取得诊断结果');
+ $('#diagnostics').hidden=false;$('#diagnosticText').value=JSON.stringify(out.result.diagnostics,null,2);status('诊断已生成，可下载文件用于适配当前页面。');
+});
+$('#downloadDiagnostic').onclick=()=>{const url=URL.createObjectURL(new Blob([$('#diagnosticText').value],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-1688-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};

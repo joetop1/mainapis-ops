@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {collect1688} from '../extensions/1688-collector/collector.js';
 import {validateProduct,assertPublishable} from '../core.mjs';
 const location={protocol:'https:',hostname:'detail.1688.com',pathname:'/offer/123456.html',href:'https://detail.1688.com/offer/123456.html?tracking=1'};
-function capture(root={},doc={},loc=location){return vm.runInNewContext('('+collect1688.toString()+')()',{
+function capture(root={},doc={},loc=location,diagnostic=false){return vm.runInNewContext('('+collect1688.toString()+')('+diagnostic+')',{
  location:loc,URL,window:{__INIT_DATA:root},document:{title:'测试商品 - 1688',querySelector:()=>null,querySelectorAll:()=>[],...doc}
 });}
 test('1688采集：仅返回商品字段，规范来源，保留规格并阻止未经定价审核',()=>{
@@ -16,10 +16,20 @@ test('1688采集：仅返回商品字段，规范来源，保留规格并阻止�
  assert.equal(JSON.stringify(result).includes('never-export'),false);assert.throws(()=>assertPublishable(validateProduct(result.product)));
 });
 test('1688采集：缺少页面状态时保守降级，不伪造价格或规格',()=>{
- const result=JSON.parse(JSON.stringify(capture({}, {querySelector:s=>s==='h1'?{textContent:'从页面读取标题'}:null})));
+ const result=JSON.parse(JSON.stringify(capture({}, {querySelector:s=>s==='.title-text'?{textContent:'从页面读取标题'}:null})));
  assert.equal(result.product.title,'从页面读取标题');assert.equal(result.product.skus.length,0);assert.ok(result.warnings.some(x=>x.includes('未识别到完整 SKU')));
  const wrong=capture({}, {},{...location,hostname:'evil.com'});assert.ok(wrong.error);
  const large={skuMap:Object.fromEntries(Array.from({length:101},(_,i)=>['规格'+i,{skuId:i+1,price:2}]))};assert.equal(capture(large).product.skus.length,0);
+});
+test('商品标题优先于店铺标题，忽略平台说明，解析严格JSON赋值中的skuInfoMap',()=>{
+ const hydration={offerId:'123456',subject:'真实商品',skuModel:{skuInfoMap:{'黑色>M':{skuId:'88',price:'3.98'}}}};
+ const detail={textContent:'商品详情 【平台活动下价格】非分销场景的活动说明',querySelectorAll:()=>[]};
+ const doc={querySelector:s=>s==='h1'?{textContent:'某某纺织品厂'}:s.includes('#desc-lazyload-container')?detail:null,querySelectorAll:s=>s==='script:not([src])'?[{textContent:'window.context = '+JSON.stringify(hydration)+';'}]:[]};
+ const result=capture({},doc);assert.equal(result.product.title,'真实商品');assert.equal(result.product.description,'');assert.equal(result.product.skus.length,1);assert.equal(result.product.skus[0].cost,3.98);
+});
+test('诊断只导出结构，不包含商品字段值或敏感字段',()=>{
+ const root={offer:{offerId:'123456',subject:'DO-NOT-EXPORT-TITLE',token:'DO-NOT-EXPORT-SECRET',skuModel:{skuInfoMap:{'颜色':{price:'987.65'}}}}};
+ const d=capture(root,{},location,true);const out=JSON.stringify(d);assert.ok(d.diagnostics);assert.equal(d.product,undefined);assert.equal(out.includes('DO-NOT-EXPORT'),false);assert.equal(out.includes('987.65'),false);assert.equal(out.includes('token'),false);assert.equal(d.diagnostics.matchedSkuMap,true);
 });
 test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
