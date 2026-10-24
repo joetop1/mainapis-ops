@@ -1,0 +1,16 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {generateKeyPairSync,sign} from 'node:crypto';
+import {sourceURL,validateProduct,assertPublishable,verifyIdToken,openStore,equal} from '../core.mjs';
+const product={source_url:'https://detail.1688.com/offer/123.html',title:'收纳盒',category:'家居',images:['https://example.com/image.png'],skus:[{sku:'A',spec:'白色',price:20,cost:10,stock:3}]};
+test('商品来源只允许规范 1688 商品页，删除跟踪参数',()=>{assert.equal(sourceURL(product.source_url+'?foo=1'),product.source_url);for(const v of ['http://detail.1688.com/offer/1.html','https://detail.1688.com.evil.com/offer/1.html','https://127.0.0.1/offer/1.html','https://detail.1688.com/other'])assert.throws(()=>sourceURL(v));});
+test('不完整商品可以入采集箱，但不能审核',()=>{const p=validateProduct({source_url:product.source_url});assert.equal(p.skus.length,0);assert.throws(()=>assertPublishable(p));assert.doesNotThrow(()=>assertPublishable(validateProduct(product)));});
+test('拒绝负数、非法库存、重复 SKU 和不安全图片协议',()=>{for(const skus of [[{sku:'A',cost:1,price:-1,stock:1}],[{sku:'A',cost:1,price:1,stock:.5}],[product.skus[0],product.skus[0]]])assert.throws(()=>validateProduct({...product,skus}));assert.throws(()=>validateProduct({...product,images:['javascript:alert(1)']}));});
+test('数据库唯一约束按账号隔离来源，防重复发布当前版本',()=>{const db=openStore(':memory:');for(const owner of ['alice','bob'])db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run(owner,owner,product.source_url,'{}','approved',1,'now','now');assert.throws(()=>db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('other','alice',product.source_url,'{}','draft',1,'now','now'));const insert=db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)');insert.run('j1','alice','alice',1,'crmeb-pro','unknown','secret','','','now','now');assert.throws(()=>insert.run('j2','alice','alice',1,'crmeb-pro','dispatching','secret','','','now','now'));db.close();});
+const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+const key={...publicKey.export({format:'jwk'}),kid:'test',use:'sig',alg:'RS256'};
+const opts={issuer:'https://auth.mainapis.com',audience:'ops',nonce:'nonce',now:1000};
+function jwt(claims={},header={alg:'RS256',kid:'test'}){const a=Buffer.from(JSON.stringify(header)).toString('base64url'),b=Buffer.from(JSON.stringify({iss:opts.issuer,aud:'ops',nonce:'nonce',sub:'u1',iat:900,exp:1100,...claims})).toString('base64url');return a+'.'+b+'.'+sign('RSA-SHA256',Buffer.from(a+'.'+b),privateKey).toString('base64url');}
+test('OIDC 验证有效签名、issuer、audience 和 nonce',()=>{assert.equal(verifyIdToken(jwt(),{keys:[key]},opts).sub,'u1');});
+test('OIDC 拒绝过期、错误账号接收者、错误 nonce 和不支持的签名算法',()=>{for(const claims of [{exp:999},{iss:'https://evil.com'},{aud:'other'},{nonce:'wrong'},{iat:2000},{aud:['ops','other'],azp:'other'}])assert.throws(()=>verifyIdToken(jwt(claims),{keys:[key]},opts));assert.throws(()=>verifyIdToken(jwt({},{alg:'none',kid:'test'}),{keys:[key]},opts));const token=jwt();assert.throws(()=>verifyIdToken(token.slice(0,-10)+'aaaaaaaaaa',{keys:[key]},opts));});
+test('空密钥不通过认证',()=>{assert.equal(equal('',''),false);assert.equal(equal('secret','secret'),true);assert.equal(equal('secret','other'),false);});

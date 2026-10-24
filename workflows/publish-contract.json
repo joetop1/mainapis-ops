@@ -1,0 +1,100 @@
+{
+  "name": "商品运营台 · 发布协议联调（不创建商品）",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none"
+  },
+  "nodes": [
+    {
+      "id": "ops-webhook",
+      "name": "接收发布任务",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "goods-ops-publish",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "goods-ops-publish",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate",
+      "name": "验证任务与固定回调地址",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const b = $json.body;\nif (!b || b.action !== 'publish_draft' || !['crmeb-pro','crmeb-store','tigshop'].includes(b.target)) throw new Error('Invalid action or target');\nif (typeof b.job_id !== 'string' || !/^[0-9a-f-]{36}$/.test(b.job_id)) throw new Error('Invalid job ID');\nif (b.callback?.url !== 'https://ops.mainapis.com/api/callback/' + b.job_id || typeof b.callback?.token !== 'string' || b.callback.token.length < 32) throw new Error('Invalid callback destination');\nreturn [{json:{callbackUrl:b.callback.url,callbackToken:b.callback.token,jobId:b.job_id}}];"
+      }
+    },
+    {
+      "id": "callback",
+      "name": "回传连接器未配置",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"status\": \"failed\", \"message\": \"联调模板：商城连接器尚未配置，未创建任何商品\"}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 15000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "接收发布任务": {
+      "main": [
+        [
+          {
+            "node": "验证任务与固定回调地址",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "验证任务与固定回调地址": {
+      "main": [
+        [
+          {
+            "node": "回传连接器未配置",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

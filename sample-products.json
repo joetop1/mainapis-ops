@@ -1,0 +1,15 @@
+{
+  "products": [
+    {
+      "source_url": "https://detail.1688.com/offer/123456789.html",
+      "title": "示例收纳盒（演示资料，请勿发布）",
+      "category": "家居 / 收纳",
+      "description": "仅用于测试导入格式，请替换为真实商品资料。",
+      "images": [],
+      "skus": [
+        {"sku": "DEMO-WHITE-S", "spec": "白色 / 小号", "cost": 8.5, "price": 19.9, "stock": 10},
+        {"sku": "DEMO-GREEN-L", "spec": "绿色 / 大号", "cost": 12, "price": 29.9, "stock": 8}
+      ]
+    }
+  ]
+}
