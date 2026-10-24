@@ -92,3 +92,14 @@ docker compose exec -T goods-ops node recover-store-presale.mjs
 现有 n8n 的「官方新增下架商品」JSON Body 可临时改为返回 `{...payload, slider_image:payload.slider_image.slice(0,5)}`，Publish 后生效，保留详情及 attrs。完整新模板另包含上述长度预算校验。
 
 此错误已进入 SQL 保存阶段，不能沿用前两次保存前失败的恢复脚本。需先查询当前商城是否存在该任务编码商品，核对事务回滚和当前最新执行/领取记录，再决定是否恢复；在证据不足时不解除创建保护。
+
+
+用户随后在多门店服务器用 ThinkPHP Db 按该任务编码查询，结果为 `[]`，确认当前没有相应商品记录。结合已观察的 SQL 1406 失败及已修改的轮播前 5 张请求，新增专用脚本 `recover-store-carousel.mjs --merchant-empty-confirmed`。仅针对同一固定任务，要求已有 presale 恢复审计且之后只领取过一次、无商品 ID/核验信息、状态与原提示匹配；只可执行一次。不适用于之后的任何新失败。
+
+Mac 推送、OPS 服务器拉取并重建容器后：
+
+```bash
+docker compose exec -T goods-ops node recover-store-carousel.mjs --merchant-empty-confirmed
+```
+
+该标志只用于已实际查询为无记录的本次情况，不代表脚本会连接另一台商城服务器自行查证。恢复后从 OPS 重发原任务，不能单独执行新增节点。保留全部源图片及 SKU，轮播缩减只发生在发布载荷。48 项本地测试通过。
