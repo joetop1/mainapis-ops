@@ -5,7 +5,7 @@ import vm from 'node:vm';
 test('多门店探测只授权和读取，不使用会员凭据或写商品接口',()=>{
  const w=JSON.parse(readFileSync(new URL('../workflows/inspect-crmeb-store.json',import.meta.url)));
  const requests=w.nodes.filter(x=>x.type==='n8n-nodes-base.httpRequest');assert.equal(requests.length,2);
- assert.equal(requests[0].parameters.url,'https://www.xlyp.cc/outapi/get_token');assert.equal(requests[0].credentials,undefined);assert.equal(requests[1].parameters.method,'GET');
+ assert.equal(requests[0].parameters.url,'https://www.xlyp.cc/outapi/get_token');assert.equal(requests[0].credentials,undefined);assert.equal(requests[1].parameters.method,'GET');assert.equal(requests[1].parameters.url,'https://www.xlyp.cc/outapi/category/list');
  assert.equal(w.active,false);assert.equal(w.settings.saveManualExecutions,false);
  for(const r of requests){assert.equal(r.retryOnFail,false);assert.equal(r.parameters.options.redirect.redirect.followRedirects,false);}
  const validate=w.nodes.find(x=>x.id==='validate').parameters.jsCode;

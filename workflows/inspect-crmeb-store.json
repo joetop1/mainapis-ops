@@ -59,7 +59,7 @@
     },
     {
       "id": "categories",
-      "name": "只读查询分类（路径待实测）",
+      "name": "只读查询多门店分类",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -68,7 +68,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "https://www.xlyp.cc/outapi/product/category",
+        "url": "https://www.xlyp.cc/outapi/category/list",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -99,7 +99,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const response=$json;\nconst success=Number(response.status)===200;\nconst data=response.data;\nconst rows=Array.isArray(data)?data:Array.isArray(data?.list)?data.list:[];\nreturn [{json:{target:'CRMEB 多门店 4.2',authorization:'已获取 Token',category_query:success?'返回成功':'返回业务失败，请核对分类接口路径和权限',category_count:rows.length,categories:rows.slice(0,10).map(x=>({id:x.id,name:x.cate_name||x.name||'',pid:x.pid??null})),note:'此流程只验证授权和读取分类，不创建、不更新商品。分类路径依据旧版官方文档，仍需在当前 4.2 实测。'}}];"
+        "jsCode": "const response=$json;\nconst success=Number(response.status)===200;\nconst data=response.data;\nconst rows=Array.isArray(data)?data:Array.isArray(data?.list)?data.list:[];\nreturn [{json:{target:'CRMEB 多门店 4.2',authorization:'已获取 Token',category_query:success?'返回成功':'返回业务失败，请核对分类接口路径和权限',category_count:rows.length,categories:rows.slice(0,10).map(x=>({id:x.id,name:x.cate_name||x.name||'',pid:x.pid??null})),note:'此流程只验证授权和读取分类，不创建、不更新商品。分类路径已根据当前服务器路由确认；字段内容仍需实测。'}}];"
       }
     }
   ],
@@ -130,14 +130,14 @@
       "main": [
         [
           {
-            "node": "只读查询分类（路径待实测）",
+            "node": "只读查询多门店分类",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "只读查询分类（路径待实测）": {
+    "只读查询多门店分类": {
       "main": [
         [
           {

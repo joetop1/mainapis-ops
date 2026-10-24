@@ -17,7 +17,9 @@
 4. 点击 Execute workflow。此流程为手动触发，不需要 Publish，不更改 OPS 的现有 Webhook。
 5. 最后「连接结果（可截图）」只返回分类概要，不包含 token。不要截图或转发 Token 节点的完整返回值，可能含授权秘密。
 
-Token 接口来自用户提供的当前系统说明。分类查询 `/outapi/product/category` 来自旧版多门店官方文档 https://doc.crmeb.com/pro/crmebprov3/12754 ，不是已经确认的 4.2 路径。如分类节点返回 404，需要当前系统的接口文档；401/403 则需核对权限及请求头。若 Token 节点提示重定向，先按站点实际规范域名调整两处 URL，保持禁止自动携带凭据重定向。
+Token 接口来自用户提供的当前系统说明。服务器 `/www/wwwroot/xlyp.cc/route/out.php` 已确认分类 `GET /outapi/category/list`、分类详情 `GET /outapi/category/:id`、新增 `POST /outapi/product`、编辑 `PUT /outapi/product/:id`、商品详情 `GET /outapi/product/:id`。旧版官方文档的 `/outapi/product/category` 路径不适用于当前系统，探测模板已修正。若分类返回空数组，不代表商城没有分类，需要核对分类控制器过滤条件。如 Token 节点提示重定向，按站点实际规范域名调整 URL，保持禁止携带凭据自动重定向。
+
+接下来只需读取当前服务器 `app/controller/out/Product.php` 的 `productSave` 与 `productInfo` 方法，核对字段和返回结构；不修改商城程序。
 
 ## 后续接入所需证据
 
