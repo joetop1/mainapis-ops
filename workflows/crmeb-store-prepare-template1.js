@@ -34,7 +34,7 @@ function buildOfficialProduct(lease,config){
   });
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   if(p.detail_images!==undefined&&(!Array.isArray(p.detail_images)||p.detail_images.length>100))throw Error('详情图数量不正确');
-  const detailImages=(p.detail_images||[]).map(u=>{const x=new URL(u);if(x.protocol!=='https:'||x.username||x.password)throw Error('详情图必须使用 HTTPS 地址');return x.href;});
+  const detailImages=(p.detail_images||[]).map(u=>{if(typeof u!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(u)||/[\u0000-\u0020\\]/.test(u))throw Error('详情图必须使用无账号密码的 HTTPS 地址');return u;});
   const description=escape(p.description||'').replaceAll('\n','<br>')+detailImages.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
   return {...JSON.parse(JSON.stringify(CR_DEFAULTS)),store_name:p.title,store_info:String(p.description||'').slice(0,100),cate_id:ids,slider_image:images,description,
     is_show:0,auto_on_time:0,auto_off_time:0,is_copy:0,ficti:virtualSales,sales:0,brand_id:p.brand_ids??[],store_label_id:p.tag_ids??[],min_qty:1,spec_type:multi?1:0,

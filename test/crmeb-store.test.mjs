@@ -43,3 +43,16 @@ test('明确选择所有门店的商品不会被默认值覆盖',()=>{
  const p=buildStoreProduct(all,config);assert.equal(p.applicable_type,1);
  assert.equal(verifyStoreProduct({status:200,data:{...p,id:8}},all,config).status,'succeeded');
 });
+
+test('完整准备节点在没有 URL 全局对象的 n8n 沙箱中处理详情图',()=>{
+ for(const target of ['store','member']){
+  const source=readFileSync(new URL(`../workflows/crmeb-${target}-prepare-template1.js`,import.meta.url),'utf8');
+  const snapshot=structuredClone(lease);snapshot.action='publish_draft';snapshot.product.detail_images=['https://example.com/detail.jpg?a=1&b=2'];
+  if(target==='member')snapshot.product.catalog_target='crmeb-pro';
+  const run=()=>vm.runInNewContext(`(function(){${source}})()`,{$:()=>({first:()=>({json:snapshot})}),$json:{status:200,data:{token:'test',access_token:'test'}}});
+  assert.ok(run()[0].json.payload.description.includes('detail.jpg?a=1&amp;b=2'));
+  for(const invalid of ['https://user:pass@example.com/a.jpg','http://example.com/a.jpg','https://example.com\\@evil.com/a.jpg']){
+   snapshot.product.detail_images=[invalid];assert.throws(run,/详情图/);
+  }
+ }
+});
