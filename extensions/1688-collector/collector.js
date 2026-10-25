@@ -5,6 +5,8 @@ export function collect1688(diagnostic=false) {
   const clean=(v,max=200)=>typeof v==='string'?v.replace(/\s+/g,' ').trim().slice(0,max):'';
   const text=selector=>clean(document.querySelector(selector)?.textContent);
   const image=v=>{try{const u=new URL(typeof v==='string'?v:'',location.href);return u.protocol==='https:'&&!u.username&&!u.password&&/(^|\.)alicdn\.com$/.test(u.hostname)&&/\.(?:jpe?g|png|webp)(?:_|$)/i.test(u.pathname)?u.href:'';}catch{return '';}};
+  const detailPictures=[];
+  const addDetailImage=v=>{const u=image(v);if(u&&!detailPictures.includes(u)&&detailPictures.length<100)detailPictures.push(u);};
   const pictures=[],addImage=v=>{const u=image(v);if(u&&!pictures.includes(u)&&pictures.length<30)pictures.push(u);};
   const roots=[],rootNames=[],schemas=[];
   const rootKeys=['__INIT_DATA','__INIT_DATA__','__INITIAL_STATE__','__NEXT_DATA__','__GLOBAL_DATA','__GLOBAL_DATA__','__DATA__','__pageData','iDetailData','context'];
@@ -62,7 +64,8 @@ export function collect1688(diagnostic=false) {
   addImage(document.querySelector('meta[property="og:image"]')?.content);
   for(const img of [...document.querySelectorAll('.detail-gallery img, .detail-gallery-preview img, .detail-gallery-img img, .detail-gallery-turn img')].slice(0,100))addImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.currentSrc||img.src);
   const detail=document.querySelector('#desc-lazyload-container, #description, .offer-description');
-  if(detail){const detailText=clean(detail.innerText||detail.textContent,10000);if(!/平台活动下价格|非分销场景|划线价格|价格说明/.test(detailText))description=detailText||description;for(const img of [...detail.querySelectorAll('img')].slice(0,30))addImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.src);}
+  if(detail){const detailText=clean(detail.innerText||detail.textContent,10000);if(!/平台活动下价格|非分销场景|划线价格|价格说明/.test(detailText))description=detailText||description;for(const img of [...detail.querySelectorAll('img')].slice(0,100))addDetailImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.getAttribute('data-ks-lazyload')||img.src);
+    for(const frame of [...detail.querySelectorAll('iframe')]){try{const doc=frame.contentDocument;if(doc)for(const img of [...doc.querySelectorAll('img')].slice(0,100))addDetailImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.src);}catch{}}}
   const skus=[],specNames=new Set(),codes=new Set(),props=new Map(),propImages=new Map();
   const rememberImage=(key,url)=>{if(!key||!url)return;const urls=propImages.get(key)||new Set();urls.add(url);propImages.set(key,urls);};
   if(skuContainer){
@@ -113,7 +116,8 @@ export function collect1688(diagnostic=false) {
   if(!pictures.length)warnings.push('未识别到商品图片，请等待页面加载后重试，或在 OPS 补充。');
   if(!title)warnings.push('未识别到商品标题，请在 OPS 补充。');
   warnings.push('采购成本仅为页面识别值：阶梯价、起订量和规格须人工核对；售价与库存统一为 0，填写后才能审核。');
+  if(!detailPictures.length)warnings.push('未采集到真实商品详情图。请滚动到1688商品详情并等待加载后重新读取；不会用主图或SKU配图代替详情。');
   warnings.push('目标分类、品牌和标签需在 OPS 设置；详情仅含当前已加载内容，嵌入页面中的详情可能缺失。');
-  if(diagnostic)return {diagnostics:{version:'0.1.5',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
-  return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,skus},warnings};
+  if(diagnostic)return {diagnostics:{version:'0.1.6',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
+  return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,detail_images:detailPictures,skus},warnings};
 }

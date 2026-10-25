@@ -33,6 +33,8 @@ export function validateProduct(input) {
   p.virtual_sales=input.virtual_sales??0;
   if(!Number.isSafeInteger(p.virtual_sales)||p.virtual_sales<0||p.virtual_sales>2147483647)throw Error('虚拟销量必须是 0–2147483647 的整数');
   p.images=(Array.isArray(input.images)?input.images:[]).slice(0,30).map(v=>{ const u=new URL(v); if(u.protocol!=='https:' || u.username || u.password) throw Error('图片地址必须使用 HTTPS'); return u.href; });
+  if(input.detail_images!==undefined&&(!Array.isArray(input.detail_images)||input.detail_images.length>100))throw Error('详情图必须为数组且最多 100 张');
+  p.detail_images=(input.detail_images||[]).map(v=>{const u=new URL(v);if(u.protocol!=='https:'||u.username||u.password)throw Error('详情图必须使用无账号密码的 HTTPS 地址');return u.href;});
   p.skus=(Array.isArray(input.skus)?input.skus:[]).slice(0,500).map(s=>{
     const v={sku:String(s.sku||'').trim().slice(0,100),spec:String(s.spec||'').slice(0,300),cost:Number(s.cost),price:Number(s.price),stock:Number(s.stock)};
     if(s.image){const u=new URL(s.image);if(u.protocol!=='https:'||u.username||u.password)throw Error('SKU 图片必须是无账号密码的 HTTPS 地址');v.image=u.href;}

@@ -59,3 +59,8 @@ test('可导入工作流：凭据不入文件，预检先于领取，HTTP不自�
  assert.equal(w.connections['创建还是核对'].main[0][0].node,'锁定一次创建');assert.equal(w.connections['锁定一次创建'].main[0][0].node,'官方新增下架商品');
  for(const n of w.nodes.filter(n=>n.type==='n8n-nodes-base.code'))assert.doesNotThrow(()=>new vm.Script('(function(){'+n.parameters.jsCode+'})()'));
 });
+test('商品详情只使用独立详情图片，不使用主图或规格图片代替',()=>{
+ const l=structuredClone(lease);l.product.detail_images=['https://example.com/detail.jpg'];
+ const payload=buildOfficialProduct(l,cfg);assert.ok(payload.description.includes('https://example.com/detail.jpg'));assert.equal(payload.description.includes(l.product.images[0]),false);
+ delete l.product.detail_images;assert.equal(buildOfficialProduct(l,cfg).description.includes('<img'),false);
+});

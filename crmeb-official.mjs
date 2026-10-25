@@ -33,7 +33,9 @@ export function buildOfficialProduct(lease,config){
     return {attr_arr:[value],detail:{'规格':value},price:s.price,cost:s.cost,stock:s.stock,pic,ot_price:s.price,code:s.sku,bar_code:'',weight:0,volume:0,is_show:1,is_default_select:0,is_virtual:0,brokerage:0,brokerage_two:0,vip_price:0,vip_proportion:0,unique:''};
   });
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const description=escape(p.description||'').replaceAll('\n','<br>')+images.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
+  if(p.detail_images!==undefined&&(!Array.isArray(p.detail_images)||p.detail_images.length>100))throw Error('详情图数量不正确');
+  const detailImages=(p.detail_images||[]).map(u=>{const x=new URL(u);if(x.protocol!=='https:'||x.username||x.password)throw Error('详情图必须使用 HTTPS 地址');return x.href;});
+  const description=escape(p.description||'').replaceAll('\n','<br>')+detailImages.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
   return {...JSON.parse(JSON.stringify(CR_DEFAULTS)),store_name:p.title,store_info:String(p.description||'').slice(0,100),cate_id:ids,slider_image:images,description,
     is_show:0,auto_on_time:0,auto_off_time:0,is_copy:0,ficti:virtualSales,sales:0,brand_id:p.brand_ids??[],store_label_id:p.tag_ids??[],min_qty:1,spec_type:multi?1:0,
     freight:3,temp_id:config.shippingTemplateId,delivery_type:[1],product_clear:['is_general_product'],

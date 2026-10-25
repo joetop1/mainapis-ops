@@ -26,3 +26,4 @@ test('supplies gallery and SKU thumbnail fields used by the Tigshop admin',()=>{
  assert.equal(e.imgList[0].picThumb,lease.product.images[0]);
  for(const [i,a] of e.attrList.spe[0].attrList.entries())assert.equal(a.attrPicThumb,lease.product.skus[i].image);
 });
+test('Tigshop detail only contains the explicit detail gallery',()=>{const l=structuredClone(lease);l.product.detail_images=['https://example.com/real-detail.jpg'];const payload=buildTigshopProduct(l,fx,shipping);assert.ok(payload.productDesc.includes('real-detail.jpg'));assert.equal(payload.productDesc.includes(l.product.images[0]),false);});
