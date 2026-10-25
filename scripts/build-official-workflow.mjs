@@ -1,3 +1,4 @@
+import {officialCreateReceipt} from '../crmeb-official.mjs';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {join,dirname} from 'node:path';
@@ -26,8 +27,12 @@ return [{json:{action:b.action,verification_nonce:b.verification_nonce||'',callb
  code('verify','核验实际入库结果',1400,library+`\nconst lease=$('读取可信任务快照').first().json;\nconst config=$('配置分类运费并转换字段').first().json.config;\nreturn [{json:verifyOfficialProduct($json,lease,config)}];`),
  http('callback','回传 OPS 结果',1800,{method:'POST',url:'={{ $("校验请求").first().json.callbackUrl }}',...bearer('={{ "Bearer " + $("校验请求").first().json.callbackToken }}'),...body('={{ {...$json, verification_nonce:$("读取可信任务快照").first().json.action === "verify_draft" ? $("读取可信任务快照").first().json.verification_nonce : ""} }}')})
 ];
+// Continue only to classify and report the uncertain result; never retry the write.
+for(const id of ['create','detail'])nodes.find(n=>n.id===id).onError='continueRegularOutput';
 nodes.find(n=>n.id==='detail').position=[1200,240];nodes.find(n=>n.id==='verify').position=[1400,240];
 const connections={};const link=(a,b)=>connections[a]={main:[[{node:b,type:'main',index:0}]]};
 for(const [a,b]of [['接收 OPS 官方接口任务','校验请求'],['校验请求','读取可信任务快照'],['读取可信任务快照','获取 CRMEB Token'],['获取 CRMEB Token','配置分类运费并转换字段'],['配置分类运费并转换字段','创建还是核对'],['锁定一次创建','官方新增下架商品'],['官方新增下架商品','创建后等待核对ID'],['创建后等待核对ID','回传 OPS 结果'],['官方读取商品详情','核验实际入库结果'],['核验实际入库结果','回传 OPS 结果']])link(a,b);
 connections['创建还是核对']={main:[[{node:'锁定一次创建',type:'main',index:0}],[{node:'官方读取商品详情',type:'main',index:0}]]};
 writeFileSync(join(root,'workflows/publish-crmeb-official.json'),JSON.stringify({name:'OPS · CRMEB官方接口下架入库与核对',active:false,settings:{executionOrder:'v1',saveDataSuccessExecution:'none',saveDataErrorExecution:'none',saveManualExecutions:false},nodes,connections},null,2)+'\n');
+
+writeFileSync(join(root,'workflows/crmeb-create-receipt.js'),officialCreateReceipt.toString()+'\nreturn [{json:officialCreateReceipt($json)}];\n');
