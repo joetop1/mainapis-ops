@@ -12,7 +12,7 @@ test('1688采集：仅返回商品字段，规范来源，保留规格并阻止�
  const data={offer:{subject:' 测试商品 ',imageList:['//cbu01.alicdn.com/img/a.jpg','https://cbu01.alicdn.com/img/a.jpg','https://evil.com/a.jpg'],skuInfo:{skuProps:[{pid:1,prop:'颜色',value:[{vid:2,name:'黑色'}]},{pid:3,prop:'尺码',value:[{vid:4,name:'M'}]}],skuMap:{'1:2;3:4':{skuId:'777',price:'12.50',canBookCount:123}}},token:'never-export',recommend:{subject:'错误商品',imageList:['https://cbu01.alicdn.com/wrong.jpg']}}};
  const result=JSON.parse(JSON.stringify(capture(data)));
  assert.equal(result.product.source_url,'https://detail.1688.com/offer/123456.html');assert.equal(result.product.title,'测试商品');assert.equal(result.product.images.length,1);
- assert.deepEqual(result.product.skus,[{sku:'ALI-777',spec:'颜色：黑色 / 尺码：M',cost:12.5,price:0,stock:0}]);
+ assert.deepEqual(result.product.skus,[{sku:'ALI-777',spec:'黑色 / M',spec_values:['黑色','M'],cost:12.5,price:0,stock:0}]);
  assert.equal(JSON.stringify(result).includes('never-export'),false);assert.throws(()=>assertPublishable(validateProduct(result.product)));
 });
 test('1688采集：缺少页面状态时保守降级，不伪造价格或规格',()=>{

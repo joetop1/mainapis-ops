@@ -3,7 +3,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {join,dirname} from 'node:path';
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-const library=readFileSync(join(root,'crmeb-official.mjs'),'utf8').replaceAll('export ','');
+const library=readFileSync(join(root,'public/specifications.js'),'utf8').replaceAll('export ','')+'\n'+readFileSync(join(root,'crmeb-official.mjs'),'utf8').replace(/^import .*;\n/gm,'').replaceAll('export ','');
 const cfg={categoryMap:{'炮机':[116]},shippingTemplateId:0};
 const code=(id,name,x,source)=>({id,name,type:'n8n-nodes-base.code',typeVersion:2,position:[x,0],parameters:{jsCode:source}});
 const http=(id,name,x,parameters)=>({id,name,type:'n8n-nodes-base.httpRequest',typeVersion:4.2,position:[x,0],parameters:{...parameters,options:{redirect:{redirect:{followRedirects:false}},timeout:30000}},retryOnFail:false});

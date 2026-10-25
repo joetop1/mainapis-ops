@@ -1,3 +1,4 @@
+import {specificationMatrix} from './public/specifications.js';
 // Official outapi/product field defaults, checked against the supplied Pro 4.3 controller.
 export function requireOfficialToken(response){
   if(Number(response?.status)!==200 || typeof response?.data?.access_token!=='string' || !response.data.access_token)throw Error('CRMEB 授权未成功，请检查凭据或权限；不要将整个响应贴出');
@@ -19,18 +20,28 @@ export function buildOfficialProduct(lease,config){
   const images=p.images.map(x=>{if(typeof x!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(x)||/[\u0000-\u0020]/.test(x))throw Error('图片必须是无账号密码的HTTPS地址');return x;});
   if(!Array.isArray(p.skus)||!p.skus.length||p.skus.length>100)throw Error('请使用1–100个SKU');
   const codes=new Set(),specs=new Set();
+  const matrix=specificationMatrix(p);
   for(const key of ['brand_ids','tag_ids'])if(p[key]!==undefined&&(!Array.isArray(p[key])||p[key].length>50||p[key].some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(p[key]).size!==p[key].length))throw Error('品牌或商品标签 ID 无效');
   const virtualSales=p.virtual_sales??0;
   if(!Number.isSafeInteger(virtualSales)||virtualSales<0||virtualSales>2147483647)throw Error('虚拟销量无效');
-  const multi=config.forceMulti===true||p.skus.length>1||Boolean(String(p.skus[0].spec||'').trim());
-  const attrs=p.skus.map(s=>{
+  const multi=config.forceMulti===true||p.skus.length>1||matrix.structured||Boolean(String(p.skus[0].spec||'').trim());
+  const attrs=p.skus.map((s,i)=>{
     if(typeof s.sku!=='string'||!/^[A-Za-z0-9_.-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU编码不正确或重复');codes.add(s.sku);
-    const value=multi?String(s.spec||'').trim():'默认';
-    if(!value||value.length>100||/[,;=]/.test(value)||specs.has(value))throw Error('规格为空、重复或含不支持的分隔符');specs.add(value);
+    const values=matrix.structured?matrix.rows[i]:[multi?String(s.spec||'').trim():'默认'];
+    const value=JSON.stringify(values);
+    if(values.some(v=>!v||v.length>100||/[,;=]/.test(v))||specs.has(value))throw Error('规格为空、重复或含不支持的分隔符');specs.add(value);
     if(!Number.isFinite(s.price)||s.price<=0||s.price>99999999||!Number.isFinite(s.cost)||s.cost<0||s.cost>99999999||!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('价格、成本或库存错误');
     const pic=s.image||images[0];
     if(typeof pic!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(pic)||/[\u0000-\u0020]/.test(pic))throw Error('SKU图片必须是无账号密码的HTTPS地址');
-    return {attr_arr:[value],detail:{'规格':value},price:s.price,cost:s.cost,stock:s.stock,pic,ot_price:s.price,code:s.sku,bar_code:'',weight:0,volume:0,is_show:1,is_default_select:0,is_virtual:0,brokerage:0,brokerage_two:0,vip_price:0,vip_proportion:0,unique:''};
+    return {attr_arr:values,detail:Object.fromEntries(matrix.names.map((name,j)=>[name,values[j]])),price:s.price,cost:s.cost,stock:s.stock,pic,ot_price:s.price,code:s.sku,bar_code:'',weight:0,volume:0,is_show:1,is_default_select:0,is_virtual:0,brokerage:0,brokerage_two:0,vip_price:0,vip_proportion:0,unique:''};
+  });
+  const items=matrix.names.map((name,j)=>{
+    const seen=new Set(),detail=[];
+    for(const row of attrs){const value=row.attr_arr[j];if(seen.has(value))continue;seen.add(value);
+      const pics=new Set(attrs.filter(a=>a.attr_arr[j]===value).map(a=>a.pic));
+      detail.push({value,pic:pics.size===1?[...pics][0]:''});
+    }
+    return {value:name,detail};
   });
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   if(p.detail_images!==undefined&&(!Array.isArray(p.detail_images)||p.detail_images.length>100))throw Error('详情图数量不正确');
@@ -41,7 +52,7 @@ export function buildOfficialProduct(lease,config){
     freight:3,temp_id:config.shippingTemplateId,delivery_type:[1],product_clear:['is_general_product'],
     // Deliberately empty: CRMEB treats matching soure_link as an UPDATE even through POST create.
     // The original source remains in the immutable OPS snapshot, linked by the task marker.
-    soure_link:'',code:lease.marker,items:[{value:'规格',detail:attrs.map(s=>({value:s.attr_arr[0],pic:s.pic}))}],attrs:multi?attrs:[],attr:multi?[]:attrs[0]};
+    soure_link:'',code:lease.marker,items,attrs:multi?attrs:[],attr:multi?[]:attrs[0]};
 }
 export function verifyOfficialProduct(response,lease,config){
   const pending=message=>({status:'awaiting_review',message});
@@ -58,7 +69,7 @@ export function verifyOfficialProduct(response,lease,config){
   if(lease.product.virtual_sales!==undefined&&Number(d.ficti)!==expected.ficti)return pending('虚拟销量不一致，请在商城核对');
   const actual=expected.spec_type?d.attrs:[d.attr],want=expected.spec_type?expected.attrs:[expected.attr];
   if(!Array.isArray(actual)||actual.length!==want.length)return pending('SKU 数量不一致，未确认成功');
-  for(const sku of want){const row=actual.find(s=>s?.code===sku.code);if(!row||Number(row.price)!==sku.price||Number(row.cost)!==sku.cost||Number(row.stock)!==sku.stock)return pending('SKU 编码、价格、成本或库存不一致');if(expected.spec_type&&row.detail?.['规格']!==sku.detail['规格'])return pending('SKU 规格内容不一致');}
+  for(const sku of want){const row=actual.find(s=>s?.code===sku.code);if(!row||Number(row.price)!==sku.price||Number(row.cost)!==sku.cost||Number(row.stock)!==sku.stock)return pending('SKU 编码、价格、成本或库存不一致');if(expected.spec_type&&(Object.keys(row.detail||{}).length!==Object.keys(sku.detail).length||Object.entries(sku.detail).some(([name,value])=>row.detail?.[name]!==value)))return pending('SKU 规格维度或内容不一致');}
   for(const source of lease.product.skus.filter(s=>s.image)){const row=actual.find(s=>s?.code===source.sku);if((row?.pic||row?.image)!==source.image)return pending('SKU 图片地址不一致，请检查该规格图片');}
   return {status:'succeeded',remote_id:String(d.id),message:'官方商品详情已核验：任务编码、下架状态、标题、分类、SKU 和价格库存一致；图片尚需人工检查'};
 }

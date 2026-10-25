@@ -1,7 +1,7 @@
 import {readFileSync,writeFileSync} from 'node:fs';
 const root=new URL('../',import.meta.url);
 const workflow=JSON.parse(readFileSync(new URL('workflows/publish-crmeb-official.json',root)));
-const base=readFileSync(new URL('crmeb-official.mjs',root),'utf8').replaceAll('export ','');
+const base=readFileSync(new URL('public/specifications.js',root),'utf8').replaceAll('export ','')+'\n'+readFileSync(new URL('crmeb-official.mjs',root),'utf8').replace(/^import .*;\n/gm,'').replaceAll('export ','');
 const store=readFileSync(new URL('crmeb-store.mjs',root),'utf8').replace(/^import .*;\n/m,'').replaceAll('export ','');
 workflow.name='OPS · CRMEB多门店4.2下架入库与核对';
 for(const node of workflow.nodes){

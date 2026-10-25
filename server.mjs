@@ -127,7 +127,7 @@ const handleRequest=async(req,res)=>{
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/specifications.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
     let s=sessionGet(req);if(s?.user)actorContext.getStore().actor=s.user.sub;
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}

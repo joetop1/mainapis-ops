@@ -1,3 +1,4 @@
+import {specificationMatrix} from './public/specifications.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes, timingSafeEqual, createPublicKey, verify } from 'node:crypto';
 export const uid = () => randomUUID();
@@ -37,10 +38,13 @@ export function validateProduct(input) {
   p.detail_images=(input.detail_images||[]).map(v=>{const u=new URL(v);if(u.protocol!=='https:'||u.username||u.password)throw Error('详情图必须使用无账号密码的 HTTPS 地址');return u.href;});
   p.skus=(Array.isArray(input.skus)?input.skus:[]).slice(0,500).map(s=>{
     const v={sku:String(s.sku||'').trim().slice(0,100),spec:String(s.spec||'').slice(0,300),cost:Number(s.cost),price:Number(s.price),stock:Number(s.stock)};
+    if(s.spec_values!==undefined)v.spec_values=s.spec_values;
     if(s.image){const u=new URL(s.image);if(u.protocol!=='https:'||u.username||u.password)throw Error('SKU 图片必须是无账号密码的 HTTPS 地址');v.image=u.href;}
     if(!v.sku || !Number.isFinite(v.cost) || !Number.isFinite(v.price) || v.cost<0 || v.price<0 || !Number.isSafeInteger(v.stock) || v.stock<0) throw Error('SKU 编码、成本、售价或库存格式错误');
     return v;
   });
+  const matrix=specificationMatrix({...p,...(input.spec_names!==undefined?{spec_names:input.spec_names}:{})});
+  if(matrix.structured){p.spec_names=matrix.names;p.skus.forEach((s,i)=>{s.spec_values=matrix.rows[i];s.spec=matrix.rows[i].join(' / ');});}
   if(new Set(p.skus.map(s=>s.sku)).size!==p.skus.length) throw Error('SKU 编码不能重复');
   return p;
 }

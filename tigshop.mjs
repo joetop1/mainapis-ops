@@ -1,3 +1,4 @@
+import {specificationMatrix} from './public/specifications.js';
 import {tigshopPrices} from './tigshop-pricing.mjs';
 const httpsImage=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\u0000-\u0020]/.test(value))throw Error();return value;}catch{throw Error('图片必须为无账号密码的 HTTPS 地址');}};
 const html=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -14,13 +15,24 @@ export function buildTigshopProduct(lease,fx,shipping={}){
  if(p.detail_images!==undefined&&(!Array.isArray(p.detail_images)||p.detail_images.length>100))throw Error('详情图数量无效');
  const detailImages=(p.detail_images||[]).map(httpsImage);
  const images=p.images.map(httpsImage),codes=new Set(),specs=new Set();
- const skus=tigshopPrices(p.skus,fx);
- const attrList=skus.map((s,i)=>{
-  const spec=String(s.spec||'默认').trim();
-  if(!spec||spec.length>100||/[;:=]/.test(spec)||specs.has(spec))throw Error('规格值无效或重复');specs.add(spec);
+ const skus=tigshopPrices(p.skus,fx),matrix=specificationMatrix(p);
+ const values=matrix.structured?matrix.rows:skus.map(s=>[String(s.spec||'默认').trim()]);
+ skus.forEach((s,i)=>{
+  const combination=JSON.stringify(values[i]);
+  if(values[i].some(v=>!v||v.length>100||/[;:=]/.test(v))||specs.has(combination))throw Error('规格值无效或重复');specs.add(combination);
   if(typeof s.sku!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU 编码无效或重复');codes.add(s.sku);
   if(!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('库存无效');
-  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),attrPicThumb:httpsImage(s.image||images[0]),sortOrder:i};
+ });
+ const spe=matrix.names.map((name,j)=>{
+  const seen=new Set(),attrList=[];
+  values.forEach((row,i)=>{
+   const value=row[j];if(seen.has(value))return;seen.add(value);
+   const pics=new Set(skus.filter((s,k)=>values[k][j]===value).map(s=>httpsImage(s.image||images[0])));
+   if(j===0&&pics.size>1)throw Error('Tigshop 同一首级规格的配图不一致，请统一配图或调整规格维度顺序');
+   const pic=pics.size===1?[...pics][0]:'';
+   attrList.push({attrType:1,attrName:name,attrValue:value,attrPrice:0,attrColor:'',attrPic:pic,attrPicThumb:pic,sortOrder:attrList.length});
+  });
+  return {attrName:name,attrList};
  });
  const stock=skus.reduce((n,s)=>n+s.stock,0);
  if(stock<=0)throw Error('Tigshop 商品总库存必须大于 0，请先填写实际库存');
@@ -31,8 +43,8 @@ export function buildTigshopProduct(lease,fx,shipping={}){
   productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,
   productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\n/g,'<br>')+'</p>'+detailImages.map(src=>'<p><img src="'+html(src)+'"></p>').join(''),
   imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,picThumb:picUrl,picLarge:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],picThumb:images[0],
-  attrList:{normal:[],extra:[],spe:[{attrName:'规格',attrList}]},skuType:2,
-  productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:'规格:'+attrList[i].attrValue,attrs:[{attrName:'规格',attrValue:attrList[i].attrValue}],skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),
+  attrList:{normal:[],extra:[],spe},skuType:2,
+  productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:matrix.names.map((name,j)=>name+':'+values[i][j]).join(';'),attrs:matrix.names.map((name,j)=>({attrName:name,attrValue:values[i][j]})),skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),
   virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,
   productWeight:0,productVolume:0,productServiceIds:[],productArticleList:[],productRelated:[],productVideoInfo:[],isPromote:false,isPromoteActivity:false,isDelete:0,isBest:0,isNew:0,isHot:0,
   sortOrder:0,storeSortOrder:0,limitNumber:0,isSupportReturn:0,isSupportCod:0,giveIntegral:-1,rankIntegral:-1,integral:0,fixedShippingType:2,fixedShippingFee:0};
@@ -49,7 +61,12 @@ export function verifyTigshopProduct(response,lease,fx,shipping){
  if(!Array.isArray(d.productList)||d.productList.length!==e.productList.length)return fail('Tigshop SKU 数量不一致');
  if(Number(d.shippingTplId)!==e.shippingTplId||d.fixedShippingType!==2||d.freeShipping!==0)return fail('Tigshop 运费模板不一致');
  const seen=new Set();
- for(const s of e.productList){const a=d.productList.find(x=>x.skuSn===s.skuSn);if(!a||seen.has(a.skuSn)||Number(a.skuPrice)!==Number(s.skuPrice)||Number(a.costPrice)!==s.costPrice||a.skuStock!==s.skuStock||a.isEnabled!==1||a.skuData?.length!==1||a.skuData[0].name!=='规格'||a.skuData[0].value!==s.attrs[0].attrValue)return fail('Tigshop SKU 规格、欧元金额或库存不一致');seen.add(a.skuSn);}
- for(const s of e.attrList.spe[0].attrList){const matches=(d.attrList?.spe||[]).filter(g=>g.attrName==='规格').flatMap(g=>g.attrList||[]).filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||matches[0].attrPic!==s.attrPic)return fail('Tigshop SKU 配图不一致');}
+ for(const s of e.productList){const a=d.productList.find(x=>x.skuSn===s.skuSn);if(!a||seen.has(a.skuSn)||Number(a.skuPrice)!==Number(s.skuPrice)||Number(a.costPrice)!==s.costPrice||a.skuStock!==s.skuStock||a.isEnabled!==1||a.skuData?.length!==s.attrs.length||s.attrs.some(attr=>!a.skuData.some(value=>value.name===attr.attrName&&value.value===attr.attrValue)))return fail('Tigshop SKU 规格、欧元金额或库存不一致');seen.add(a.skuSn);}
+ if(!Array.isArray(d.attrList?.spe)||d.attrList.spe.length!==e.attrList.spe.length)return fail('Tigshop 规格维度数量不一致');
+ for(const group of e.attrList.spe){
+  const actual=(d.attrList?.spe||[]).filter(g=>g.attrName===group.attrName);
+  if(actual.length!==1||actual[0].attrList?.length!==group.attrList.length)return fail('Tigshop 规格维度或选项数量不一致');
+  for(const s of group.attrList){const matches=actual[0].attrList.filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||String(matches[0].attrPic||'')!==s.attrPic)return fail('Tigshop SKU 配图不一致');}
+ }
  return {status:'succeeded',remote_id:String(d.productId),message:'Tigshop 自营下架商品已核对：货号、分类品牌、SKU、欧元价格成本、库存与配图地址一致；图片内容仍需人工检查'};
 }

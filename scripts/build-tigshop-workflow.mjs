@@ -1,6 +1,6 @@
 import {readFileSync,writeFileSync} from 'node:fs';
 const root=new URL('../',import.meta.url),w=JSON.parse(readFileSync(new URL('workflows/publish-crmeb-official.json',root)));
-const lib=['tigshop-pricing.mjs','tigshop.mjs'].map(f=>readFileSync(new URL(f,root),'utf8').replace(/^import .*;\n/gm,'').replaceAll('export ','')).join('\n');
+const lib=['public/specifications.js','tigshop-pricing.mjs','tigshop.mjs'].map(f=>readFileSync(new URL(f,root),'utf8').replace(/^import .*;\n/gm,'').replaceAll('export ','')).join('\n');
 w.name='OPS · Tigshop 自营商品入库与核对';
 for(const n of w.nodes){
  if(n.id==='webhook'){n.webhookId='ops-tigshop';n.parameters.path='ops-tigshop';}
