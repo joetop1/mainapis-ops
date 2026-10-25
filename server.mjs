@@ -1,3 +1,5 @@
+import {createTigshopCatalog} from './tigshop-catalog.mjs';
+import {fetchTigshopFX} from './tigshop-pricing.mjs';
 import http from 'node:http';
 import {parseOfficialExport} from './official-export.mjs';
 import {createCatalogLoader,applyCatalog} from './catalog.mjs';
@@ -15,8 +17,10 @@ const client=process.env.CASDOOR_CLIENT_ID||'', clientSecret=process.env.CASDOOR
 const allowed=(process.env.ALLOWED_SUBJECTS||'').split(',').map(s=>s.trim()).filter(Boolean);
 const webhook=process.env.N8N_WEBHOOK_URL||'', hookToken=process.env.N8N_WEBHOOK_TOKEN||'';
 const storeWebhook=process.env.N8N_STORE_WEBHOOK_URL||'',storeHookToken=process.env.N8N_STORE_WEBHOOK_TOKEN||'';
-const officialTargets=['crmeb-pro','crmeb-store'];
-const connectionFor=target=>target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:{url:'',token:''};
+const tigshopWebhook=process.env.N8N_TIGSHOP_WEBHOOK_URL||'',tigshopHookToken=process.env.N8N_TIGSHOP_WEBHOOK_TOKEN||'';
+if(tigshopWebhook&&new URL(tigshopWebhook).protocol!=='https:')throw Error('Tigshop Webhook 必须为 HTTPS');
+const officialTargets=['crmeb-pro','crmeb-store','tigshop'];
+const connectionFor=target=>target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:target==='tigshop'?{url:tigshopWebhook,token:tigshopHookToken}:{url:'',token:''};
 const connected=target=>!!(connectionFor(target).url&&connectionFor(target).token);
 const host=demo?'127.0.0.1':(process.env.HOST||'0.0.0.0');
 if(!demo && new URL(origin).protocol!=='https:') throw Error('生产 APP_ORIGIN 必须是 HTTPS');
@@ -24,7 +28,7 @@ if(!demo && new URL(issuer).protocol!=='https:') throw Error('Casdoor 必须是 
 if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(storeWebhook).protocol!=='https:')) throw Error('n8n Webhook 必须是 HTTPS');
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
-const targets=[{id:'crmeb-pro',name:'CRMEB 会员商城',version:'4.3',url:'https://www.xlupw.com/admin'},{id:'crmeb-store',name:'CRMEB 多门店',version:'4.2',url:'https://www.xlyp.cc/admin'},{id:'tigshop',name:'Tigshop 跨境 Java',version:'5.8.60',url:''}];
+const targets=[{id:'crmeb-pro',name:'CRMEB 会员商城',version:'4.3',url:'https://www.xlupw.com/admin'},{id:'crmeb-store',name:'CRMEB 多门店',version:'4.2',url:'https://www.xlyp.cc/admin'},{id:'tigshop',name:'Tigshop 跨境 Java',version:'5.8.60',url:'https://xiaolango.com/admin'}];
 function sessionGet(req) {
   const sid=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('ops_session='))?.slice(12);
   if(!sid) return null;
@@ -50,7 +54,7 @@ async function remoteJSON(url,options={}) {
   if(!r.ok)throw Error(`远程服务返回 HTTP ${r.status}`);
   const text=await r.text();if(text.length>2e6)throw Error('远程响应过大');return JSON.parse(text);
 }
-const catalogLoaders=Object.fromEntries(officialTargets.map(target=>[target,createCatalogLoader(remoteJSON,target)]));
+const catalogLoaders=Object.fromEntries(officialTargets.map(target=>[target,target==='tigshop'?createTigshopCatalog(remoteJSON,process.env.TIGSHOP_API_TOKEN):createCatalogLoader(remoteJSON,target)]));
 async function validateCatalog(p){if(p.category_id||p.brand_ids?.length)applyCatalog(p,await catalogLoaders[p.catalog_target||'crmeb-pro']());return p;}
 async function discovery() {
   const meta=await remoteJSON(issuer+'/.well-known/openid-configuration');
@@ -142,7 +146,7 @@ export const handler=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     const owner=s.user.sub;
-    const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store)$/);
+    const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store|tigshop)$/);
     if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoaders[catalogRoute[1]](new URL(req.url,origin).searchParams.get('refresh')==='1'));
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
     if(retryRoute && req.method==='POST'){
@@ -189,6 +193,7 @@ export const handler=async(req,res)=>{
         if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct);
+        if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={fx:await fetchTigshopFX(),shipping:{templateId:51}};}
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
         const id=uid(),t=now();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
         audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);await dispatch(job,publishingProduct);return json(res,202,{id});

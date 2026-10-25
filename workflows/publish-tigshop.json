@@ -1,0 +1,455 @@
+{
+  "name": "OPS · Tigshop 自营商品入库与核对",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  },
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "接收 OPS 官方接口任务",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "ops-tigshop",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ops-tigshop",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "preflight",
+      "name": "校验请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const b=$json.body;\nif(!b||!['publish_draft','verify_draft'].includes(b.action)||b.target!=='tigshop')throw Error('仅支持 Tigshop 自营入库与核对');\nif(typeof b.job_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(b.job_id))throw Error('任务ID错误');\nif(b.callback?.url!=='https://ops.mainapis.com/api/callback/'+b.job_id||typeof b.callback.token!=='string'||b.callback.token.length<32)throw Error('回调地址或令牌错误');\nreturn [{json:{action:b.action,verification_nonce:b.verification_nonce||'',callbackUrl:b.callback.url,callbackToken:b.callback.token}}];"
+      }
+    },
+    {
+      "id": "context",
+      "name": "读取可信任务快照",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl + \"/claim\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {action:$json.action === \"publish_draft\" ? \"inspect_publish\" : $json.action, verification_nonce:$json.verification_nonce} }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "token",
+      "name": "获取 CRMEB Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://xiaolango.com/adminapi/product/product/shippingTplList",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-ADMIN-TYPE",
+              "value": "admin"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "prepare",
+      "name": "配置分类运费并转换字段",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// OPS source amounts are CNY; Tigshop xiaolango.com base currency is EUR.\n// The operator supplies EUR per 1 CNY. Never infer a rate from display currency.\nfunction tigshopPrices(skus,config={}) {\n const {sourceCurrency,targetCurrency,eurPerCny}=config;\n if(sourceCurrency!=='CNY'||targetCurrency!=='EUR')throw Error('Tigshop 必须明确配置人民币转欧元');\n if(typeof eurPerCny!=='number'||!Number.isFinite(eurPerCny)||eurPerCny<=0||eurPerCny>1)throw Error('请配置有效汇率：1 人民币对应的欧元金额');\n if(!Array.isArray(skus)||!skus.length)throw Error('缺少 SKU');\n return skus.map(s=>{\n  if(typeof s.price!=='number'||!Number.isFinite(s.price)||s.price<=0||typeof s.cost!=='number'||!Number.isFinite(s.cost)||s.cost<0)throw Error('人民币售价或成本无效');\n  const price=Math.round((s.price*eurPerCny+Number.EPSILON)*100)/100;\n  const cost=Math.round((s.cost*eurPerCny+Number.EPSILON)*100)/100;\n  if(price<=0||!Number.isSafeInteger(Math.round(price*100))||!Number.isSafeInteger(Math.round(cost*100)))throw Error('换算后的欧元金额无效');\n  return {...s,price,cost};\n });\n}\n\nconst TIGSHOP_FX_URL='https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';\nfunction parseTigshopFX(xml,clock=new Date()) {\n const date=xml.match(/<Cube\\b[^>]*\\btime=['\"](\\d{4}-\\d{2}-\\d{2})['\"]/i)?.[1];\n const cube=xml.match(/<Cube\\b[^>]*\\bcurrency=['\"]CNY['\"][^>]*>/i)?.[0];\n const rate=Number(cube?.match(/\\brate=['\"]([0-9.]+)['\"]/i)?.[1]);\n const timestamp=Date.parse(date+'T00:00:00Z');\n const age=clock.getTime()-timestamp;\n if(!date||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==date||!Number.isFinite(rate)||rate<1||rate>100||age< -86400000||age>7*86400000)throw Error('欧洲央行汇率无效或超过七天，请稍后重试');\n return Object.freeze({sourceCurrency:'CNY',targetCurrency:'EUR',eurPerCny:1/rate,cnyPerEur:rate,rateDate:date,fetchedAt:clock.toISOString(),source:TIGSHOP_FX_URL});\n}\nasync function fetchTigshopFX(fetcher=fetch,clock=new Date()) {\n try {\n  const response=await fetcher(TIGSHOP_FX_URL,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/xml'}});\n  if(!response.ok)throw Error();\n  const xml=await response.text();\n  if(xml.length>100000)throw Error();\n  return parseTigshopFX(xml,clock);\n }catch{throw Error('无法读取最新有效人民币兑欧元汇率，未执行价格换算');}\n}\n\nconst httpsImage=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\\u0000-\\u0020]/.test(value))throw Error();return value;}catch{throw Error('图片必须为无账号密码的 HTTPS 地址');}};\nconst html=value=>String(value).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nfunction buildTigshopProduct(lease,fx,shipping={}){\n if(!Number.isSafeInteger(shipping.templateId)||shipping.templateId<=0)throw Error(\"请选择 Tigshop 真实运费模板\");\n const p=lease?.product;\n if(!/^OPS-[0-9a-f]{32}$/.test(lease?.marker||''))throw Error('缺少可信任务标记');\n if(p?.catalog_target!=='tigshop'||!Number.isSafeInteger(p.category_id)||p.category_id<=0)throw Error('请选择 Tigshop 分类');\n if(typeof p.title!=='string'||!p.title.trim()||p.title.length>100)throw Error('Tigshop 标题须为 1–100 字符');\n if(!Array.isArray(p.images)||!p.images.length||p.images.length>30)throw Error('图片数量无效');\n if((p.brand_ids?.length||0)>1||p.brand_ids?.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('Tigshop 只支持单个品牌');\n if(p.tag_ids?.length)throw Error('Tigshop 标签映射尚未配置，请清空 CRMEB 标签');\n if(!Array.isArray(p.skus)||p.skus.length<1||p.skus.length>100)throw Error('SKU 数量无效');\n const images=p.images.map(httpsImage),codes=new Set(),specs=new Set();\n const skus=tigshopPrices(p.skus,fx);\n const attrList=skus.map((s,i)=>{\n  const spec=String(s.spec||'默认').trim();\n  if(!spec||spec.length>100||/[;:=]/.test(spec)||specs.has(spec))throw Error('规格值无效或重复');specs.add(spec);\n  if(typeof s.sku!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU 编码无效或重复');codes.add(s.sku);\n  if(!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('库存无效');\n  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),sortOrder:i};\n });\n const stock=skus.reduce((n,s)=>n+s.stock,0);\n if(stock>2147483647)throw Error('总库存超出范围');\n const sales=p.virtual_sales??0;if(!Number.isSafeInteger(sales)||sales<0||sales>2147483647)throw Error('虚拟销量无效');\n return {productType:1,shopId:0,productStatus:0,checkStatus:1,saleMode:0,deliveryMode:1,\n  productName:p.title,productSn:lease.marker,categoryId:p.category_id,brandId:p.brand_ids?.[0]||0,\n  productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,\n  productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\\n/g,'<br>')+'</p>'+images.map(src=>'<p><img src=\"'+html(src)+'\"></p>').join(''),\n  imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],\n  attrList:{normal:[],extra:[],spe:[{attrName:'规格',attrList}]},skuType:2,\n  productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:'规格:'+attrList[i].attrValue,attrs:[{attrName:'规格',attrValue:attrList[i].attrValue}],skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),\n  virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,\n  productWeight:0,productVolume:0,productServiceIds:[],productArticleList:[],productRelated:[],productVideoInfo:[],isPromote:false,isPromoteActivity:false,isDelete:0,isBest:0,isNew:0,isHot:0,\n  sortOrder:0,storeSortOrder:0,limitNumber:0,isSupportReturn:0,isSupportCod:0,giveIntegral:-1,rankIntegral:-1,integral:0,fixedShippingType:2,fixedShippingFee:0};\n}\nfunction tigshopCreateReceipt(response){\n if(response?.code!==0)return {status:'unknown',message:'Tigshop 未明确返回创建成功，请先核对商城，禁止重复创建'};\n return {status:'awaiting_review',message:'Tigshop 已返回，请按任务货号查找自营下架商品，填写商品 ID 核对；暂未确认入库正确'};\n}\nfunction verifyTigshopProduct(response,lease,fx,shipping){\n const fail=message=>({status:'awaiting_review',message});\n if(response?.code!==0||!response.data)return fail('Tigshop 商品详情读取失败');\n const d=response.data,e=buildTigshopProduct(lease,fx,shipping);\n if(String(d.productId)!==String(lease.candidate_id)||d.productSn!==e.productSn||d.shopId!==0||d.productStatus!==0||d.isDelete!==0||d.productName!==e.productName||d.categoryId!==e.categoryId||Number(d.brandId||0)!==e.brandId)return fail('Tigshop 商品 ID、货号、归属、下架状态、分类或品牌不一致');\n if(!Array.isArray(d.productList)||d.productList.length!==e.productList.length)return fail('Tigshop SKU 数量不一致');\n if(Number(d.shippingTplId)!==e.shippingTplId||d.fixedShippingType!==2||d.freeShipping!==0)return fail('Tigshop 运费模板不一致');\n const seen=new Set();\n for(const s of e.productList){const a=d.productList.find(x=>x.skuSn===s.skuSn);if(!a||seen.has(a.skuSn)||Number(a.skuPrice)!==Number(s.skuPrice)||Number(a.costPrice)!==s.costPrice||a.skuStock!==s.skuStock||a.isEnabled!==1||a.skuData?.length!==1||a.skuData[0].name!=='规格'||a.skuData[0].value!==s.attrs[0].attrValue)return fail('Tigshop SKU 规格、欧元金额或库存不一致');seen.add(a.skuSn);}\n for(const s of e.attrList.spe[0].attrList){const matches=(d.attrList?.spe||[]).filter(g=>g.attrName==='规格').flatMap(g=>g.attrList||[]).filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||matches[0].attrPic!==s.attrPic)return fail('Tigshop SKU 配图不一致');}\n return {status:'succeeded',remote_id:String(d.productId),message:'Tigshop 自营下架商品已核对：货号、分类品牌、SKU、欧元价格成本、库存与配图地址一致；图片内容仍需人工检查'};\n}\n\nconst lease=$('读取可信任务快照').first().json;\nconst fx=lease.product.tigshop?.fx,shipping=lease.product.tigshop?.shipping;\nif($json.code!==0||!Array.isArray($json.data)||!$json.data.some(t=>t.shippingTplId===shipping?.templateId&&t.shopId===0))throw Error('Tigshop 授权或运费模板检查失败，未领取创建操作');\nconst payload=buildTigshopProduct(lease,fx,shipping);\nif(lease.action==='verify_draft'&&!/^[1-9][0-9]{0,14}$/.test(lease.candidate_id))throw Error('商品ID无效');\nreturn [{json:{payload,action:lease.action,candidate_id:lease.candidate_id}}];"
+      }
+    },
+    {
+      "id": "branch",
+      "name": "创建还是核对",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "publish",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "publish_draft",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "lock",
+      "name": "锁定一次创建",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"校验请求\").first().json.callbackUrl + \"/claim\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $(\"校验请求\").first().json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {action:\"publish_draft\"} }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "create",
+      "name": "官方新增下架商品",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://xiaolango.com/adminapi/product/product/create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-ADMIN-TYPE",
+              "value": "admin"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"配置分类运费并转换字段\").first().json.payload }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "receipt",
+      "name": "创建后等待核对ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// OPS source amounts are CNY; Tigshop xiaolango.com base currency is EUR.\n// The operator supplies EUR per 1 CNY. Never infer a rate from display currency.\nfunction tigshopPrices(skus,config={}) {\n const {sourceCurrency,targetCurrency,eurPerCny}=config;\n if(sourceCurrency!=='CNY'||targetCurrency!=='EUR')throw Error('Tigshop 必须明确配置人民币转欧元');\n if(typeof eurPerCny!=='number'||!Number.isFinite(eurPerCny)||eurPerCny<=0||eurPerCny>1)throw Error('请配置有效汇率：1 人民币对应的欧元金额');\n if(!Array.isArray(skus)||!skus.length)throw Error('缺少 SKU');\n return skus.map(s=>{\n  if(typeof s.price!=='number'||!Number.isFinite(s.price)||s.price<=0||typeof s.cost!=='number'||!Number.isFinite(s.cost)||s.cost<0)throw Error('人民币售价或成本无效');\n  const price=Math.round((s.price*eurPerCny+Number.EPSILON)*100)/100;\n  const cost=Math.round((s.cost*eurPerCny+Number.EPSILON)*100)/100;\n  if(price<=0||!Number.isSafeInteger(Math.round(price*100))||!Number.isSafeInteger(Math.round(cost*100)))throw Error('换算后的欧元金额无效');\n  return {...s,price,cost};\n });\n}\n\nconst TIGSHOP_FX_URL='https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';\nfunction parseTigshopFX(xml,clock=new Date()) {\n const date=xml.match(/<Cube\\b[^>]*\\btime=['\"](\\d{4}-\\d{2}-\\d{2})['\"]/i)?.[1];\n const cube=xml.match(/<Cube\\b[^>]*\\bcurrency=['\"]CNY['\"][^>]*>/i)?.[0];\n const rate=Number(cube?.match(/\\brate=['\"]([0-9.]+)['\"]/i)?.[1]);\n const timestamp=Date.parse(date+'T00:00:00Z');\n const age=clock.getTime()-timestamp;\n if(!date||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==date||!Number.isFinite(rate)||rate<1||rate>100||age< -86400000||age>7*86400000)throw Error('欧洲央行汇率无效或超过七天，请稍后重试');\n return Object.freeze({sourceCurrency:'CNY',targetCurrency:'EUR',eurPerCny:1/rate,cnyPerEur:rate,rateDate:date,fetchedAt:clock.toISOString(),source:TIGSHOP_FX_URL});\n}\nasync function fetchTigshopFX(fetcher=fetch,clock=new Date()) {\n try {\n  const response=await fetcher(TIGSHOP_FX_URL,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/xml'}});\n  if(!response.ok)throw Error();\n  const xml=await response.text();\n  if(xml.length>100000)throw Error();\n  return parseTigshopFX(xml,clock);\n }catch{throw Error('无法读取最新有效人民币兑欧元汇率，未执行价格换算');}\n}\n\nconst httpsImage=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\\u0000-\\u0020]/.test(value))throw Error();return value;}catch{throw Error('图片必须为无账号密码的 HTTPS 地址');}};\nconst html=value=>String(value).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nfunction buildTigshopProduct(lease,fx,shipping={}){\n if(!Number.isSafeInteger(shipping.templateId)||shipping.templateId<=0)throw Error(\"请选择 Tigshop 真实运费模板\");\n const p=lease?.product;\n if(!/^OPS-[0-9a-f]{32}$/.test(lease?.marker||''))throw Error('缺少可信任务标记');\n if(p?.catalog_target!=='tigshop'||!Number.isSafeInteger(p.category_id)||p.category_id<=0)throw Error('请选择 Tigshop 分类');\n if(typeof p.title!=='string'||!p.title.trim()||p.title.length>100)throw Error('Tigshop 标题须为 1–100 字符');\n if(!Array.isArray(p.images)||!p.images.length||p.images.length>30)throw Error('图片数量无效');\n if((p.brand_ids?.length||0)>1||p.brand_ids?.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('Tigshop 只支持单个品牌');\n if(p.tag_ids?.length)throw Error('Tigshop 标签映射尚未配置，请清空 CRMEB 标签');\n if(!Array.isArray(p.skus)||p.skus.length<1||p.skus.length>100)throw Error('SKU 数量无效');\n const images=p.images.map(httpsImage),codes=new Set(),specs=new Set();\n const skus=tigshopPrices(p.skus,fx);\n const attrList=skus.map((s,i)=>{\n  const spec=String(s.spec||'默认').trim();\n  if(!spec||spec.length>100||/[;:=]/.test(spec)||specs.has(spec))throw Error('规格值无效或重复');specs.add(spec);\n  if(typeof s.sku!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU 编码无效或重复');codes.add(s.sku);\n  if(!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('库存无效');\n  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),sortOrder:i};\n });\n const stock=skus.reduce((n,s)=>n+s.stock,0);\n if(stock>2147483647)throw Error('总库存超出范围');\n const sales=p.virtual_sales??0;if(!Number.isSafeInteger(sales)||sales<0||sales>2147483647)throw Error('虚拟销量无效');\n return {productType:1,shopId:0,productStatus:0,checkStatus:1,saleMode:0,deliveryMode:1,\n  productName:p.title,productSn:lease.marker,categoryId:p.category_id,brandId:p.brand_ids?.[0]||0,\n  productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,\n  productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\\n/g,'<br>')+'</p>'+images.map(src=>'<p><img src=\"'+html(src)+'\"></p>').join(''),\n  imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],\n  attrList:{normal:[],extra:[],spe:[{attrName:'规格',attrList}]},skuType:2,\n  productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:'规格:'+attrList[i].attrValue,attrs:[{attrName:'规格',attrValue:attrList[i].attrValue}],skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),\n  virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,\n  productWeight:0,productVolume:0,productServiceIds:[],productArticleList:[],productRelated:[],productVideoInfo:[],isPromote:false,isPromoteActivity:false,isDelete:0,isBest:0,isNew:0,isHot:0,\n  sortOrder:0,storeSortOrder:0,limitNumber:0,isSupportReturn:0,isSupportCod:0,giveIntegral:-1,rankIntegral:-1,integral:0,fixedShippingType:2,fixedShippingFee:0};\n}\nfunction tigshopCreateReceipt(response){\n if(response?.code!==0)return {status:'unknown',message:'Tigshop 未明确返回创建成功，请先核对商城，禁止重复创建'};\n return {status:'awaiting_review',message:'Tigshop 已返回，请按任务货号查找自营下架商品，填写商品 ID 核对；暂未确认入库正确'};\n}\nfunction verifyTigshopProduct(response,lease,fx,shipping){\n const fail=message=>({status:'awaiting_review',message});\n if(response?.code!==0||!response.data)return fail('Tigshop 商品详情读取失败');\n const d=response.data,e=buildTigshopProduct(lease,fx,shipping);\n if(String(d.productId)!==String(lease.candidate_id)||d.productSn!==e.productSn||d.shopId!==0||d.productStatus!==0||d.isDelete!==0||d.productName!==e.productName||d.categoryId!==e.categoryId||Number(d.brandId||0)!==e.brandId)return fail('Tigshop 商品 ID、货号、归属、下架状态、分类或品牌不一致');\n if(!Array.isArray(d.productList)||d.productList.length!==e.productList.length)return fail('Tigshop SKU 数量不一致');\n if(Number(d.shippingTplId)!==e.shippingTplId||d.fixedShippingType!==2||d.freeShipping!==0)return fail('Tigshop 运费模板不一致');\n const seen=new Set();\n for(const s of e.productList){const a=d.productList.find(x=>x.skuSn===s.skuSn);if(!a||seen.has(a.skuSn)||Number(a.skuPrice)!==Number(s.skuPrice)||Number(a.costPrice)!==s.costPrice||a.skuStock!==s.skuStock||a.isEnabled!==1||a.skuData?.length!==1||a.skuData[0].name!=='规格'||a.skuData[0].value!==s.attrs[0].attrValue)return fail('Tigshop SKU 规格、欧元金额或库存不一致');seen.add(a.skuSn);}\n for(const s of e.attrList.spe[0].attrList){const matches=(d.attrList?.spe||[]).filter(g=>g.attrName==='规格').flatMap(g=>g.attrList||[]).filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||matches[0].attrPic!==s.attrPic)return fail('Tigshop SKU 配图不一致');}\n return {status:'succeeded',remote_id:String(d.productId),message:'Tigshop 自营下架商品已核对：货号、分类品牌、SKU、欧元价格成本、库存与配图地址一致；图片内容仍需人工检查'};\n}\n\nreturn [{json:tigshopCreateReceipt($json)}];"
+      }
+    },
+    {
+      "id": "detail",
+      "name": "官方读取商品详情",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        240
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://xiaolango.com/adminapi/product/product/detail?id=\" + $json.candidate_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-ADMIN-TYPE",
+              "value": "admin"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "verify",
+      "name": "核验实际入库结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// OPS source amounts are CNY; Tigshop xiaolango.com base currency is EUR.\n// The operator supplies EUR per 1 CNY. Never infer a rate from display currency.\nfunction tigshopPrices(skus,config={}) {\n const {sourceCurrency,targetCurrency,eurPerCny}=config;\n if(sourceCurrency!=='CNY'||targetCurrency!=='EUR')throw Error('Tigshop 必须明确配置人民币转欧元');\n if(typeof eurPerCny!=='number'||!Number.isFinite(eurPerCny)||eurPerCny<=0||eurPerCny>1)throw Error('请配置有效汇率：1 人民币对应的欧元金额');\n if(!Array.isArray(skus)||!skus.length)throw Error('缺少 SKU');\n return skus.map(s=>{\n  if(typeof s.price!=='number'||!Number.isFinite(s.price)||s.price<=0||typeof s.cost!=='number'||!Number.isFinite(s.cost)||s.cost<0)throw Error('人民币售价或成本无效');\n  const price=Math.round((s.price*eurPerCny+Number.EPSILON)*100)/100;\n  const cost=Math.round((s.cost*eurPerCny+Number.EPSILON)*100)/100;\n  if(price<=0||!Number.isSafeInteger(Math.round(price*100))||!Number.isSafeInteger(Math.round(cost*100)))throw Error('换算后的欧元金额无效');\n  return {...s,price,cost};\n });\n}\n\nconst TIGSHOP_FX_URL='https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';\nfunction parseTigshopFX(xml,clock=new Date()) {\n const date=xml.match(/<Cube\\b[^>]*\\btime=['\"](\\d{4}-\\d{2}-\\d{2})['\"]/i)?.[1];\n const cube=xml.match(/<Cube\\b[^>]*\\bcurrency=['\"]CNY['\"][^>]*>/i)?.[0];\n const rate=Number(cube?.match(/\\brate=['\"]([0-9.]+)['\"]/i)?.[1]);\n const timestamp=Date.parse(date+'T00:00:00Z');\n const age=clock.getTime()-timestamp;\n if(!date||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==date||!Number.isFinite(rate)||rate<1||rate>100||age< -86400000||age>7*86400000)throw Error('欧洲央行汇率无效或超过七天，请稍后重试');\n return Object.freeze({sourceCurrency:'CNY',targetCurrency:'EUR',eurPerCny:1/rate,cnyPerEur:rate,rateDate:date,fetchedAt:clock.toISOString(),source:TIGSHOP_FX_URL});\n}\nasync function fetchTigshopFX(fetcher=fetch,clock=new Date()) {\n try {\n  const response=await fetcher(TIGSHOP_FX_URL,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/xml'}});\n  if(!response.ok)throw Error();\n  const xml=await response.text();\n  if(xml.length>100000)throw Error();\n  return parseTigshopFX(xml,clock);\n }catch{throw Error('无法读取最新有效人民币兑欧元汇率，未执行价格换算');}\n}\n\nconst httpsImage=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\\u0000-\\u0020]/.test(value))throw Error();return value;}catch{throw Error('图片必须为无账号密码的 HTTPS 地址');}};\nconst html=value=>String(value).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));\nfunction buildTigshopProduct(lease,fx,shipping={}){\n if(!Number.isSafeInteger(shipping.templateId)||shipping.templateId<=0)throw Error(\"请选择 Tigshop 真实运费模板\");\n const p=lease?.product;\n if(!/^OPS-[0-9a-f]{32}$/.test(lease?.marker||''))throw Error('缺少可信任务标记');\n if(p?.catalog_target!=='tigshop'||!Number.isSafeInteger(p.category_id)||p.category_id<=0)throw Error('请选择 Tigshop 分类');\n if(typeof p.title!=='string'||!p.title.trim()||p.title.length>100)throw Error('Tigshop 标题须为 1–100 字符');\n if(!Array.isArray(p.images)||!p.images.length||p.images.length>30)throw Error('图片数量无效');\n if((p.brand_ids?.length||0)>1||p.brand_ids?.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('Tigshop 只支持单个品牌');\n if(p.tag_ids?.length)throw Error('Tigshop 标签映射尚未配置，请清空 CRMEB 标签');\n if(!Array.isArray(p.skus)||p.skus.length<1||p.skus.length>100)throw Error('SKU 数量无效');\n const images=p.images.map(httpsImage),codes=new Set(),specs=new Set();\n const skus=tigshopPrices(p.skus,fx);\n const attrList=skus.map((s,i)=>{\n  const spec=String(s.spec||'默认').trim();\n  if(!spec||spec.length>100||/[;:=]/.test(spec)||specs.has(spec))throw Error('规格值无效或重复');specs.add(spec);\n  if(typeof s.sku!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU 编码无效或重复');codes.add(s.sku);\n  if(!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('库存无效');\n  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),sortOrder:i};\n });\n const stock=skus.reduce((n,s)=>n+s.stock,0);\n if(stock>2147483647)throw Error('总库存超出范围');\n const sales=p.virtual_sales??0;if(!Number.isSafeInteger(sales)||sales<0||sales>2147483647)throw Error('虚拟销量无效');\n return {productType:1,shopId:0,productStatus:0,checkStatus:1,saleMode:0,deliveryMode:1,\n  productName:p.title,productSn:lease.marker,categoryId:p.category_id,brandId:p.brand_ids?.[0]||0,\n  productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,\n  productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\\n/g,'<br>')+'</p>'+images.map(src=>'<p><img src=\"'+html(src)+'\"></p>').join(''),\n  imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],\n  attrList:{normal:[],extra:[],spe:[{attrName:'规格',attrList}]},skuType:2,\n  productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:'规格:'+attrList[i].attrValue,attrs:[{attrName:'规格',attrValue:attrList[i].attrValue}],skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),\n  virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,\n  productWeight:0,productVolume:0,productServiceIds:[],productArticleList:[],productRelated:[],productVideoInfo:[],isPromote:false,isPromoteActivity:false,isDelete:0,isBest:0,isNew:0,isHot:0,\n  sortOrder:0,storeSortOrder:0,limitNumber:0,isSupportReturn:0,isSupportCod:0,giveIntegral:-1,rankIntegral:-1,integral:0,fixedShippingType:2,fixedShippingFee:0};\n}\nfunction tigshopCreateReceipt(response){\n if(response?.code!==0)return {status:'unknown',message:'Tigshop 未明确返回创建成功，请先核对商城，禁止重复创建'};\n return {status:'awaiting_review',message:'Tigshop 已返回，请按任务货号查找自营下架商品，填写商品 ID 核对；暂未确认入库正确'};\n}\nfunction verifyTigshopProduct(response,lease,fx,shipping){\n const fail=message=>({status:'awaiting_review',message});\n if(response?.code!==0||!response.data)return fail('Tigshop 商品详情读取失败');\n const d=response.data,e=buildTigshopProduct(lease,fx,shipping);\n if(String(d.productId)!==String(lease.candidate_id)||d.productSn!==e.productSn||d.shopId!==0||d.productStatus!==0||d.isDelete!==0||d.productName!==e.productName||d.categoryId!==e.categoryId||Number(d.brandId||0)!==e.brandId)return fail('Tigshop 商品 ID、货号、归属、下架状态、分类或品牌不一致');\n if(!Array.isArray(d.productList)||d.productList.length!==e.productList.length)return fail('Tigshop SKU 数量不一致');\n if(Number(d.shippingTplId)!==e.shippingTplId||d.fixedShippingType!==2||d.freeShipping!==0)return fail('Tigshop 运费模板不一致');\n const seen=new Set();\n for(const s of e.productList){const a=d.productList.find(x=>x.skuSn===s.skuSn);if(!a||seen.has(a.skuSn)||Number(a.skuPrice)!==Number(s.skuPrice)||Number(a.costPrice)!==s.costPrice||a.skuStock!==s.skuStock||a.isEnabled!==1||a.skuData?.length!==1||a.skuData[0].name!=='规格'||a.skuData[0].value!==s.attrs[0].attrValue)return fail('Tigshop SKU 规格、欧元金额或库存不一致');seen.add(a.skuSn);}\n for(const s of e.attrList.spe[0].attrList){const matches=(d.attrList?.spe||[]).filter(g=>g.attrName==='规格').flatMap(g=>g.attrList||[]).filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||matches[0].attrPic!==s.attrPic)return fail('Tigshop SKU 配图不一致');}\n return {status:'succeeded',remote_id:String(d.productId),message:'Tigshop 自营下架商品已核对：货号、分类品牌、SKU、欧元价格成本、库存与配图地址一致；图片内容仍需人工检查'};\n}\n\nconst lease=$('读取可信任务快照').first().json;return [{json:verifyTigshopProduct($json,lease,lease.product.tigshop.fx,lease.product.tigshop.shipping)}];"
+      }
+    },
+    {
+      "id": "callback",
+      "name": "回传 OPS 结果",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"校验请求\").first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $(\"校验请求\").first().json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {...$json, verification_nonce:$(\"读取可信任务快照\").first().json.action === \"verify_draft\" ? $(\"读取可信任务快照\").first().json.verification_nonce : \"\"} }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false
+    }
+  ],
+  "connections": {
+    "接收 OPS 官方接口任务": {
+      "main": [
+        [
+          {
+            "node": "校验请求",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "校验请求": {
+      "main": [
+        [
+          {
+            "node": "读取可信任务快照",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取可信任务快照": {
+      "main": [
+        [
+          {
+            "node": "获取 CRMEB Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取 CRMEB Token": {
+      "main": [
+        [
+          {
+            "node": "配置分类运费并转换字段",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "配置分类运费并转换字段": {
+      "main": [
+        [
+          {
+            "node": "创建还是核对",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "锁定一次创建": {
+      "main": [
+        [
+          {
+            "node": "官方新增下架商品",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "官方新增下架商品": {
+      "main": [
+        [
+          {
+            "node": "创建后等待核对ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "创建后等待核对ID": {
+      "main": [
+        [
+          {
+            "node": "回传 OPS 结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "官方读取商品详情": {
+      "main": [
+        [
+          {
+            "node": "核验实际入库结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "核验实际入库结果": {
+      "main": [
+        [
+          {
+            "node": "回传 OPS 结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "创建还是核对": {
+      "main": [
+        [
+          {
+            "node": "锁定一次创建",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "官方读取商品详情",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

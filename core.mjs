@@ -14,7 +14,7 @@ export function validateProduct(input) {
   if(input.skus!==undefined && !Array.isArray(input.skus)) throw Error('skus 必须是数组');
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
   const p={source_url:sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
-  if(input.catalog_target!==undefined&&!['crmeb-pro','crmeb-store'].includes(input.catalog_target))throw Error('商品资料所属商城无效');
+  if(input.catalog_target!==undefined&&!['crmeb-pro','crmeb-store','tigshop'].includes(input.catalog_target))throw Error('商品资料所属商城无效');
   if(input.category_id!==undefined){
     if(!Number.isSafeInteger(input.category_id)||input.category_id<0)throw Error('商城分类 ID 无效');
     p.category_id=input.category_id;p.catalog_target=input.catalog_target||'crmeb-pro';
