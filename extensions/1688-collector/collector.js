@@ -49,7 +49,7 @@ export function collect1688(diagnostic=false) {
     const [o,depth,path]=queue.shift();if(!o||typeof o!=='object'||seen.has(o))continue;seen.add(o);
     const productNode=String(o.offerId||o.offerID||'')===offer||o.skuMap||o.skuInfoMap||o.skuModel||o.skuInfo||o['@type']==='Product';
     if(!title)title=clean(o.offerTitle)||(productNode?clean(o.subject):'')||((o['@type']==='Product')?clean(o.name):'');
-    if(diagnostic&&schemas.length<80&&(depth===0||/sku|offer|product|image|title/i.test(path)))schemas.push({path,keys:Object.keys(o).filter(k=>!/token|cookie|password|secret|auth|user|member/i.test(k)).slice(0,25)});
+    if(diagnostic&&schemas.length<80&&(depth===0||/sku|offer|product|image|title|desc|detail|frame/i.test(path)))schemas.push({path,keys:Object.keys(o).filter(k=>!/token|cookie|password|secret|auth|user|member/i.test(k)).slice(0,25)});
     if(!description&&o['@type']==='Product')description=clean(o.description,10000);
     if(o.skuMap||o.skuInfoMap)selectSku(o,path,o.skuInfoMap?20:1);
     // Only known product image fields, never every image on the page.
@@ -118,6 +118,14 @@ export function collect1688(diagnostic=false) {
   warnings.push('采购成本仅为页面识别值：阶梯价、起订量和规格须人工核对；售价与库存统一为 0，填写后才能审核。');
   if(!detailPictures.length)warnings.push('未采集到真实商品详情图。请滚动到1688商品详情并等待加载后重新读取；不会用主图或SKU配图代替详情。');
   warnings.push('目标分类、品牌和标签需在 OPS 设置；详情仅含当前已加载内容，嵌入页面中的详情可能缺失。');
-  if(diagnostic)return {diagnostics:{version:'0.1.6',offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
+  const nodeShape=n=>({tag:String(n?.tagName||''),id:String(n?.id||'').slice(0,120),className:String(n?.className||'').slice(0,180)});
+  const detailStructure=diagnostic?{
+    recognizedDetail:!!detail,
+    matchedDetailImageCount:detailPictures.length,
+    candidates:[...document.querySelectorAll('[id*="desc"], [class*="desc"], [id*="Desc"], [class*="Desc"]')].slice(0,45).map(n=>({...nodeShape(n),imageCount:n.querySelectorAll('img').length,frameCount:n.querySelectorAll('iframe').length})),
+    frames:[...document.querySelectorAll('iframe')].slice(0,20).map(n=>{let accessible=false,imageCount=0;try{const d=n.contentDocument;accessible=!!d;if(d)imageCount=d.querySelectorAll('img').length;}catch{}return {...nodeShape(n),accessible,imageCount};}),
+    imageAncestors:[...document.querySelectorAll('img')].filter(n=>Number(n.naturalHeight)>=500||Number(n.height)>=500).slice(0,30).map(n=>{const ancestors=[];let parent=n.parentElement;for(let i=0;parent&&i<6;i++,parent=parent.parentElement)ancestors.push(nodeShape(parent));return {...nodeShape(n),width:Number(n.naturalWidth||0),height:Number(n.naturalHeight||0),ancestors};})
+  }:undefined;
+  if(diagnostic)return {diagnostics:{version:'0.1.7',detailStructure,offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
   return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,detail_images:detailPictures,skus},warnings};
 }
