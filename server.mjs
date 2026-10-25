@@ -1,3 +1,4 @@
+import {createCollectorPackage} from './collector-package.mjs';
 import {fetchCrmebToken} from './crmeb-auth.mjs';
 import {teamStore,teamPermission} from './teams.mjs';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -20,6 +21,8 @@ import {fileURLToPath} from 'node:url';
 import {openStore,uid,secret,equal,sourceURL,validateProduct,assertPublishable,verifyIdToken,now,decodeProduct} from './core.mjs';
 
 const root=dirname(fileURLToPath(import.meta.url));
+let collectorPackage;
+async function collectorRelease(){return collectorPackage||=await createCollectorPackage(join(root,'extensions','1688-collector'));}
 const demo=process.env.DEMO_MODE==='true';
 const origin=process.env.APP_ORIGIN||'http://127.0.0.1:3080';
 const issuer=(process.env.CASDOOR_ISSUER||'https://auth.mainapis.com').replace(/\/$/,'');
@@ -194,6 +197,13 @@ const handleRequest=async(req,res)=>{
     if(!s?.user)return json(res,401,{error:'请先登录'});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
+    }
+    if(req.method==='GET'&&['/api/extensions/1688-collector','/api/extensions/1688-collector/download'].includes(path)){
+      const release=await collectorRelease();
+      if(path.endsWith('/download')){
+        res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="'+release.filename+'"','Content-Length':release.bytes.length});return res.end(release.bytes);
+      }
+      return json(res,200,{name:release.name,version:release.version,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/1688-collector/download'});
     }
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});

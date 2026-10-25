@@ -10,6 +10,20 @@
 <section id="products" class="panel"><div class="panel-toolbar"><div class="tabs"><button data-filter="all" class="active">全部商品</button><button data-filter="draft">待整理</button><button data-filter="approved">审核通过</button></div><input id="search" aria-label="搜索商品" placeholder="搜索标题 / 来源链接…"></div><div class="table-scroll"><table><thead><tr><th>商品资料</th><th>来源</th><th>规格 / 售价</th><th>状态</th><th>最后更新</th><th>操作</th></tr></thead><tbody id="productRows"></tbody></table></div><div class="panel-footer"><span id="count">共 0 件商品</span><span>编辑后需重新审核 · 默认下架入库</span></div></section>
 <section id="jobs" class="panel hidden"><div class="panel-title"><h2>发布记录</h2><button id="refresh" class="secondary">刷新状态</button></div><div class="table-scroll"><table><thead><tr><th>任务 / 商品</th><th>目标商城</th><th>状态</th><th>执行结果</th><th>创建时间</th></tr></thead><tbody id="jobRows"></tbody></table></div><div class="panel-footer">状态不明的任务请先核对 n8n 执行记录，避免重复入库。</div></section>
 <section id="team" class="hidden"><article class="connection-card tigshop-settings"><h2 id="teamTitle">团队工作区</h2><p id="teamStatus" class="hint" role="status"></p><form id="createTeamForm"><label>团队名称<input id="teamName" maxlength="60" required placeholder="例如：小蓝优品运营团队"></label><p class="hint">创建后，你现有的商品、发布任务和已保存的商城连接将转为团队共享，你成为管理员。</p><button class="primary" type="submit">创建共享团队</button></form><form id="teamMemberForm" class="hidden"><label>成员 Casdoor 用户 ID（sub）<input id="teamMemberSub" maxlength="200" required placeholder="填写准确的用户 ID，不是用户名或邮箱"></label><label>角色<select id="teamMemberRole"><option value="editor">编辑：采集与整理</option><option value="reviewer">审核员：整理、审核与发布</option><option value="admin">管理员：全部权限及成员、连接管理</option></select></label><button class="primary" type="submit">添加或更新成员</button><p class="hint">成员使用自己的 Casdoor 账号登录 OPS。请在 Casdoor 查看对应用户 ID。新增成员的个人旧数据不会自动并入团队。</p></form><div id="teamMembers"></div><h3>最近团队操作</h3><div id="teamEvents"></div></article></section><section id="connections" class="hidden">
+ <article class="connection-card collector-install">
+ <div class="collector-heading"><div><h2>1688 采集助手</h2><p>在新设备的 Chrome 或 Edge 安装，采集当前商品并导入 OPS。</p></div><span id="collectorVersion" class="connection-badge">正在读取版本…</span></div>
+ <div class="collector-download"><a id="collectorDownload" class="primary button hidden" href="/api/extensions/1688-collector/download" download>下载插件 ZIP</a><button id="refreshCollectorDownload" class="secondary hidden" type="button">重新读取下载信息</button><p id="collectorDownloadStatus" class="hint" role="status">正在准备下载…</p></div>
+ <details class="collector-guide"><summary>新设备安装步骤</summary><ol>
+ <li>点击“下载插件 ZIP”，解压到一个固定文件夹，保留该文件夹。</li>
+ <li>Chrome 地址栏打开 <code>chrome://extensions</code>；Edge 打开 <code>edge://extensions</code>。</li>
+ <li>开启“开发者模式”，点击“加载已解压的扩展程序”。</li>
+ <li>选择解压后的 <code>mainapis-1688-collector</code> 文件夹，里面应有 <code>manifest.json</code>。</li>
+ <li>将“MainAPIs · 1688 采集助手”固定到工具栏。在同一浏览器登录 OPS，再打开 1688 商品页，点击插件采集。</li>
+ </ol><p class="hint">ZIP 下载后需要手动解压并加载。当前通过本页分发，尚未上架浏览器扩展商店。</p></details>
+ <details class="collector-guide"><summary>已有插件如何更新</summary><p>下载新版 ZIP，解压后用新文件替换原插件文件夹中的内容；到扩展管理页点击本插件的“重新加载”，再刷新 1688 商品页。</p><p class="hint">已解压安装的插件不会自动更新。切换到其他浏览器或新设备时，需要重新安装。</p></details>
+ </article>
+ <div id="merchantSettings">
+
  <div class="connections-overview"><div><h2>商城渠道</h2><p id="connectionScope">当前工作空间的商城配置</p></div><p id="connectionCounts" role="status">正在读取渠道状态…</p></div>
  <p class="hint">已配置表示所需凭证已保存。展开渠道可测试连接或修改配置。</p>
  <div class="channels-grid"><article class="connection-card channel-card" data-channel="crmeb-pro" data-state="loading">
@@ -49,6 +63,8 @@
  <details class="fx-preview"><summary>人民币 → 欧元换算</summary><button type="button" id="refreshTigshopFX" class="text">读取最新汇率</button><p id="tigshopFXStatus" class="hint" role="status">发布时读取最新有效报价，重试沿用原任务汇率。</p><label>人民币金额<input id="tigshopCnyPreview" type="number" min="0" step="0.01" value="100"></label><p id="tigshopEurPreview"></p></details>
  </div></details></article></div>
  <details class="connection-system"><summary>账号与服务状态</summary><p id="connectionSystemStatus"></p></details>
+ </div>
+ <p id="connectionMemberHint" class="hint hidden">商城连接由团队管理员配置。你可以在上方下载采集助手。</p>
 </section>
 <section class="workflow-strip"><div class="workflow-label">你的商品流水线<small>一步一步，让发布有据可查</small></div><span>01 <b>录入 / 采集</b></span><span>02 <b>整理资料</b></span><span>03 <b>人工审核</b></span><span>04 <b>下架入库</b></span></section>
 </div></main>

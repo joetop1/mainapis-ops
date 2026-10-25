@@ -39,7 +39,8 @@ async function load(){state=await api('/api/state');render();}
 function render(){
  const role=state.team?.role||'admin';
  const canPublish=role!=='editor';
- document.querySelector('[data-page="connections"]').classList.toggle('hidden',role!=='admin');
+ $('#merchantSettings').classList.toggle('hidden',role!=='admin');
+ $('#connectionMemberHint').classList.toggle('hidden',role==='admin');
  $('#username').textContent=me.user.name+(state.team?' · '+state.team.name:'');
  $('#total').textContent=state.products.length;$('#drafts').textContent=state.products.filter(p=>p.status==='draft').length;$('#approved').textContent=state.products.filter(p=>p.status==='approved').length;$('#success').textContent=state.jobs.filter(j=>j.status==='succeeded').length;
  const search=$('#search').value.toLowerCase(),products=state.products.filter(p=>(filter==='all'||p.status===filter)&&`${p.title} ${p.source_url}`.toLowerCase().includes(search));
@@ -49,7 +50,7 @@ function render(){
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
  $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
-document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCrmebAuthConnections();loadCrmebPublishConnections();}if(page==='connections')loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});});
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadCrmebAuthConnections();loadCrmebPublishConnections();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=render;
 function skuRow(s={sku:'',spec:'',cost:0,price:0,stock:0}){const tr=document.createElement('tr');tr.innerHTML=['sku','spec','cost','price','stock'].map(k=>`<td><input aria-label="${k}" data-key="${k}" value="${esc(s[k])}" ${['cost','price','stock'].includes(k)?`type="number" min="0" step="${k==='stock'?'1':'0.01'}"`:'type="text"'} required></td>`).join('')+'<td><button type="button" class="text" data-remove-sku>×</button></td>';const cell=document.createElement('td');const img=document.createElement('img');img.className='thumb';img.alt='规格图片';img.referrerPolicy='no-referrer';img.loading='lazy';const input=document.createElement('input');input.type='url';input.dataset.key='image';input.setAttribute('aria-label','SKU 图片地址');input.placeholder='未设置时使用商品首图';input.value=s.image||'';const show=()=>{img.hidden=!input.value;if(input.value.startsWith('https://'))img.src=input.value;else img.removeAttribute('src');};input.oninput=show;show();cell.append(img,input);tr.insertBefore(cell,tr.lastElementChild);tr.querySelector('[data-remove-sku]').onclick=()=>tr.remove();$('#skuRows').append(tr);}
 function edit(p=null){editing=p;$('#editorTitle').textContent=p?'编辑商品':'添加商品';const f=$('#productForm');f.reset();f.elements.catalog_target.value=p?.catalog_target||'crmeb-pro';f.elements.applicable_type.value=String(p?.applicable_type??0);$('#storeScopeField').classList.toggle('hidden',f.elements.catalog_target.value!=='crmeb-store');$('#batchPriceMode').onchange();for(const key of ['source_url','title','description'])f.elements[key].value=p?.[key]||'';f.elements.tag_ids.value=(p?.tag_ids||[]).join(',');f.elements.virtual_sales.value=p?.virtual_sales??0;f.elements.source_url.readOnly=!!p;f.elements.images.value=p?.images.join('\n')||'';f.elements.detail_images.value=(p?.detail_images||[]).join('\n');$('#skuRows').innerHTML='';(p?.skus||[]).forEach(skuRow);$('#sourcingHint').textContent=p?.sourcing?`1688 采购参考价：${p.sourcing.purchase_price||'未提供'}；代发价：${p.sourcing.dropship_price||'未提供'}；来源类目：${p.sourcing.category||'未提供'}；来源标签：${p.sourcing.tags||'未提供'}；供应商销量：${p.sourcing.supplier_sales||'未提供'}（不计入商城销量）。请补充完整规格，再确认成本、售价与库存。`:'';$('#editor').showModal();loadCatalogOptions(p).catch(e=>{$('#catalogStatus').textContent=e.message;});}
@@ -241,3 +242,14 @@ $('#teamMembers').onclick=async e=>{
  if(b.dataset.memberSub){$('#teamMemberSub').value=b.dataset.memberSub;$('#teamMemberRole').value=b.dataset.memberRole;return;}
  if(b.dataset.toggleMember){try{await api('/api/team/members','POST',{sub:b.dataset.toggleMember,role:b.dataset.memberRole,active:Number(b.dataset.memberActive)});await load();await loadTeam();}catch(e){toast(e.message);}}
 };
+
+async function loadCollectorDownload(){
+ $('#collectorDownloadStatus').textContent='正在读取插件版本…';$('#refreshCollectorDownload').classList.add('hidden');
+ try{
+  const release=await api('/api/extensions/1688-collector');
+  $('#collectorVersion').textContent='v'+release.version;
+  $('#collectorDownload').classList.remove('hidden');
+  $('#collectorDownloadStatus').textContent='当前版本 v'+release.version+' · '+Math.ceil(release.bytes/1024)+' KB · 适用于 Chrome / Edge';
+ }catch(e){$('#collectorVersion').textContent='暂不可用';$('#collectorDownload').classList.add('hidden');$('#collectorDownloadStatus').textContent=e.message;$('#refreshCollectorDownload').classList.remove('hidden');}
+}
+$('#refreshCollectorDownload').onclick=loadCollectorDownload;
