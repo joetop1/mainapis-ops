@@ -1,6 +1,8 @@
+import {recoverTigshopZeroStock} from './tigshop-recovery.mjs';
 import {connectionStore} from './connection-store.mjs';
 import {createTigshopClient,requireTigshopToken,tigshopShipping} from './tigshop-client.mjs';
 import {createTigshopRunner} from './tigshop-direct.mjs';
+import {buildTigshopProduct} from './tigshop.mjs';
 import {createTigshopCatalog} from './tigshop-catalog.mjs';
 import {fetchTigshopFX} from './tigshop-pricing.mjs';
 import http from 'node:http';
@@ -186,6 +188,7 @@ export const handler=async(req,res)=>{
     }
     const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store|tigshop)$/);
     if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoader(catalogRoute[1],owner)(new URL(req.url,origin).searchParams.get('refresh')==='1'));
+    if(path==='/api/jobs/650b74d9-6d5e-4174-9245-4d45163e3699/recover-zero-stock'&&req.method==='POST'){if(demo)throw Error('演示模式不执行商城操作');return json(res,200,await recoverTigshopZeroStock(db,owner,getTigshopConnection));}
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
     if(retryRoute && req.method==='POST'){
       if(demo)return json(res,503,{error:'演示模式不执行发布'});
@@ -233,7 +236,7 @@ export const handler=async(req,res)=>{
         await validateCatalog(publishingProduct,owner);
         if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={fx:await fetchTigshopFX(),shipping:{templateId:getTigshopConnection(owner).templateId}};}
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
-        const id=uid(),t=now();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
+        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
         audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(job.target==='tigshop'){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else await dispatch(job,publishingProduct);return json(res,202,{id});
       }
     }

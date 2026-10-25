@@ -18,3 +18,4 @@ test('generated workflow uses independent credentials and preserved snapshot FX'
  assert.equal(w.nodes.find(n=>n.id==='webhook').parameters.path,'ops-tigshop');
  assert.match(w.nodes.find(n=>n.id==='prepare').parameters.jsCode,/lease.product.tigshop/);
 });
+test('zero total stock is rejected before any create request can be claimed',()=>{const empty=structuredClone(lease);for(const sku of empty.product.skus)sku.stock=0;assert.throws(()=>buildTigshopProduct(empty,fx,shipping),/总库存必须大于/);});

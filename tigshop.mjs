@@ -21,6 +21,7 @@ export function buildTigshopProduct(lease,fx,shipping={}){
   return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),sortOrder:i};
  });
  const stock=skus.reduce((n,s)=>n+s.stock,0);
+ if(stock<=0)throw Error('Tigshop 商品总库存必须大于 0，请先填写实际库存');
  if(stock>2147483647)throw Error('总库存超出范围');
  const sales=p.virtual_sales??0;if(!Number.isSafeInteger(sales)||sales<0||sales>2147483647)throw Error('虚拟销量无效');
  return {productType:1,shopId:0,productStatus:0,checkStatus:1,saleMode:0,deliveryMode:1,
