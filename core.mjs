@@ -20,7 +20,7 @@ export function validateProduct(input) {
     p.category_id=input.category_id;p.catalog_target=input.catalog_target||'crmeb-pro';
   }
   if(input.catalog_target!==undefined)p.catalog_target=input.catalog_target;
-  if(p.catalog_target==='crmeb-store'){p.applicable_type=input.applicable_type??1;if(![0,1].includes(p.applicable_type))throw Error('请选择所有门店或仅平台');}
+  if(p.catalog_target==='crmeb-store'){p.applicable_type=input.applicable_type??0;if(![0,1].includes(p.applicable_type))throw Error('请选择所有门店或仅平台');}
   if(input.sourcing!==undefined){
     if(!input.sourcing||typeof input.sourcing!=='object'||Array.isArray(input.sourcing))throw Error('采购参考资料格式错误');
     p.sourcing=Object.fromEntries(['purchase_price','dropship_price','category','tags','supplier_sales','shipping_time','listed_at'].map(key=>[key,String(input.sourcing[key]??'').slice(0,300)]));

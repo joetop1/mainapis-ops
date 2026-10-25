@@ -14,7 +14,7 @@ export function storeLease(lease){
 }
 export function buildStoreProduct(lease,config){
  const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true});payload.type=0;
- const scope=lease.product.applicable_type??1;if(![0,1].includes(scope))throw Error('请选择所有门店或仅平台');
+ const scope=lease.product.applicable_type??0;if(![0,1].includes(scope))throw Error('请选择所有门店或仅平台');
  payload.applicable_type=scope;payload.applicable_store_id=[];
  // Keep the full source gallery in description; the database carousel is a short list.
  // Match PHP json_encode escaping when applying the conservative serialized budget.
@@ -29,7 +29,7 @@ export function buildStoreProduct(lease,config){
 }
 export function verifyStoreProduct(response,lease,config){
  const d=response?.data?.productInfo||response?.data;
- if(d&&(Number(d.applicable_type)!==(lease.product.applicable_type??1)||(Array.isArray(d.applicable_store_id)?d.applicable_store_id.length>0:!!String(d.applicable_store_id??'').trim())))return {status:'awaiting_review',message:'门店适用范围未确认一致，请检查商城对外接口是否接收 applicable_type 和 applicable_store_id'};
+ if(d&&(Number(d.applicable_type)!==(lease.product.applicable_type??0)||(Array.isArray(d.applicable_store_id)?d.applicable_store_id.length>0:!!String(d.applicable_store_id??'').trim())))return {status:'awaiting_review',message:'门店适用范围未确认一致，请检查商城对外接口是否接收 applicable_type 和 applicable_store_id'};
  if(d&&d.product_type!==undefined&&Number(d.product_type)!==0)return {status:'awaiting_review',message:'多门店商品类型不是普通实物，未确认成功'};
  return verifyOfficialProduct(response,storeLease(lease),{...config,forceMulti:true});
 }

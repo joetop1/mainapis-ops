@@ -1,5 +1,5 @@
 {{ {
   ...$("配置分类运费并转换字段").first().json.payload,
-  applicable_type: $("读取可信任务快照").first().json.product.applicable_type ?? 1,
+  applicable_type: $("读取可信任务快照").first().json.product.applicable_type ?? 0,
   applicable_store_id: []
 } }}
