@@ -21,8 +21,16 @@ test('reads unassociated backend brands with hierarchy and authenticates each ma
 });
 test('backend brand failure is explicit and never falls back to an incomplete public list',async()=>{
  const read=crmebBrandReader('crmeb-store',{appid:'app',appsecret:'secret'},async(url)=>({ok:!url.endsWith('/brand/list'),status:url.endsWith('/brand/list')?404:200,text:async()=>JSON.stringify({status:200,data:{token:'test'}})}));
- await assert.rejects(read,/尚未安装/);
+ await assert.rejects(read,/读取后台品牌失败：HTTP 404/);
  let brandCalls=0;
  const loader=createCatalogLoader(async url=>{if(url.endsWith('/brand'))brandCalls++;return {status:200,data:[]};},'crmeb-store',read);
  const catalog=await loader();assert.ok(catalog.brandError);assert.equal(brandCalls,0);assert.deepEqual(catalog.brands,[]);
+});
+
+test('distinguishes token rejection from protected brand rejection without exposing secrets',async()=>{
+ const creds={appid:'app',appsecret:'super-private-secret'};
+ const tokenFail=crmebBrandReader('crmeb-pro',creds,async()=>({ok:true,status:200,text:async()=>JSON.stringify({status:400,msg:'appid或appsecret错误 super-private-secret'})}));
+ await assert.rejects(tokenFail,e=>e.message.includes('获取访问 Token失败')&&e.message.includes('appid或appsecret错误')&&!e.message.includes(creds.appsecret));
+ const brandFail=crmebBrandReader('crmeb-pro',creds,async url=>({ok:true,status:200,text:async()=>JSON.stringify(url.endsWith('/brand/list')?{status:410003,msg:'请登录'}:{status:200,data:{access_token:'jwt-private'}})}));
+ await assert.rejects(brandFail,/读取后台品牌失败.*410003.*请登录/);
 });

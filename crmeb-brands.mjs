@@ -5,12 +5,19 @@ export function crmebBrandReader(target,credentials,fetcher=fetch){
  const {appid,appsecret}=credentials||{};
  if(typeof appid!=='string'||!appid.trim()||appid.length>200||typeof appsecret!=='string'||!appsecret||appsecret.length>1000)throw Error('请填写商城对外接口 AppID 和 AppSecret');
  const request=async(path,options)=>{
+  const stage=path===site.auth?'获取访问 Token':'读取后台品牌';
   try{
    const r=await fetcher(site.base+path,{...options,redirect:'error',signal:AbortSignal.timeout(15000)});
-   if(r.status===404)throw Error('商城尚未安装受 Token 保护的品牌列表接口');
-   if(!r.ok)throw Error('商城品牌接口返回 HTTP '+r.status);
+   if(r.status===404)throw Error('商城'+stage+'失败：HTTP 404，请检查对应接口是否存在');
+   if(!r.ok)throw Error('商城'+stage+'失败：HTTP '+r.status);
    const text=await r.text();if(text.length>2e6)throw Error('品牌响应过大');
-   const data=JSON.parse(text);if(Number(data.status)!==200)throw Error('商城鉴权或品牌读取失败，请检查接口凭据与权限');
+   const data=JSON.parse(text);if(Number(data.status)!==200){
+    const raw=String(data.msg||data.message||'');
+    const hints=['appid或appsecret错误','账号不存在','账号已禁用','请登录','接口未开启','暂无权限','接口不存在'];
+    const hint=hints.find(x=>raw.includes(x));
+    const status=Number.isFinite(Number(data.status))?Number(data.status):'格式异常';
+    throw Error('商城'+stage+'失败（业务状态 '+status+'）'+(hint?'：'+hint:'；请核对对应接口配置'));
+   }
    return data;
   }catch(e){if(e.message.startsWith('商城')||e.message==='品牌响应过大')throw e;throw Error('商城品牌接口未完成，请检查网络或只读接口配置');}
  };
