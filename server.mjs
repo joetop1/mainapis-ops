@@ -1,3 +1,5 @@
+import {teamStore,teamPermission} from './teams.mjs';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {validateCrmebWebhook,testCrmebWebhook} from './crmeb-webhook.mjs';
 import {crmebBrandReader} from './crmeb-brands.mjs';
 import {recoverTigshopZeroStock} from './tigshop-recovery.mjs';
@@ -37,6 +39,7 @@ if(!demo && new URL(issuer).protocol!=='https:') throw Error('Casdoor 必须是 
 if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(storeWebhook).protocol!=='https:')) throw Error('n8n Webhook 必须是 HTTPS');
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
+const teams=teamStore(db),actorContext=new AsyncLocalStorage();
 const savedConnections=await connectionStore(db,dataDir);
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const privateBrandCatalogs=new Map();
@@ -56,7 +59,7 @@ function sessionSet(res,data,ttl=8*3600000) {
   return id;
 }
 function expire(res,id) {if(id)db.prepare('DELETE FROM sessions WHERE id=?').run(id);res.setHeader('Set-Cookie',`ops_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${demo?'':'; Secure'}`);}
-const audit=(owner,action,id)=>db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run(uid(),owner,action,id,now());
+const audit=(owner,action,id)=>{db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run(uid(),owner,action,id,now());if(owner.startsWith('team:'))db.prepare('INSERT INTO team_events VALUES(?,?,?,?,?,?)').run(uid(),owner,actorContext.getStore()?.actor||'system',action,id,now());};
 function json(res,status,data) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
 function redirect(res,url) {res.writeHead(302,{Location:url});res.end();}
 async function body(req) {
@@ -114,14 +117,14 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
 }
 db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE status='dispatching' OR (target='tigshop' AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))").run(now());
 setInterval(()=>db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()),60000).unref();
-export const handler=async(req,res)=>{
+const handleRequest=async(req,res)=>{
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
     if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
-    let s=sessionGet(req);
+    let s=sessionGet(req);if(s?.user)actorContext.getStore().actor=s.user.sub;
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}
       if(!client||!clientSecret||!allowed.length) return json(res,503,{error:'请先配置 Casdoor Client ID、Secret 和 ALLOWED_SUBJECTS'});
@@ -136,7 +139,7 @@ export const handler=async(req,res)=>{
       const meta=await discovery();
       const tokens=await remoteJSON(meta.token_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',client_id:client,client_secret:clientSecret,code:q.get('code'),redirect_uri:origin+'/auth/callback',code_verifier:pending.verifier})});
       const claims=verifyIdToken(tokens.id_token,await remoteJSON(meta.jwks_uri),{issuer,audience:client,nonce:pending.nonce});
-      if(!allowed.includes(claims.sub))return json(res,403,{error:'账号未获运营后台访问权限，请由管理员将 Casdoor 的 sub 加入 ALLOWED_SUBJECTS'});
+      if((teams.member(claims.sub)&&!teams.member(claims.sub).active)||(!allowed.includes(claims.sub)&&!teams.context(claims.sub)))return json(res,403,{error:'账号未获运营后台访问权限，请由管理员将 Casdoor 的 sub 加入 ALLOWED_SUBJECTS'});
       sessionSet(res,{user:{sub:claims.sub,name:claims.name||claims.preferred_username||claims.sub},csrf:secret()});audit(claims.sub,'login','');return redirect(res,'/');
     }
     if(path.startsWith('/api/callback/') && req.method==='POST') {
@@ -177,12 +180,22 @@ export const handler=async(req,res)=>{
       if(['succeeded','failed'].includes(job.status)){if(job.status!==b.status||job.remote_id!==remoteId)return json(res,409,{error:'终态结果冲突'});return json(res,200,{ok:true,duplicate:true});}
       db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);return json(res,200,{ok:true});
     }
-    if(path==='/api/me')return json(res,200,{user:s?.user||null,csrf:s?.csrf||'',demo,authReady:demo||!!(client&&clientSecret&&allowed.length)});
+    if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
+    if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,authReady:demo||!!(client&&clientSecret&&allowed.length)});
     if(!s?.user)return json(res,401,{error:'请先登录'});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
-    const owner=s.user.sub;
+    const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
+    if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
+    if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
+    if(path==='/api/team'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不创建团队');const b=await body(req);
+      const created=teams.create(actor,b.name,[savedConnections,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
+    }
+    if(path==='/api/team/members'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不修改团队');const b=await body(req);const result=teams.setMember(actor,b.sub,b.role,b.active??1);audit(owner,'team.member_updated',b.sub);return json(res,200,result);
+    }
     const publishConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/publishing(\/test)?$/);
     if(publishConnectionRoute){
       const target=publishConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner),current=connectionFor(target,owner);
@@ -252,7 +265,7 @@ export const handler=async(req,res)=>{
       if(job.target==='tigshop'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,JSON.parse(snapshot.product),'verify_draft'));}else await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
-    if(path==='/api/state' && req.method==='GET')return json(res,200,{products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>({...t,configured:!demo&&connected(t.id,owner)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
+    if(path==='/api/state' && req.method==='GET')return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(decodeProduct),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>({...t,configured:!demo&&connected(t.id,owner)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
@@ -285,6 +298,7 @@ export const handler=async(req,res)=>{
     return json(res,404,{error:'接口不存在'});
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
+export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
 export const closeStore=()=>db.close();
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
