@@ -16,3 +16,7 @@ test('connection secrets persist encrypted, are owner-bound, and key is private'
   db.prepare('INSERT INTO connections VALUES(?,?,?)').run('bob',ciphertext,'now');assert.throws(()=>store.get('bob'),/解密/);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
+test('CRMEB stores and Tigshop retain separate encrypted owner records',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-mall-secrets-')),db=openStore(join(dir,'db'));
+ try{const member=await connectionStore(db,dir,'crmeb-pro'),multi=await connectionStore(db,dir,'crmeb-store'),tig=await connectionStore(db,dir);member.set('alice',{appsecret:'member'});multi.set('alice',{appsecret:'multi'});tig.set('alice',{token:'tigshop'});assert.equal(member.get('alice').appsecret,'member');assert.equal(multi.get('alice').appsecret,'multi');assert.equal(tig.get('alice').token,'tigshop');assert.equal(member.get('bob'),null);}finally{db.close();await rm(dir,{recursive:true,force:true});}
+});

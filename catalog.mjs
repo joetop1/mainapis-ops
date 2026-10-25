@@ -8,7 +8,7 @@ function options(response,kind){
  const walk=(nodes,names=[],ids=[],depth=0)=>{
   if(depth>10||result.length>5000)throw Error('商城列表过大');
   for(const row of nodes){
-   const id=Number(row.id),name=String(row[kind==='category'?'cate_name':'brand_name']||'').trim();
+   const id=Number(row.id??row.value),name=String(row[kind==='category'?'cate_name':'brand_name']??row.label??'').trim();
    if(!Number.isSafeInteger(id)||id<=0||!name||seen.has(id))throw Error('商城列表 ID 或名称无效');
    seen.add(id);const path=[...names,name],pathIds=[...ids,id];
    result.push({id,name,label:path.join(' / '),ids:pathIds});
@@ -16,15 +16,15 @@ function options(response,kind){
   }
  };walk(rows);return result;
 }
-export function createCatalogLoader(fetchJSON,target='crmeb-pro'){
+export function createCatalogLoader(fetchJSON,target='crmeb-pro',fetchBrands=null){
  const base=sources[target];if(!base)throw Error('不支持的商城');
  let cache=null,pending=null;
  return async(force=false)=>{
   if(!force&&cache&&Date.now()-cache.time<300000)return cache.value;
   if(pending)return pending;
   pending=(async()=>{
-   const responses=await Promise.allSettled(['/api/category','/api/brand'].map(path=>fetchJSON(base+path)));
-   const value={target,categories:[],brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:'分类为商城前台可见分类；品牌为当前上架商品使用的可见品牌，暂不包含全部后台品牌。'};
+   const responses=await Promise.allSettled([fetchJSON(base+'/api/category'),fetchBrands?fetchBrands():fetchJSON(base+'/api/brand')]);
+   const value={target,categories:[],brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:fetchBrands?'分类为前台可见分类；品牌来自后台完整的已显示品牌列表，包含未关联商品的新品牌。':'分类为商城前台可见分类；品牌仅包含上架商品使用的品牌。请在连接与配置中设置后台品牌读取连接，以获取新品牌。'};
    for(const [i,kind]of ['category','brand'].entries()){
     try{if(responses[i].status!=='fulfilled')throw Error();value[kind==='category'?'categories':'brands']=options(responses[i].value,kind);}
     catch{value[kind+'Error']='读取商城'+(kind==='category'?'分类':'品牌')+'失败，请稍后刷新；不会使用手工填写的 ID';}
@@ -49,3 +49,4 @@ export function applyCatalog(product,catalog){
  }
  return product;
 }
+export {options as parseCatalogOptions};

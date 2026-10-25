@@ -1,3 +1,4 @@
+import {crmebBrandReader} from './crmeb-brands.mjs';
 import {recoverTigshopZeroStock} from './tigshop-recovery.mjs';
 import {connectionStore} from './connection-store.mjs';
 import {createTigshopClient,requireTigshopToken,tigshopShipping} from './tigshop-client.mjs';
@@ -7,7 +8,7 @@ import {createTigshopCatalog} from './tigshop-catalog.mjs';
 import {fetchTigshopFX} from './tigshop-pricing.mjs';
 import http from 'node:http';
 import {parseOfficialExport} from './official-export.mjs';
-import {createCatalogLoader,applyCatalog} from './catalog.mjs';
+import {createCatalogLoader,applyCatalog,parseCatalogOptions} from './catalog.mjs';
 import {readFile,mkdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join,dirname,resolve} from 'node:path';
@@ -32,6 +33,8 @@ if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(sto
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
 const savedConnections=await connectionStore(db,dataDir);
+const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
+const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
 function getTigshopConnection(owner){return owner?savedConnections.get(owner):null;}
 const directRunner=createTigshopRunner({db,getConnection:getTigshopConnection,audit:(...args)=>audit(...args)});
@@ -64,7 +67,12 @@ async function remoteJSON(url,options={}) {
 const catalogLoaders=Object.fromEntries(['crmeb-pro','crmeb-store'].map(target=>[target,createCatalogLoader(remoteJSON,target)]));
 const tigshopCatalogs=new Map();
 function catalogLoader(target,owner){
- if(target!=='tigshop')return catalogLoaders[target];
+ if(target!=='tigshop'){
+  const c=brandConnectionStores[target]?.get(owner);if(!c)return catalogLoaders[target];
+  const key=JSON.stringify([owner,target]);
+  if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader(remoteJSON,target,crmebBrandReader(target,c)));
+  return privateBrandCatalogs.get(key);
+ }
  if(!tigshopCatalogs.has(owner)){
   const connection=getTigshopConnection(owner);if(!connection?.token)throw Error('请先到连接设置保存 Tigshop API Token');
   const client=createTigshopClient(connection.token);
@@ -170,6 +178,22 @@ export const handler=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     const owner=s.user.sub;
+    const brandConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)(\/test)?$/);
+    if(brandConnectionRoute){
+      const target=brandConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner);
+      if(req.method==='GET'&&!brandConnectionRoute[2])return json(res,200,{configured:!!old,appid:old?.appid||'',testedAt:old?.testedAt||''});
+      if(req.method==='POST'){
+        if(demo)throw Error('演示模式不保存商城凭据');
+        const b=await body(req),appid=String(b.appid||old?.appid||'').trim();
+        if(!b.appsecret&&old&&appid!==old.appid)throw Error('更换 AppID 时请填写对应 AppSecret');
+        const appsecret=b.appsecret||old?.appsecret;
+        const reader=crmebBrandReader(target,{appid,appsecret});
+        const brands=parseCatalogOptions(await reader(),'brand');
+        if(brandConnectionRoute[2])return json(res,200,{ok:true,count:brands.length,message:'后台品牌读取成功'});
+        store.set(owner,{appid,appsecret,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,target]));
+        audit(owner,'connection.'+target+'_brands_saved',target);return json(res,200,{ok:true,count:brands.length});
+      }
+    }
     if(path==='/api/connections/tigshop'&&req.method==='GET'){
       const c=getTigshopConnection(owner);return json(res,200,{configured:!!c?.token,templateId:c?.templateId||0,testedAt:c?.testedAt||'',url:'https://xiaolango.com',currency:'EUR'});
     }
