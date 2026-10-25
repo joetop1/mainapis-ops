@@ -19,3 +19,10 @@ test('generated workflow uses independent credentials and preserved snapshot FX'
  assert.match(w.nodes.find(n=>n.id==='prepare').parameters.jsCode,/lease.product.tigshop/);
 });
 test('zero total stock is rejected before any create request can be claimed',()=>{const empty=structuredClone(lease);for(const sku of empty.product.skus)sku.stock=0;assert.throws(()=>buildTigshopProduct(empty,fx,shipping),/总库存必须大于/);});
+
+test('supplies gallery and SKU thumbnail fields used by the Tigshop admin',()=>{
+ const e=buildTigshopProduct(lease,fx,shipping);
+ assert.equal(e.picThumb,lease.product.images[0]);
+ assert.equal(e.imgList[0].picThumb,lease.product.images[0]);
+ for(const [i,a] of e.attrList.spe[0].attrList.entries())assert.equal(a.attrPicThumb,lease.product.skus[i].image);
+});

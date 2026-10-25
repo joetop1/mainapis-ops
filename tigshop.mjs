@@ -18,7 +18,7 @@ export function buildTigshopProduct(lease,fx,shipping={}){
   if(!spec||spec.length>100||/[;:=]/.test(spec)||specs.has(spec))throw Error('规格值无效或重复');specs.add(spec);
   if(typeof s.sku!=='string'||!/^[A-Za-z0-9._-]{1,64}$/.test(s.sku)||codes.has(s.sku))throw Error('SKU 编码无效或重复');codes.add(s.sku);
   if(!Number.isSafeInteger(s.stock)||s.stock<0||s.stock>2147483647)throw Error('库存无效');
-  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),sortOrder:i};
+  return {attrType:1,attrName:'规格',attrValue:spec,attrPrice:0,attrColor:'',attrPic:httpsImage(s.image||images[0]),attrPicThumb:httpsImage(s.image||images[0]),sortOrder:i};
  });
  const stock=skus.reduce((n,s)=>n+s.stock,0);
  if(stock<=0)throw Error('Tigshop 商品总库存必须大于 0，请先填写实际库存');
@@ -28,7 +28,7 @@ export function buildTigshopProduct(lease,fx,shipping={}){
   productName:p.title,productSn:lease.marker,categoryId:p.category_id,brandId:p.brand_ids?.[0]||0,
   productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,
   productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\n/g,'<br>')+'</p>'+images.map(src=>'<p><img src="'+html(src)+'"></p>').join(''),
-  imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],
+  imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,picThumb:picUrl,picLarge:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],picThumb:images[0],
   attrList:{normal:[],extra:[],spe:[{attrName:'规格',attrList}]},skuType:2,
   productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:'规格:'+attrList[i].attrValue,attrs:[{attrName:'规格',attrValue:attrList[i].attrValue}],skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),
   virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,
