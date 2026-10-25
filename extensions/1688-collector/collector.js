@@ -63,9 +63,21 @@ export function collect1688(diagnostic=false) {
   title=text('.title-text')||text('.title-content')||text('.offer-title')||text('.d-title')||title||clean(document.querySelector('meta[property="og:title"]')?.content)||clean(document.title.replace(/[-_ ]*(阿里巴巴|1688).*$/,''));
   addImage(document.querySelector('meta[property="og:image"]')?.content);
   for(const img of [...document.querySelectorAll('.detail-gallery img, .detail-gallery-preview img, .detail-gallery-img img, .detail-gallery-turn img')].slice(0,100))addImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.currentSrc||img.src);
-  const detail=document.querySelector('#desc-lazyload-container, #description, .offer-description');
-  if(detail){const detailText=clean(detail.innerText||detail.textContent,10000);if(!/平台活动下价格|非分销场景|划线价格|价格说明/.test(detailText))description=detailText||description;for(const img of [...detail.querySelectorAll('img')].slice(0,100))addDetailImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.getAttribute('data-ks-lazyload')||img.src);
-    for(const frame of [...detail.querySelectorAll('iframe')]){try{const doc=frame.contentDocument;if(doc)for(const img of [...doc.querySelectorAll('img')].slice(0,100))addDetailImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.src);}catch{}}}
+  const detail=document.querySelector('#desc-lazyload-container, #description, .offer-description, .module-od-product-description, v-detail-y.html-description');
+  // Modern 1688 detail images live inside an open shadow root of v-detail-y.
+  // Traverse only the product detail container, never unrelated page images.
+  const detailSeen=new Set();let detailNodesVisited=0;
+  const scanDetail=node=>{
+    if(!node||detailSeen.has(node)||detailNodesVisited++>=50)return;detailSeen.add(node);
+    for(const img of [...node.querySelectorAll('img')].slice(0,100))addDetailImage(img.getAttribute('data-lazy-src')||img.getAttribute('data-src')||img.getAttribute('data-ks-lazyload')||img.currentSrc||img.src);
+    for(const host of [node,...[...node.querySelectorAll('*')].slice(0,2000)]){try{if(host.shadowRoot)scanDetail(host.shadowRoot);}catch{}}
+    for(const frame of [...node.querySelectorAll('iframe')].slice(0,10)){try{if(frame.contentDocument)scanDetail(frame.contentDocument);}catch{}}
+  };
+  if(detail){
+    const detailText=clean(detail.innerText||detail.textContent,10000);
+    if(!/平台活动下价格|非分销场景|划线价格|价格说明/.test(detailText))description=detailText||description;
+    scanDetail(detail);
+  }
   const skus=[],specNames=new Set(),codes=new Set(),props=new Map(),propImages=new Map();
   const rememberImage=(key,url)=>{if(!key||!url)return;const urls=propImages.get(key)||new Set();urls.add(url);propImages.set(key,urls);};
   if(skuContainer){
@@ -121,11 +133,12 @@ export function collect1688(diagnostic=false) {
   const nodeShape=n=>({tag:String(n?.tagName||''),id:String(n?.id||'').slice(0,120),className:String(n?.className||'').slice(0,180)});
   const detailStructure=diagnostic?{
     recognizedDetail:!!detail,
+    shadowHosts:[...document.querySelectorAll('v-detail-y, .html-description')].slice(0,10).map(n=>({...nodeShape(n),openShadowRoot:!!n.shadowRoot,shadowImageCount:n.shadowRoot?.querySelectorAll('img').length||0})),
     matchedDetailImageCount:detailPictures.length,
     candidates:[...document.querySelectorAll('[id*="desc"], [class*="desc"], [id*="Desc"], [class*="Desc"]')].slice(0,45).map(n=>({...nodeShape(n),imageCount:n.querySelectorAll('img').length,frameCount:n.querySelectorAll('iframe').length})),
     frames:[...document.querySelectorAll('iframe')].slice(0,20).map(n=>{let accessible=false,imageCount=0;try{const d=n.contentDocument;accessible=!!d;if(d)imageCount=d.querySelectorAll('img').length;}catch{}return {...nodeShape(n),accessible,imageCount};}),
     imageAncestors:[...document.querySelectorAll('img')].filter(n=>Number(n.naturalHeight)>=500||Number(n.height)>=500).slice(0,30).map(n=>{const ancestors=[];let parent=n.parentElement;for(let i=0;parent&&i<6;i++,parent=parent.parentElement)ancestors.push(nodeShape(parent));return {...nodeShape(n),width:Number(n.naturalWidth||0),height:Number(n.naturalHeight||0),ancestors};})
   }:undefined;
-  if(diagnostic)return {diagnostics:{version:'0.1.7',detailStructure,offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
+  if(diagnostic)return {diagnostics:{version:'0.1.8',detailStructure,offer_id:offer,roots:rootNames,schemas,skuSchemas,selectedSkuPath:skuPath,headings:[...document.querySelectorAll('h1,h2')].slice(0,15).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),skuElements:[...document.querySelectorAll('[class*="sku"], [class*="Sku"]')].slice(0,25).map(n=>({tag:n.tagName,className:String(n.className).slice(0,120)})),scriptCount:document.querySelectorAll('script').length,matchedSkuMap:!!skuContainer}};
   return {product:{source_url:'https://detail.1688.com/offer/'+offer+'.html',title,category:'',description,images:pictures,detail_images:detailPictures,skus},warnings};
 }

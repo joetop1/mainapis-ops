@@ -72,3 +72,14 @@ test('详情图区分主图与SKU配图，明确报告未加载的详情',()=>{
  assert.ok(capture().warnings.some(x=>x.includes('未采集到真实商品详情图')));
  const saved=validateProduct({...r.product,source_url:'https://detail.1688.com/offer/123456.html'});assert.deepEqual(saved.detail_images,r.product.detail_images);
 });
+test('现代1688详情组件：穿透开放Shadow DOM，保留详情顺序并隔离SKU图片',()=>{
+ const img=url=>({src:url,getAttribute:()=>null});
+ const shadow={querySelectorAll:s=>s==='img'?[img('https://cbu01.alicdn.com/img/detail-1.jpg'),img('https://cbu01.alicdn.com/img/detail-2.jpg')]:[]};
+ const host={tagName:'V-DETAIL-Y',shadowRoot:shadow};
+ const container={innerText:'',querySelectorAll:s=>s==='*'?[host]:[]};
+ const doc={querySelector:s=>s.startsWith('#desc-lazyload-container')?container:null};
+ const r=JSON.parse(JSON.stringify(capture({offer:{offerId:123456,imageList:['https://cbu01.alicdn.com/img/main.jpg']}},doc)));
+ assert.deepEqual(r.product.detail_images,['https://cbu01.alicdn.com/img/detail-1.jpg','https://cbu01.alicdn.com/img/detail-2.jpg']);
+ assert.deepEqual(r.product.images,['https://cbu01.alicdn.com/img/main.jpg']);
+ assert.equal(r.warnings.some(x=>x.includes('未采集到真实商品详情图')),false);
+});
