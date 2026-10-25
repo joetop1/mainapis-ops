@@ -13,7 +13,7 @@ export function crmebBrandReader(target,credentials,fetcher=fetch){
    const text=await r.text();if(text.length>2e6)throw Error('品牌响应过大');
    const data=JSON.parse(text);if(Number(data.status)!==200){
     const raw=String(data.msg||data.message||'');
-    const hints=['appid或appsecret错误','账号不存在','账号已禁用','请登录','接口未开启','暂无权限','接口不存在'];
+    const hints=['appid或appsecret错误','账号不存在','账号已禁用','请登录','接口未开启','暂无对应接口权限','暂无权限','接口不存在'];
     const hint=hints.find(x=>raw.includes(x));
     const status=Number.isFinite(Number(data.status))?Number(data.status):'格式异常';
     throw Error('商城'+stage+'失败（业务状态 '+status+'）'+(hint?'：'+hint:'；请核对对应接口配置'));

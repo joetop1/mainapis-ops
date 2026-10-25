@@ -22,3 +22,18 @@ python3 /root/patch-crmeb-brand-readonly.py --root /实际商城PHP根目录 --a
 原文件备份后缀 .bak-ops-brands-时间戳。升级商城后复查接口。回滚时恢复两份对应备份。
 
 节点测试覆盖请求目标、不同鉴权路径、双 Authorization 请求头、全品牌层级、刷新、失败禁止回退，以及凭据和缓存隔离。Python 补丁测试的 lint 调用使用模拟；真实 PHP 语法检查在商城服务器执行。
+
+## 会员版接口权限登记
+
+Pro 4.3 的 AuthTokenMiddleware 还调用 OutInterfaceServices::verifyAuth，检查 out_interface 登记表及账号 rules。新路由只有 Token 鉴权仍不足，必须登记只读接口并由管理员明确勾选授权。
+
+将 scripts/register-crmeb-brand-interface.php 上传到商城服务器 /root，然后：
+
+```
+cd /www/wwwroot/xlupw.com
+php /root/register-crmeb-brand-interface.php
+```
+
+脚本复用数据库配置和表前缀，检查只读方法已安装，锁定现有分类列表行以取得真实父级，只新增 GET /brand/list 的接口元数据；重复执行不新增，不更改账号 rules、不扩大权限。刷新授权页，勾选“品牌列表（OPS只读）”并保存，然后重试 OPS。
+
+此 PHP 脚本需在服务器使用实际 PHP 执行；本地环境没有 PHP，未声称完成远程执行。
