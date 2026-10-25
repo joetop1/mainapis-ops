@@ -82,6 +82,17 @@ $('#batchPriceMode').onchange=()=>{
  $('#batchPriceLabel').textContent=mode==='percent'?'加价比例 %':mode==='add'?'每件加价 ¥':'统一售价 ¥';
  $('#batchPriceHint').textContent=mode==='percent'?'售价 = 每个规格成本 ×（1 + 比例 ÷ 100），结果四舍五入到分。':'应用会更新下方全部规格的售价；点击「保存商品」后才会保存。';
 };
+$('#applyBatchStock').onclick=()=>{
+ try{
+  const raw=$('#batchStockValue').value.trim(),value=Number(raw);
+  if(!raw||!Number.isSafeInteger(value)||value<0||value>2147483647)throw Error('库存请填写 0–2147483647 的整数');
+  const inputs=[...$('#skuRows').querySelectorAll('input[data-key="stock"]')];
+  if(!inputs.length)throw Error('请先添加 SKU 规格');
+  if($('#catalogTarget').value==='tigshop'&&value*inputs.length>2147483647)throw Error('Tigshop 全部规格的总库存超出上限');
+  inputs.forEach(input=>{input.value=String(value);});
+  toast(`已将 ${inputs.length} 个规格的库存分别设为 ${value}，请检查后保存商品`);
+ }catch(e){toast(e.message);}
+};
 $('#applyBatchPrice').onclick=()=>{
  try{
   const rows=[...$('#skuRows').children];
