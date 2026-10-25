@@ -1,3 +1,4 @@
+import {validateCrmebWebhook,testCrmebWebhook} from './crmeb-webhook.mjs';
 import {crmebBrandReader} from './crmeb-brands.mjs';
 import {recoverTigshopZeroStock} from './tigshop-recovery.mjs';
 import {connectionStore} from './connection-store.mjs';
@@ -24,8 +25,12 @@ const allowed=(process.env.ALLOWED_SUBJECTS||'').split(',').map(s=>s.trim()).fil
 const webhook=process.env.N8N_WEBHOOK_URL||'', hookToken=process.env.N8N_WEBHOOK_TOKEN||'';
 const storeWebhook=process.env.N8N_STORE_WEBHOOK_URL||'',storeHookToken=process.env.N8N_STORE_WEBHOOK_TOKEN||'';
 const officialTargets=['crmeb-pro','crmeb-store','tigshop'];
-const connectionFor=target=>target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:{url:'',token:''};
-const connected=(target,owner)=>target==='tigshop'?!!getTigshopConnection(owner)?.token:!!(connectionFor(target).url&&connectionFor(target).token);
+const connectionFor=(target,owner)=>{
+ const saved=owner?brandConnectionStores[target]?.get(owner):null;
+ if(saved?.webhookUrl&&saved?.webhookToken)return {url:saved.webhookUrl,token:saved.webhookToken};
+ return target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:{url:'',token:''};
+};
+const connected=(target,owner)=>target==='tigshop'?!!getTigshopConnection(owner)?.token:!!(connectionFor(target,owner).url&&connectionFor(target,owner).token);
 const host=demo?'127.0.0.1':(process.env.HOST||'0.0.0.0');
 if(!demo && new URL(origin).protocol!=='https:') throw Error('生产 APP_ORIGIN 必须是 HTTPS');
 if(!demo && new URL(issuer).protocol!=='https:') throw Error('Casdoor 必须是 HTTPS');
@@ -68,7 +73,7 @@ const catalogLoaders=Object.fromEntries(['crmeb-pro','crmeb-store'].map(target=>
 const tigshopCatalogs=new Map();
 function catalogLoader(target,owner){
  if(target!=='tigshop'){
-  const c=brandConnectionStores[target]?.get(owner);if(!c)return catalogLoaders[target];
+  const c=brandConnectionStores[target]?.get(owner);if(!c?.appid||!c?.appsecret)return catalogLoaders[target];
   const key=JSON.stringify([owner,target]);
   if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader(remoteJSON,target,crmebBrandReader(target,c)));
   return privateBrandCatalogs.get(key);
@@ -101,10 +106,10 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
   }
   const payload={job_id:job.id,idempotency_key:job.id,action,target:job.target,product_revision:job.revision,product:p,...verification,callback:{url:origin+'/api/callback/'+job.id,token:job.token}};
   try {
-    const connection=connectionFor(job.target);if(!connection.url||!connection.token)throw Error('目标商城未配置');
+    const connection=connectionFor(job.target,job.owner);if(!connection.url||!connection.token)throw Error('目标商城未配置');
     const r=await fetch(connection.url,{method:'POST',headers:{'Content-Type':'application/json','X-Ops-Token':connection.token,'Idempotency-Key':job.id},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(15000)});
     if(r.ok)db.prepare("UPDATE jobs SET status='accepted',message='n8n 已接收，等待执行结果',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
-    else db.prepare("UPDATE jobs SET status='unknown',message='n8n 返回非成功状态；请核对执行记录后再处理，避免重复创建商品',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
+    else db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('发布入口返回 HTTP '+r.status+'；请到连接与配置测试该商城发布入口，核对后重发原未领取任务',now(),job.id);
   } catch {db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
 }
 db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE status='dispatching' OR (target='tigshop' AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))").run(now());
@@ -178,10 +183,23 @@ export const handler=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     const owner=s.user.sub;
+    const publishConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/publishing(\/test)?$/);
+    if(publishConnectionRoute){
+      const target=publishConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner),current=connectionFor(target,owner);
+      if(req.method==='GET'&&!publishConnectionRoute[2])return json(res,200,{configured:!!(current.url&&current.token),url:current.url||('https://n8n.mainapis.com/webhook/'+(target==='crmeb-pro'?'ops-crmeb-official':'ops-crmeb-store')),hasToken:!!current.token,source:old?.webhookToken?'page':'environment'});
+      if(req.method==='POST'){
+        if(demo)throw Error('演示模式不保存或测试发布连接');
+        const b=await body(req),connection=validateCrmebWebhook(target,b.url||current.url,b.token||current.token);
+        if(publishConnectionRoute[2])return json(res,200,await testCrmebWebhook(connection));
+        store.set(owner,{...old,webhookUrl:connection.url,webhookToken:connection.token});
+        audit(owner,'connection.'+target+'_publishing_saved',target);
+        return json(res,200,{ok:true,message:'发布连接已保存，后续发布和未领取任务重发将使用此配置'});
+      }
+    }
     const brandConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)(\/test)?$/);
     if(brandConnectionRoute){
       const target=brandConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner);
-      if(req.method==='GET'&&!brandConnectionRoute[2])return json(res,200,{configured:!!old,appid:old?.appid||'',testedAt:old?.testedAt||''});
+      if(req.method==='GET'&&!brandConnectionRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',testedAt:old?.testedAt||''});
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不保存商城凭据');
         const b=await body(req),appid=String(b.appid||old?.appid||'').trim();
@@ -190,7 +208,7 @@ export const handler=async(req,res)=>{
         const reader=crmebBrandReader(target,{appid,appsecret});
         const brands=parseCatalogOptions(await reader(),'brand');
         if(brandConnectionRoute[2])return json(res,200,{ok:true,count:brands.length,message:'后台品牌读取成功'});
-        store.set(owner,{appid,appsecret,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,target]));
+        store.set(owner,{...old,appid,appsecret,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,target]));
         audit(owner,'connection.'+target+'_brands_saved',target);return json(res,200,{ok:true,count:brands.length});
       }
     }
@@ -219,7 +237,7 @@ export const handler=async(req,res)=>{
       const job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(retryRoute[1],owner),snap=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(retryRoute[1]);
       if(!job||!officialTargets.includes(job.target)||!snap||snap.claimed||!['accepted','unknown'].includes(job.status))return json(res,409,{error:'任务可能已开始创建，禁止重新发送'});
       if(!connected(job.target,owner))return json(res,503,{error:'请先配置该目标商城连接'});
-      audit(owner,'job.retry_unclaimed',job.id);if(job.target==='tigshop'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
+      db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(job.target==='tigshop'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
     }
     const verificationRoute=path.match(/^\/api\/jobs\/([^/]+)\/verify$/);
     if(verificationRoute && req.method==='POST'){
