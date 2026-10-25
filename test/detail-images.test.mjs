@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {detailImagesFromJSON,detailHTML} from '../public/detail-images.js';
+const source='https://detail.1688.com/offer/976924360733.html';
+test('imports only explicit detail pictures from matching product without mutating source data',()=>{const p={source_url:source,images:['https://example.com/main.jpg'],detail_images:['https://example.com/long.jpg'],skus:[{price:10,stock:2,image:'https://example.com/sku.jpg'}]},before=structuredClone(p);assert.deepEqual(detailImagesFromJSON(source+'?tracking=1',{products:[p]}),p.detail_images);assert.deepEqual(p,before);assert.throws(()=>detailImagesFromJSON('https://detail.1688.com/offer/1.html',{products:[p]}));assert.throws(()=>detailImagesFromJSON(source,{products:[{...p,detail_images:undefined}]}));});
+test('detail HTML escapes text and rejects unsafe image protocols',()=>{const html=detailHTML('<script>test</script>',['https://example.com/detail.jpg?a=1&b=2']);assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(html.includes('a=1&amp;b=2'));assert.throws(()=>detailHTML('', ['javascript:alert(1)']));assert.throws(()=>detailHTML('', []));});

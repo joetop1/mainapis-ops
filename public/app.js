@@ -1,3 +1,4 @@
+import {detailImagesFromJSON,detailHTML} from './detail-images.js';
 import {batchPrices} from './pricing.js';
 import {matchSkuImages} from './sku-images.js';
 const $=s=>document.querySelector(s);
@@ -67,6 +68,12 @@ $('#refreshCatalog').onclick=()=>{
  loadCatalogOptions({catalog_target:$('#catalogTarget').value,category_id:Number(f.elements.category_id.value),category:f.elements.category_id.selectedOptions[0]?.textContent,brand_ids:brand?.ids||editing?.brand_ids||[]},true);
 };
 $('#newButton').onclick=()=>edit();$('#closeEditor').onclick=()=>$('#editor').close();$('#addSku').onclick=()=>skuRow();
+$('#detailImagesFile').onchange=async e=>{
+ try{const file=e.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw Error('采集文件请小于 2 MB');const images=detailImagesFromJSON($('#productForm').elements.source_url.value,JSON.parse(await file.text()));$('#productForm').elements.detail_images.value=images.join('\n');toast(`已填入 ${images.length} 张详情图，请检查后保存商品`);}catch(e){toast(e.message);}finally{e.target.value='';}
+};
+$('#copyDetailHTML').onclick=async()=>{
+ try{const f=$('#productForm');const html=detailHTML(f.elements.description.value,f.elements.detail_images.value.split('\n').map(x=>x.trim()).filter(Boolean));await navigator.clipboard.writeText(html);toast('详情 HTML 已复制，可粘贴到商城商品详情的源码编辑框后保存');}catch(e){toast(e.message||'复制失败，请检查浏览器剪贴板权限');}
+};
 $('#skuImagesFile').onchange=async e=>{
  try{
   const file=e.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw Error('配图文件请小于 2 MB');
