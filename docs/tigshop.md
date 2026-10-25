@@ -1,44 +1,52 @@
-# Tigshop 自营对接（源码核对中）
+# Tigshop 自营连接
 
-目标 https://xiaolango.com，JAVA-B2B2C-OVERSEAS v5.8.60。
-源码核对自本地同版本 ProductController、ProductSaveParam、ProductServiceImpl。
+目标：xiaolango.com，JAVA-B2B2C-OVERSEAS v5.8.60；平台自营，基准币种 EUR。
 
-- 鉴权：n8n 独立 Header Auth，X-Api-Token；另加 X-ADMIN-TYPE: admin。
-- GET /adminapi/product/product/list：已由操作者实际测试 code=0。
-- GET /adminapi/product/product/detail?id=1567：实际响应已验证。
-- GET /adminapi/product/category/getAllCategory：分类树。
-- GET /adminapi/product/brand/search：品牌选项。
-- POST /adminapi/product/product/create：ProductSaveParam。
+## 页面操作
 
-映射：categoryId、brandId（单品牌）、productName、productSn（OPS 标记）、shopId=0、productStatus=0。
-图库 imgList；描述 productDesc / productDescArr。
-规格定义 attrList.spe[].attrList[]：attrName / attrValue / attrPic。
-SKU productList[]：skuSn / skuStock / skuPrice / costPrice / attrs[{attrName,attrValue}]。
-保存侧会将 attrs 转换为 skuData，不能简单照抄详情响应作为创建请求。
-新增记录不传已有 productId / skuId / attributesId / picId。
-create 返回字符串“商品已添加”，没有商品 ID；必须回查核对才能确认成功。
+进入 OPS「连接与配置 → Tigshop 自营连接」：
 
-跨境价格必须确认商城基准币种；OPS 当前价格以人民币记录，不能默认为目标币种或猜测汇率。
-连接器、发布工作流和 OPS 路由尚未启用。已有 CRMEB 工作流保持原样。
+1. 填写 Tigshop 后台生成的 API Token。
+2. 点击「测试连接并读取模板」。后端只读检查鉴权、分类、品牌、模板。
+3. 选择运费模板并保存。测试不会自动保存新 Token，保存前会再次验证。
+4. 商品编辑选择 Tigshop，搜索并选择真实分类、品牌，完成审核后发布。
 
-## 已实现的接入配置
+Token 只发送到 OPS 同源后端，使用 AES-256-GCM 加密保存于 SQLite，按运营账号隔离，页面不回显。密钥文件 `/app/data/connections.key` 权限 0600，位于原有持久化数据卷。备份需要同时保留数据库和该密钥文件；文件丢失后需从备份恢复原密钥，否则原连接无法解密。页面留空保存时保留原 Token。
 
-独立工作流：workflows/publish-tigshop.json（保持未发布，导入后再配置凭据）。
-三处商城 HTTP 节点（获取 CRMEB Token、官方新增下架商品、官方读取商品详情）选择同一个 Tigshop Header Auth 凭据，头名 X-Api-Token；工作流已带 X-ADMIN-TYPE: admin。
-“获取 CRMEB Token”沿用模板节点名称，实际为只读运费模板列表校验，不请求 CRMEB。
-Webhook 节点使用独立 Header Auth，建议头名 X-Ops-Token。
+不再需要设置 Tigshop 的 n8n Webhook、凭据或服务器环境变量。旧 `TIGSHOP_API_TOKEN`、`N8N_TIGSHOP_WEBHOOK_URL`、`N8N_TIGSHOP_WEBHOOK_TOKEN` 不再使用，可以移除。CRMEB 仍使用原有连接方式。
 
-OPS 服务器环境变量：
+## 发布与核对
 
-```
-N8N_TIGSHOP_WEBHOOK_URL=https://n8n.mainapis.com/webhook/ops-tigshop
-N8N_TIGSHOP_WEBHOOK_TOKEN=<独立 webhook 密钥>
-TIGSHOP_API_TOKEN=<用于后台读取分类品牌的 API Token>
-```
+后端固定访问商城 HTTPS 域名，携带 `X-Api-Token` 和 `X-ADMIN-TYPE: admin`，禁止重定向。没有浏览器直连商城或自由 URL 输入。
 
-密钥只写服务器 .env / n8n 凭据，不提交 Git。新增后先下架核对。
-平台已确认欧元为基准币种。任务创建前读取 ECB 日报价并保存到 job_snapshots 的商品配置中；重试和核对不重新取汇率。报价最多允许七天（兼容周末假日），失败阻止发送。SKU 售价/成本分别换算，两位小数，人民币产品原数据不变。
-运费使用真实列表中模板 51（中国大陆），shopId=0；fixedShippingType=2，freeShipping=0。工作流创建前确认模板仍存在。
-目前未提供重量体积编辑字段；按重量/体积计费模板可能被商城拒绝，需先补充相关参数，不自动猜测。
+- 商品保存为 `shopId=0`、`productStatus=0`。
+- 运费设置为 `fixedShippingType=2`、`freeShipping=0`，使用页面选择的模板。
+- 发布任务创建时将汇率与模板 ID 保存进不可变快照，人民币原商品不变。
+- 汇率取 ECB 最新日参考报价（非实时成交价），允许最多七天以覆盖周末和假日，读取失败阻止发布。EUR = CNY ÷ CNY/EUR，售价与成本保留两位小数。
+- 发布前读取模板和同任务货号记录；领取创建操作后最多发送一次新增 POST。
+- 创建成功后根据 `productSn=OPS-<任务ID去连字符>` 精确查找，自动读取详情，核验自营、下架、货号、分类品牌、SKU、欧元价格成本、库存及规格图片地址。
+- 未找到唯一商品时保留「待核对」，支持页面手工填写商品 ID 进行只读核对。
+- 任何创建请求超时或业务报错均保留领取锁，防止已落库却重复创建。错误直接显示在 OPS 任务列表。
 
-上述为本地实现，尚未部署或通过真实创建测试。此前“尚未启用”指远程实例。
+目前没有重量体积编辑字段；按重量/体积计费的模板可能要求补充这些参数，商城返回的具体错误会显示在 OPS，不自动猜测数值。
+
+## 从旧 n8n 流程切换
+
+部署后可停用 Tigshop 工作流，保留 CRMEB 工作流。到页面填写 API Token 并保存模板。
+已有 **未领取** 任务可以在 OPS「重发未领取任务」，会沿用原任务 ID、汇率和模板，转为后端直连。已领取的任务只可核对，不能重发新增。
+任务切换为直连后，后端拒绝旧 n8n 对该任务的领取或结果回调。重启不会自动重发未知创建操作。
+
+## 源码映射
+
+依据本地同版本 ProductController、ProductSaveParam、ProductServiceImpl 及操作者提供的实际响应核对：
+
+- GET `/adminapi/product/product/list`
+- GET `/adminapi/product/product/detail?id=...`
+- GET `/adminapi/product/product/shippingTplList`
+- GET `/adminapi/product/category/getAllCategory`
+- GET `/adminapi/product/brand/search`
+- POST `/adminapi/product/product/create`
+
+图库 `imgList`，规格图 `attrList.spe[].attrList[].attrPic`，SKU `productList[].attrs[{attrName,attrValue}]`；保存侧 attrs 转为 skuData。新增请求不携带旧 productId、skuId、attributesId、picId。
+
+`workflows/publish-tigshop.json` 为早期 n8n 方案存档，不用于当前直连。
