@@ -27,3 +27,13 @@ test('多门店工作流隔离域名、Token路径、目标和字段，不携带
  assert.ok(get('prepare').parameters.jsCode.includes('多门店授权或分类详情检查未通过，未领取创建操作'));
  for(const node of w.nodes.filter(x=>x.type==='n8n-nodes-base.code'))assert.doesNotThrow(()=>new vm.Script('(function(){'+node.parameters.jsCode+'})()'));
 });
+test('门店范围默认全部，可选仅平台；保存结果不一致或字段缺失不确认成功',()=>{
+ const original=structuredClone(lease),p=buildStoreProduct(lease,config);
+ assert.equal(p.applicable_type,1);assert.deepEqual(p.applicable_store_id,[]);assert.deepEqual(lease,original);
+ const platform={...lease,product:{...lease.product,applicable_type:0}},payload=buildStoreProduct(platform,config);
+ assert.equal(payload.applicable_type,0);
+ assert.equal(verifyStoreProduct({status:200,data:{...payload,id:8}},platform,config).status,'succeeded');
+ assert.equal(verifyStoreProduct({status:200,data:{...payload,id:8}},lease,config).status,'awaiting_review');
+ delete p.applicable_type;assert.equal(verifyStoreProduct({status:200,data:{...p,id:8}},lease,config).status,'awaiting_review');
+ assert.throws(()=>buildStoreProduct({...lease,product:{...lease.product,applicable_type:2}},config));
+});

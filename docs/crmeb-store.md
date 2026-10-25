@@ -103,3 +103,24 @@ docker compose exec -T goods-ops node recover-store-carousel.mjs --merchant-empt
 ```
 
 该标志只用于已实际查询为无记录的本次情况，不代表脚本会连接另一台商城服务器自行查证。恢复后从 OPS 重发原任务，不能单独执行新增节点。保留全部源图片及 SKU，轮播缩减只发生在发布载荷。48 项本地测试通过。
+
+## 门店适用范围
+
+编辑页选择多门店时显示「适用于门店」，默认所有门店（applicable_type=1），可选仅平台（0）。范围保存到审核版本和任务快照，applicable_store_id 为空数组。本次不提供指定门店（2）或手写门店 ID。
+
+实际 4.2 后台控制器截图确认 0=仅平台、1=所有、2=部分；对外 Product::productSave 原始白名单遗漏了这两个字段。商城服务器需在 `/www/wwwroot/xlyp.cc/app/controller/out/Product.php` 的 productSave/postMore 数组中增加：
+
+```php
+['applicable_type', 1],
+['applicable_store_id', []],
+```
+
+建议放在 is_limit 前，两行均保留末尾逗号，然后执行 `php -l /www/wwwroot/xlyp.cc/app/controller/out/Product.php`。这是修复对外接口，不修改现有商品。
+
+部署 OPS 后，现有 n8n 多门店工作流无需重新建立凭据：
+
+1. 「官方新增下架商品」JSON Body 切换 Expression，用 `workflows/crmeb-store-scope-body.txt` 全文替换。保留其余 URL、Header、凭据和准备节点的运费模板配置。
+2. 「核验实际入库结果」JavaScript 用 `workflows/crmeb-store-scope-verify.js` 全文替换。
+3. Publish。新建工作流也可使用更新后的 publish-crmeb-store.json，但需要重新选凭据与运费模板。
+
+范围不一致、详情缺少字段时返回待核对，不能计为发布成功。本次仅作用于后续发布的新商品，不重建或变更已有商品。

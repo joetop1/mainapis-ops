@@ -1,6 +1,6 @@
 import {buildOfficialProduct,verifyOfficialProduct} from './crmeb-official.mjs';
 // Allowlist transcribed from the deployed MULTI 4.2 Product::productSave supplied by the operator, plus the confirmed presale_status default repair.
-export const STORE_FIELDS=['product_type','supplier_id','cate_id','store_name','store_info','keyword','unit_name','recommend_image','slider_image','is_sub','sort','sales','ficti','give_integral','is_show','is_good','is_picks','description','spec_type','video_open','video_link','items','attrs','recommend','activity','coupon_ids','label_id','command_word','tao_words','type','delivery_type','freight','postage','temp_id','recommend_list','brand_id','soure_link','bar_code','code','is_support_refund','is_presale_product','presale_status','presale_time','presale_day','is_vip_product','auto_on_time','auto_off_time','custom_form','store_label_id','ensure_id','specs','specs_id','is_limit','limit_type','limit_num'];
+export const STORE_FIELDS=['product_type','supplier_id','cate_id','store_name','store_info','keyword','unit_name','recommend_image','slider_image','is_sub','sort','sales','ficti','give_integral','is_show','is_good','is_picks','description','spec_type','video_open','video_link','items','attrs','recommend','activity','coupon_ids','label_id','command_word','tao_words','type','delivery_type','freight','postage','temp_id','recommend_list','brand_id','soure_link','bar_code','code','is_support_refund','is_presale_product','presale_status','presale_time','presale_day','is_vip_product','auto_on_time','auto_off_time','custom_form','store_label_id','ensure_id','specs','specs_id','is_limit','limit_type','limit_num','applicable_type','applicable_store_id'];
 export function requireStoreToken(response){
  if(response?.status!==undefined&&Number(response.status)!==200)throw Error('多门店授权失败，请核对独立凭据');
  const data=response?.data||response,token=data?.token||data?.access_token;
@@ -14,6 +14,8 @@ export function storeLease(lease){
 }
 export function buildStoreProduct(lease,config){
  const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true});payload.type=0;
+ const scope=lease.product.applicable_type??1;if(![0,1].includes(scope))throw Error('请选择所有门店或仅平台');
+ payload.applicable_type=scope;payload.applicable_store_id=[];
  // Keep the full source gallery in description; the database carousel is a short list.
  // Match PHP json_encode escaping when applying the conservative serialized budget.
  const serializedLength=value=>JSON.stringify(value).replace(/\//g,'\\/').replace(/[\u007f-\uffff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')).length;
@@ -27,6 +29,7 @@ export function buildStoreProduct(lease,config){
 }
 export function verifyStoreProduct(response,lease,config){
  const d=response?.data?.productInfo||response?.data;
+ if(d&&(Number(d.applicable_type)!==(lease.product.applicable_type??1)||(Array.isArray(d.applicable_store_id)?d.applicable_store_id.length>0:!!String(d.applicable_store_id??'').trim())))return {status:'awaiting_review',message:'门店适用范围未确认一致，请检查商城对外接口是否接收 applicable_type 和 applicable_store_id'};
  if(d&&d.product_type!==undefined&&Number(d.product_type)!==0)return {status:'awaiting_review',message:'多门店商品类型不是普通实物，未确认成功'};
  return verifyOfficialProduct(response,storeLease(lease),{...config,forceMulti:true});
 }
