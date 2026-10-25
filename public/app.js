@@ -1,3 +1,4 @@
+import {channelConfiguration} from './connection-status.js';
 import {detailImagesFromJSON,detailHTML} from './detail-images.js';
 import {batchPrices} from './pricing.js';
 import {matchSkuImages} from './sku-images.js';
@@ -9,6 +10,31 @@ const date=v=>new Date(v).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',
 function toast(message){$('#toast').textContent=message;$('#toast').classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.add('hidden'),4500);}
 async function api(path,method='GET',body){const r=await fetch(path,{method,headers:method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||'请求失败');return data;}
 function empty(columns,title,description){return `<tr><td colspan="${columns}" class="empty"><div class="empty-icon">▦</div><strong>${title}</strong><p>${description}</p></td></tr>`;}
+const channelParts={'crmeb-pro':{},'crmeb-store':{},tigshop:{}};
+function recordConnectionPart(target,key,value){
+ channelParts[target][key]=value;
+ const part=$('#'+target+'-'+key+'-part');
+ const partName=key==='publishing'?'发布通道':target==='tigshop'?'API Token':'商城授权';
+ part.textContent=partName+' · '+(value.error?'读取失败':value.configured?(key==='publishing'?'已配置':'已保存'):'未配置');part.classList.toggle('is-saved',!value.error&&!!value.configured);
+ if(target==='tigshop'){
+  const template=$('#tigshop-template-part');template.textContent=value.error?'运费模板 · 读取失败':value.templateId?'运费模板 · '+value.templateId:'运费模板 · 未配置';template.classList.toggle('is-saved',!value.error&&!!value.templateId);
+ }
+
+ const status=channelConfiguration(target,channelParts[target]);
+ const card=document.querySelector('[data-channel="'+target+'"]');card.dataset.state=status.state;
+ $('#'+target+'-connection-badge').textContent=status.label;
+ $('#'+target+'-connection-summary').textContent=status.detail;
+ $('#'+target+'-connection-action').textContent=status.state==='configured'?'管理配置':status.state==='partial'?'完善配置':status.state==='unconfigured'?'开始配置':'查看配置';
+ const details=$('#'+target+'-connection-details');
+ if(status.ready&&!details.dataset.hydrated){details.open=['unconfigured','partial'].includes(status.state);details.dataset.hydrated='true';}
+ if(target!=='tigshop'&&key==='publishing'){
+  $('#'+target+'-publishing-badge').textContent=value.error?'读取失败':value.configured?'已配置':'未配置';
+  if(!value.error&&!value.configured)card.querySelector('.channel-advanced').open=true;
+ }
+ const all=Object.keys(channelParts).map(t=>channelConfiguration(t,channelParts[t]));
+ const counts=[['configured','已配置'],['partial','待完善'],['unconfigured','未配置'],['error','读取失败'],['loading','读取中']].map(([key,label])=>{const n=all.filter(s=>s.state===key).length;return n?n+' 个'+label:'';}).filter(Boolean);
+ $('#connectionCounts').textContent=counts.join(' · ');
+}
 async function load(){state=await api('/api/state');render();}
 function render(){
  const role=state.team?.role||'admin';
@@ -20,10 +46,10 @@ function render(){
  $('#count').textContent=`显示 ${products.length} 件 / 已加载 ${state.products.length} 件商品（最多 1000 件）`;
  $('#productRows').innerHTML=products.map(p=>`<tr><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title">${esc(p.title||'待采集 · '+p.source_url.match(/offer\/(\d+)/)?.[1])}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small></div></div></td><td><a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">1688 ↗</a></td><td>${p.skus.length} 个规格<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td><span class="badge ${p.status}">${labels[p.status]}</span></td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}">审核</button>`}</td></tr>`).join('')||empty(6,'采集箱已准备好','添加 1688 商品链接，或导入采集器整理好的 JSON 商品资料。');
  $('#jobRows').innerHTML=state.jobs.map(j=>`<tr><td>${esc(state.products.find(p=>p.id===j.product_id)?.title||'商品记录')}<small>${j.id.slice(0,8)} · v${j.revision}</small></td><td>${esc(state.targets.find(t=>t.id===j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
- const connections=[{name:'Casdoor 统一认证',url:'auth.mainapis.com',status:me.demo?'本地演示登录':'已通过身份验证',detail:'只有服务器允许名单中的账号可以进入运营台。'},{name:'n8n 工作流',url:'n8n.mainapis.com',status:state.connections.n8n==='configured'?'参数已配置 · 待联调':'待配置',detail:'参数已配置不代表已连通。真实执行成功后回传商城商品 ID。'},...state.targets.map(t=>({name:t.name+' '+t.version,url:t.url.replace('https://','')||'商城地址待配置',status:t.id==='tigshop'?(t.configured?'直连配置已保存':'请在上方配置连接'):['crmeb-pro','crmeb-store'].includes(t.id)?(t.configured?'官方流程已配置 · 待核验':'待配置独立连接'):'发布尚未接入',detail:t.id==='tigshop'?'由 OPS 后端直接发布；在上方填写凭据并测试连接。':['crmeb-pro','crmeb-store'].includes(t.id)?'使用官方接口；来源链接保存在 OPS，新建后核对商品 ID。':'此商城发布尚未接入。'}))];
- $('#connectionCards').innerHTML=connections.map(c=>`<article class="connection-card"><h2>${esc(c.name)}</h2><span class="badge">${esc(c.status)}</span><p><code>${esc(c.url)}</code></p><p>${esc(c.detail)}</p></article>`).join('');
+ $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
+ $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
-document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCrmebAuthConnections();loadCrmebPublishConnections();}if(page==='connections')loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;});});
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCrmebAuthConnections();loadCrmebPublishConnections();}if(page==='connections')loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});});
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=render;
 function skuRow(s={sku:'',spec:'',cost:0,price:0,stock:0}){const tr=document.createElement('tr');tr.innerHTML=['sku','spec','cost','price','stock'].map(k=>`<td><input aria-label="${k}" data-key="${k}" value="${esc(s[k])}" ${['cost','price','stock'].includes(k)?`type="number" min="0" step="${k==='stock'?'1':'0.01'}"`:'type="text"'} required></td>`).join('')+'<td><button type="button" class="text" data-remove-sku>×</button></td>';const cell=document.createElement('td');const img=document.createElement('img');img.className='thumb';img.alt='规格图片';img.referrerPolicy='no-referrer';img.loading='lazy';const input=document.createElement('input');input.type='url';input.dataset.key='image';input.setAttribute('aria-label','SKU 图片地址');input.placeholder='未设置时使用商品首图';input.value=s.image||'';const show=()=>{img.hidden=!input.value;if(input.value.startsWith('https://'))img.src=input.value;else img.removeAttribute('src');};input.oninput=show;show();cell.append(img,input);tr.insertBefore(cell,tr.lastElementChild);tr.querySelector('[data-remove-sku]').onclick=()=>tr.remove();$('#skuRows').append(tr);}
 function edit(p=null){editing=p;$('#editorTitle').textContent=p?'编辑商品':'添加商品';const f=$('#productForm');f.reset();f.elements.catalog_target.value=p?.catalog_target||'crmeb-pro';f.elements.applicable_type.value=String(p?.applicable_type??0);$('#storeScopeField').classList.toggle('hidden',f.elements.catalog_target.value!=='crmeb-store');$('#batchPriceMode').onchange();for(const key of ['source_url','title','description'])f.elements[key].value=p?.[key]||'';f.elements.tag_ids.value=(p?.tag_ids||[]).join(',');f.elements.virtual_sales.value=p?.virtual_sales??0;f.elements.source_url.readOnly=!!p;f.elements.images.value=p?.images.join('\n')||'';f.elements.detail_images.value=(p?.detail_images||[]).join('\n');$('#skuRows').innerHTML='';(p?.skus||[]).forEach(skuRow);$('#sourcingHint').textContent=p?.sourcing?`1688 采购参考价：${p.sourcing.purchase_price||'未提供'}；代发价：${p.sourcing.dropship_price||'未提供'}；来源类目：${p.sourcing.category||'未提供'}；来源标签：${p.sourcing.tags||'未提供'}；供应商销量：${p.sourcing.supplier_sales||'未提供'}（不计入商城销量）。请补充完整规格，再确认成本、售价与库存。`:'';$('#editor').showModal();loadCatalogOptions(p).catch(e=>{$('#catalogStatus').textContent=e.message;});}
@@ -126,6 +152,8 @@ $('#jobRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
 let tigshopConnection=null,tigshopFX=null;
 async function loadTigshopConnection(){
  tigshopConnection=await api('/api/connections/tigshop');
+ recordConnectionPart('tigshop','auth',tigshopConnection);
+ $('#tigshopToken').placeholder=tigshopConnection.configured?'已保存 Token；留空保留，输入新值可更换':'填写 API Token';
  $('#tigshopConnectionStatus').textContent=tigshopConnection.configured?'已保存 API Token · 最近连接检查 '+date(tigshopConnection.testedAt):'请填写 API Token，然后测试连接。';
  if(tigshopConnection.templateId&&!$('#tigshopTemplate').querySelector('option[value="'+tigshopConnection.templateId+'"]'))$('#tigshopTemplate').innerHTML=`<option value="${tigshopConnection.templateId}">已保存模板 ${tigshopConnection.templateId}（测试连接可读取名称）</option>`;
  if(tigshopConnection.templateId)$('#tigshopTemplate').value=String(tigshopConnection.templateId);
@@ -154,10 +182,10 @@ $('#refreshTigshopFX').onclick=async()=>{
  catch(e){tigshopFX=null;previewTigshopEUR();$('#tigshopFXStatus').textContent=e.message;}finally{$('#refreshTigshopFX').disabled=false;}
 };
 
-async function loadCrmebAuthConnections(){
- await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>{
-  try{const c=await api('/api/connections/'+target+'/auth');$('#'+target+'-appid').value=c.appid;$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存 · '+date(c.testedAt):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
-  catch(e){$('#'+target+'-brand-status').textContent=e.message;}
+async function loadCrmebAuthConnections(targets=['crmeb-pro','crmeb-store']){
+ await Promise.all(targets.map(async target=>{
+  try{const c=await api('/api/connections/'+target+'/auth');recordConnectionPart(target,'auth',c);$('#'+target+'-appsecret').placeholder=c.configured?'已保存 AppSecret；留空保留，输入新值可更换':'填写 AppSecret';$('#'+target+'-appid').value=c.appid;$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存'+(c.testedAt?' · '+date(c.testedAt):''):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
+  catch(e){$('#'+target+'-brand-status').textContent=e.message;recordConnectionPart(target,'auth',{error:true});}
  }));
 }
 async function saveCrmebAuthConnection(target,testOnly){
@@ -166,17 +194,17 @@ async function saveCrmebAuthConnection(target,testOnly){
  $('#'+target+'-brand-status').textContent='正在验证商城授权…';
  try{
   const r=await api('/api/connections/'+target+'/auth'+(testOnly?'/test':''),'POST',{appid:$('#'+target+'-appid').value.trim(),appsecret:$('#'+target+'-appsecret').value});
-  if(!testOnly)$('#'+target+'-appsecret').value='';
+  if(!testOnly){$('#'+target+'-appsecret').value='';await loadCrmebAuthConnections([target]);}
   $('#'+target+'-brand-status').textContent=r.message+(testOnly?'。请点击保存连接。':'');
  }catch(e){$('#'+target+'-brand-status').textContent=e.message;}finally{form.querySelectorAll('input,button').forEach(x=>x.disabled=false);}
 }
 for(const form of document.querySelectorAll('[data-crmeb-auth]'))form.onsubmit=e=>{e.preventDefault();saveCrmebAuthConnection(form.dataset.crmebAuth,false);};
 for(const button of document.querySelectorAll('[data-test-auth]'))button.onclick=()=>saveCrmebAuthConnection(button.dataset.testAuth,true);
 
-async function loadCrmebPublishConnections(){
- await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>{
-  try{const c=await api('/api/connections/'+target+'/publishing');$('#'+target+'-publish-url').value=c.url;$('#'+target+'-publish-status').textContent=c.configured?`已配置发布连接（${c.source==='page'?'页面保存':'原服务器配置'}），密钥不回显。可测试入口或填写新密钥后保存。`:'请填写生产 Webhook 地址和密钥。';}
-  catch(e){$('#'+target+'-publish-status').textContent=e.message;}
+async function loadCrmebPublishConnections(targets=['crmeb-pro','crmeb-store']){
+ await Promise.all(targets.map(async target=>{
+  try{const c=await api('/api/connections/'+target+'/publishing');recordConnectionPart(target,'publishing',c);$('#'+target+'-publish-token').placeholder=c.configured?'已配置密钥；留空保留，输入新值可更换':'填写 Webhook 密钥';$('#'+target+'-publish-url').value=c.url;$('#'+target+'-publish-status').textContent=c.configured?`已配置发布连接（${c.source==='page'?'页面保存':'原服务器配置'}），密钥不回显。可测试入口或填写新密钥后保存。`:'请填写生产 Webhook 地址和密钥。';}
+  catch(e){$('#'+target+'-publish-status').textContent=e.message;recordConnectionPart(target,'publishing',{error:true});}
  }));
 }
 async function saveCrmebPublishing(target,testOnly){
@@ -185,7 +213,7 @@ async function saveCrmebPublishing(target,testOnly){
  try{
   const r=await api('/api/connections/'+target+'/publishing'+(testOnly?'/test':''),'POST',{url:$('#'+target+'-publish-url').value.trim(),token:$('#'+target+'-publish-token').value.trim()});
   $('#'+target+'-publish-status').textContent=(r.httpStatus?'HTTP '+r.httpStatus+' · ':'')+r.message+(testOnly&&r.ok?' 点击「保存发布连接」后才会生效。':'');
-  if(!testOnly){$('#'+target+'-publish-token').value='';await load();toast('发布连接已保存，可重发原来的未领取任务');}
+  if(!testOnly){$('#'+target+'-publish-token').value='';await loadCrmebPublishConnections([target]);await load();$('#'+target+'-publish-status').textContent=r.message;toast('发布通道已保存');}
  }catch(e){$('#'+target+'-publish-status').textContent=e.message;}finally{form.querySelectorAll('input,button').forEach(x=>x.disabled=false);}
 }
 for(const form of document.querySelectorAll('[data-crmeb-publishing]'))form.onsubmit=e=>{e.preventDefault();saveCrmebPublishing(form.dataset.crmebPublishing,false);};
