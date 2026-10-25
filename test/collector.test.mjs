@@ -66,7 +66,7 @@ test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  })();
 });
 test('详情图区分主图与SKU配图，明确报告未加载的详情',()=>{
- const dom={querySelector:s=>s==='#desc-lazyload-container, #description, .offer-description'?{innerText:'产品材质',querySelectorAll:selector=>selector==='img'?[{getAttribute:k=>k==='data-src'?'https://cbu01.alicdn.com/img/actual-detail.jpg':null,src:''}]:[]}:null};
+ const dom={querySelector:s=>s.startsWith('#desc-lazyload-container')?{innerText:'产品材质',querySelectorAll:selector=>selector==='img'?[{getAttribute:k=>k==='data-src'?'https://cbu01.alicdn.com/img/actual-detail.jpg':null,src:''}]:[]}:null};
  const r=JSON.parse(JSON.stringify(capture({offer:{offerId:123456,imageList:['https://cbu01.alicdn.com/img/main.jpg']}},dom)));
  assert.deepEqual(r.product.detail_images,['https://cbu01.alicdn.com/img/actual-detail.jpg']);assert.equal(r.product.images.includes(r.product.detail_images[0]),false);
  assert.ok(capture().warnings.some(x=>x.includes('未采集到真实商品详情图')));
