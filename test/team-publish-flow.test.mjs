@@ -14,6 +14,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
  const originalFetch=globalThis.fetch,outbound=[];
  globalThis.fetch=async(url,options={})=>{
   if(String(url).startsWith('https://n8n.mainapis.com/')){outbound.push({url,options,body:JSON.parse(options.body)});return {ok:true,status:200};}
+  if(String(url)==='https://www.xlyp.cc/outapi/get_token')return {ok:true,text:async()=>JSON.stringify({status:200,data:{token:'merchant-token'}})};
   if(String(url)==='https://www.xlyp.cc/api/category')return {ok:true,text:async()=>JSON.stringify({status:200,data:[{id:154,cate_name:'润滑液'}]})};
   if(String(url)==='https://www.xlyp.cc/api/brand')return {ok:true,text:async()=>JSON.stringify({status:200,data:[]})};
   throw Error('Unexpected network call: '+url);
@@ -31,6 +32,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
  try{
   const hookToken='team-safe-'+ 'a'.repeat(40),hookUrl='https://n8n.mainapis.com/webhook/ops-crmeb-store';
   assert.equal((await call('/api/connections/crmeb-store/publishing','POST',{url:hookUrl,token:hookToken})).status,200);
+  assert.equal((await call('/api/connections/crmeb-store/auth','POST',{appid:'store-app',appsecret:'store-private'})).status,200);
   for(const mode of ['personal','team']){
    if(mode==='team'){
     assert.equal((await call('/api/team','POST',{name:'测试团队'})).status,201);
@@ -46,7 +48,8 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
     assert.equal(request.url,hookUrl);assert.equal(request.options.headers['X-Ops-Token'],hookToken);assert.equal(request.body.product.skus[0].stock,90);
     const claimPath='/api/callback/'+id+'/claim';
     const inspected=await call(claimPath,'POST',{action:'inspect_publish'},'',token);assert.equal(inspected.status,200);
-    const prepared=vm.runInNewContext(`(function(){${source}})()`,{$:()=>({first:()=>({json:inspected.data})}),$json:{status:200,data:{token:'merchant-token'}}})[0].json;
+    const auth=await call('/api/callback/'+id+'/merchant-token','POST',{},'',token);assert.equal(auth.status,200);
+    const prepared=vm.runInNewContext(`(function(){${source}})()`,{$:()=>({first:()=>({json:inspected.data})}),$json:auth.data})[0].json;
     assert.equal(prepared.payload.description,'<p><img src="https://example.com/detail.jpg" alt=""></p>');assert.equal(prepared.payload.applicable_type,0);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,200);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,409);

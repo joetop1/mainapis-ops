@@ -20,7 +20,7 @@ test('多门店轮播最多5张且限制序列化长度，详情和SKU图片完�
 });
 test('多门店工作流隔离域名、Token路径、目标和字段，不携带会员凭据',()=>{
  const w=JSON.parse(readFileSync(new URL('../workflows/publish-crmeb-store.json',import.meta.url)));
- const get=id=>w.nodes.find(x=>x.id===id);assert.equal(get('token').parameters.url,'https://www.xlyp.cc/outapi/get_token');assert.equal(get('token').credentials,undefined);assert.equal(get('create').parameters.url,'https://www.xlyp.cc/outapi/product');assert.equal(get('webhook').parameters.path,'ops-crmeb-store');
+ const get=id=>w.nodes.find(x=>x.id===id);assert.ok(get('token').parameters.url.includes('/merchant-token'));assert.equal(get('token').parameters.authentication,undefined);assert.equal(get('token').credentials,undefined);assert.equal(get('create').parameters.url,'https://www.xlyp.cc/outapi/product');assert.equal(get('webhook').parameters.path,'ops-crmeb-store');
  assert.ok(get('preflight').parameters.jsCode.includes("b.target!=='crmeb-store'"));assert.ok(get('prepare').parameters.jsCode.includes('buildStoreProduct(lease,config)'));assert.ok(get('verify').parameters.jsCode.includes('verifyStoreProduct($json,lease,config)'));
  for(const id of ['create','detail','authcheck']){const h=get(id).parameters.headerParameters.parameters;assert.equal(h.find(x=>x.name==='Authorization').value,h.find(x=>x.name==='Authori-zation').value);}
  assert.equal(get('authcheck').parameters.method,'GET');assert.equal(w.connections['获取 CRMEB Token'].main[0][0].node,'只读验证多门店授权');assert.equal(w.connections['只读验证多门店授权'].main[0][0].node,'配置分类运费并转换字段');

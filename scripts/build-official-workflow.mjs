@@ -17,7 +17,7 @@ if(typeof b.job_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 if(b.callback?.url!=='https://ops.mainapis.com/api/callback/'+b.job_id||typeof b.callback.token!=='string'||b.callback.token.length<32)throw Error('回调地址或令牌错误');
 return [{json:{action:b.action,verification_nonce:b.verification_nonce||'',callbackUrl:b.callback.url,callbackToken:b.callback.token}}];`),
  http('context','读取可信任务快照',400,{method:'POST',url:'={{ $json.callbackUrl + "/claim" }}',...bearer('={{ "Bearer " + $json.callbackToken }}'),...body('={{ {action:$json.action === "publish_draft" ? "inspect_publish" : $json.action, verification_nonce:$json.verification_nonce} }}')}),
- http('token','获取 CRMEB Token',600,{method:'POST',url:'https://xlupw.com/outapi/access_token',authentication:'genericCredentialType',genericAuthType:'httpCustomAuth'}),
+ http('token','获取 CRMEB Token',600,{method:'POST',url:'={{ $("校验请求").first().json.callbackUrl + "/merchant-token" }}',...bearer('={{ "Bearer " + $("校验请求").first().json.callbackToken }}'),...body('={{ {} }}')}),
  code('prepare','配置分类运费并转换字段',800,library+`\nconst config=${JSON.stringify(cfg)};\nconst lease=$('读取可信任务快照').first().json;\nconst token=requireOfficialToken($json);\nconst payload=lease.action==='publish_draft'?buildOfficialProduct(lease,config):null;\nif(lease.action==='verify_draft'&&!/^[1-9][0-9]{0,14}$/.test(lease.candidate_id))throw Error('商品ID无效');\nreturn [{json:{token,payload,config,action:lease.action,candidate_id:lease.candidate_id}}];`),
  {id:'branch',name:'创建还是核对',type:'n8n-nodes-base.if',typeVersion:2.2,position:[1000,0],parameters:{conditions:{options:{caseSensitive:true,leftValue:'',typeValidation:'strict',version:2},conditions:[{id:'publish',leftValue:'={{ $json.action }}',rightValue:'publish_draft',operator:{type:'string',operation:'equals'}}],combinator:'and'},options:{}}},
  http('lock','锁定一次创建',1200,{method:'POST',url:'={{ $("校验请求").first().json.callbackUrl + "/claim" }}',...bearer('={{ "Bearer " + $("校验请求").first().json.callbackToken }}'),...body('={{ {action:"publish_draft"} }}')}),
@@ -36,3 +36,5 @@ connections['创建还是核对']={main:[[{node:'锁定一次创建',type:'main'
 writeFileSync(join(root,'workflows/publish-crmeb-official.json'),JSON.stringify({name:'OPS · CRMEB官方接口下架入库与核对',active:false,settings:{executionOrder:'v1',saveDataSuccessExecution:'none',saveDataErrorExecution:'none',saveManualExecutions:false},nodes,connections},null,2)+'\n');
 
 writeFileSync(join(root,'workflows/crmeb-create-receipt.js'),officialCreateReceipt.toString()+'\nreturn [{json:officialCreateReceipt($json)}];\n');
+
+writeFileSync(join(root,'workflows/crmeb-token-from-ops.json'),JSON.stringify({nodes:[nodes.find(n=>n.id==='token')],connections:{}},null,2)+'\n');

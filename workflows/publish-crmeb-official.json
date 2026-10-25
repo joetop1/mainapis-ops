@@ -85,9 +85,19 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://xlupw.com/outapi/access_token",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
+        "url": "={{ $(\"校验请求\").first().json.callbackUrl + \"/merchant-token\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $(\"校验请求\").first().json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {} }}",
         "options": {
           "redirect": {
             "redirect": {

@@ -54,7 +54,7 @@ test('可导入工作流：凭据不入文件，预检先于领取，HTTP不自�
  const pre=w.nodes.find(n=>n.id==='preflight');const run=b=>vm.runInNewContext('(function(){'+pre.parameters.jsCode+'})()',{$json:{body:b}});
  const b={job_id:lease.job_id,action:'publish_draft',target:'crmeb-pro',callback:{url:'https://ops.mainapis.com/api/callback/'+lease.job_id,token:'a'.repeat(43)}};
  assert.equal(run(b)[0].json.action,'publish_draft');assert.throws(()=>run({...b,callback:{url:'https://evil.com',token:'a'.repeat(43)}}));
- const token=w.nodes.find(n=>n.id==='token');assert.equal(token.parameters.genericAuthType,'httpCustomAuth');assert.equal(token.credentials,undefined);
+ const token=w.nodes.find(n=>n.id==='token');assert.equal(token.parameters.authentication,undefined);assert.ok(token.parameters.url.includes('/merchant-token'));assert.ok(token.parameters.headerParameters.parameters[0].value.includes('callbackToken'));assert.equal(token.credentials,undefined);
  const create=w.nodes.find(n=>n.id==='create');assert.equal(create.parameters.url,'https://xlupw.com/outapi/product');assert.equal(create.retryOnFail,false);
  assert.equal(w.connections['创建还是核对'].main[0][0].node,'锁定一次创建');assert.equal(w.connections['锁定一次创建'].main[0][0].node,'官方新增下架商品');
  for(const n of w.nodes.filter(n=>n.type==='n8n-nodes-base.code'))assert.doesNotThrow(()=>new vm.Script('(function(){'+n.parameters.jsCode+'})()'));

@@ -10,7 +10,6 @@ for(const node of workflow.nodes){
  if(node.parameters?.jsCode?.startsWith(base))node.parameters.jsCode=base+'\n'+store+'\n'+node.parameters.jsCode.slice(base.length);
  if(node.id==='prepare')node.parameters.jsCode=node.parameters.jsCode.replace('const config={"categoryMap":{"炮机":[116]},"shippingTemplateId":0};','const config={categoryMap:{},shippingTemplateId:0};').replace('requireOfficialToken($json)','requireStoreToken($json)').replace('buildOfficialProduct(lease,config):null','buildStoreProduct(lease,config):null');
  if(node.id==='verify')node.parameters.jsCode=node.parameters.jsCode.replace('json:verifyOfficialProduct($json,lease,config)','json:verifyStoreProduct($json,lease,config)');
- if(node.id==='token')node.parameters.url='https://www.xlyp.cc/outapi/get_token';
  if(node.id==='create')node.parameters.url='https://www.xlyp.cc/outapi/product';
  if(node.id==='detail')node.parameters.url='={{ "https://www.xlyp.cc/outapi/product/" + $json.candidate_id }}';
  if(['create','detail'].includes(node.id)){

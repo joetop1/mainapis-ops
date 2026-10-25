@@ -1,3 +1,4 @@
+import {fetchCrmebToken} from './crmeb-auth.mjs';
 import {teamStore,teamPermission} from './teams.mjs';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {validateCrmebWebhook,testCrmebWebhook} from './crmeb-webhook.mjs';
@@ -76,7 +77,7 @@ const catalogLoaders=Object.fromEntries(['crmeb-pro','crmeb-store'].map(target=>
 const tigshopCatalogs=new Map();
 function catalogLoader(target,owner){
  if(target!=='tigshop'){
-  const c=brandConnectionStores[target]?.get(owner);if(!c?.appid||!c?.appsecret)return catalogLoaders[target];
+  const c=brandConnectionStores[target]?.get(owner);if(!c?.appid||!c?.appsecret||!c.testedAt)return catalogLoaders[target];
   const key=JSON.stringify([owner,target]);
   if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader(remoteJSON,target,crmebBrandReader(target,c)));
   return privateBrandCatalogs.get(key);
@@ -144,7 +145,7 @@ const handleRequest=async(req,res)=>{
     }
     if(path.startsWith('/api/callback/') && req.method==='POST') {
       if(demo)return json(res,403,{error:'演示模式禁止外部回调'});
-      const route=path.match(/^\/api\/callback\/([^/]+)(\/claim)?$/);if(!route)return json(res,404,{error:'接口不存在'});
+      const route=path.match(/^\/api\/callback\/([^/]+)(\/claim|\/merchant-token)?$/);if(!route)return json(res,404,{error:'接口不存在'});
       const id=route[1]; let job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
       if(!job || !equal(req.headers.authorization,'Bearer '+job.token))return json(res,403,{error:'回调认证失败'});
       if(db.prepare("SELECT 1 FROM job_transports WHERE job_id=? AND mode='direct'").get(id))return json(res,409,{error:'此任务由 OPS 直接处理，不接受旧工作流回调'});
@@ -153,6 +154,14 @@ const handleRequest=async(req,res)=>{
       // A direct retry may have taken ownership while the old request body streamed.
       if(db.prepare("SELECT 1 FROM job_transports WHERE job_id=? AND mode='direct'").get(id))return json(res,409,{error:'此任务由 OPS 直接处理，不接受旧工作流回调'});
       const snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
+      if(route[2]==='/merchant-token'){
+        if(demo||!['crmeb-pro','crmeb-store'].includes(job.target)||!snapshot||!['dispatching','accepted','unknown','awaiting_review','verifying'].includes(job.status))return json(res,409,{error:'此任务不可获取商城授权'});
+        const token=await fetchCrmebToken(job.target,brandConnectionStores[job.target].get(job.owner));
+        // The task may have completed while the merchant auth request was in flight.
+        const latest=db.prepare('SELECT status,owner FROM jobs WHERE id=?').get(id);
+        if(!latest||latest.owner!==job.owner||!['dispatching','accepted','unknown','awaiting_review','verifying'].includes(latest.status))return json(res,409,{error:'任务状态已变化'});
+        return json(res,200,{status:200,data:{access_token:token,token}});
+      }
       if(route[2]){
         if(!officialTargets.includes(job.target)||!snapshot)return json(res,409,{error:'此任务没有官方发布快照'});
         if(b.action==='inspect_publish'){
@@ -207,6 +216,24 @@ const handleRequest=async(req,res)=>{
         store.set(owner,{...old,webhookUrl:connection.url,webhookToken:connection.token});
         audit(owner,'connection.'+target+'_publishing_saved',target);
         return json(res,200,{ok:true,message:'发布连接已保存，后续发布和未领取任务重发将使用此配置'});
+      }
+    }
+    const merchantAuthRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/auth(\/test)?$/);
+    if(merchantAuthRoute){
+      const target=merchantAuthRoute[1],store=brandConnectionStores[target],old=store.get(owner);
+      if(req.method==='GET'&&!merchantAuthRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',testedAt:old?.authTestedAt||old?.testedAt||''});
+      if(req.method==='POST'){
+        if(demo)throw Error('演示模式不保存或测试商城凭据');
+        const b=await body(req),appid=String(b.appid||old?.appid||'').trim();
+        if(!b.appsecret&&old&&appid!==old.appid)throw Error('更换 AppID 时请填写对应 AppSecret');
+        const appsecret=b.appsecret||old?.appsecret;
+        await fetchCrmebToken(target,{appid,appsecret});
+        if(merchantAuthRoute[2])return json(res,200,{ok:true,message:'商城鉴权成功，可保存供商品发布使用'});
+        const same=old?.appid===appid&&old?.appsecret===appsecret;
+        store.set(owner,{...old,appid,appsecret,authTestedAt:now(),testedAt:same?old?.testedAt||'':''});
+        privateBrandCatalogs.delete(JSON.stringify([owner,target]));
+        audit(owner,'connection.'+target+'_auth_saved',target);
+        return json(res,200,{ok:true,message:'商城凭证已加密保存，商品发布使用此配置'});
       }
     }
     const brandConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)(\/test)?$/);

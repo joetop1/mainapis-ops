@@ -1,0 +1,40 @@
+{
+  "nodes": [
+    {
+      "id": "token",
+      "name": "获取 CRMEB Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"校验请求\").first().json.callbackUrl + \"/merchant-token\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $(\"校验请求\").first().json.callbackToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {} }}",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false
+    }
+  ],
+  "connections": {}
+}
