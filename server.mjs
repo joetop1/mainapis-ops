@@ -1,3 +1,4 @@
+import {systemVersion} from './system-version.mjs';
 import {productPublications} from './product-publications.mjs';
 import {createCollectorPackage} from './collector-package.mjs';
 import {fetchCrmebToken} from './crmeb-auth.mjs';
@@ -22,6 +23,7 @@ import {fileURLToPath} from 'node:url';
 import {openStore,uid,secret,equal,sourceURL,validateProduct,assertPublishable,verifyIdToken,now,decodeProduct} from './core.mjs';
 
 const root=dirname(fileURLToPath(import.meta.url));
+const systemRelease=await systemVersion(root);
 let collectorPackage;
 async function collectorRelease(){return collectorPackage||=await createCollectorPackage(join(root,'extensions','1688-collector'));}
 const demo=process.env.DEMO_MODE==='true';
@@ -194,7 +196,7 @@ const handleRequest=async(req,res)=>{
       db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);return json(res,200,{ok:true});
     }
     if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
-    if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,authReady:demo||!!(client&&clientSecret&&allowed.length)});
+    if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,system:systemRelease,authReady:demo||!!(client&&clientSecret&&allowed.length)});
     if(!s?.user)return json(res,401,{error:'请先登录'});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
