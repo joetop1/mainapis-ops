@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {openStore} from '../core.mjs';
+import {productPublications} from '../product-publications.mjs';
+test('商城发布摘要不受300条任务限制，保留历史成功、待核对与空间隔离',()=>{
+ const db=openStore(':memory:');
+ const product=db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)');
+ product.run('p','alice','https://detail.1688.com/offer/1.html','{}','draft',3,'now','now');
+ product.run('q','bob','https://detail.1688.com/offer/1.html','{}','draft',1,'now','now');
+ const job=db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+ job.run('old','alice','p',1,'crmeb-pro','succeeded','secret','','554','001','001');
+ job.run('new','alice','p',2,'crmeb-pro','failed','secret','','','002','002');
+ job.run('pending','alice','p',3,'crmeb-store','awaiting_review','secret','','','003','003');
+ job.run('foreign','bob','q',1,'tigshop','succeeded','secret','','999','999','999');
+ for(let i=0;i<301;i++)job.run('extra'+i,'alice','p',i+4,'tigshop','failed','secret','','',String(1000+i),String(1000+i));
+ const rows=productPublications(db,'alice').get('p');
+ assert.equal(rows.length,3);
+ assert.deepEqual({...rows.find(r=>r.target==='crmeb-pro')},{product_id:'p',target:'crmeb-pro',status:'succeeded',revision:1,remote_id:'554',updated:'001'});
+ assert.equal(rows.find(r=>r.target==='crmeb-store').status,'awaiting_review');
+ assert.equal(productPublications(db,'alice').has('q'),false);
+ assert.equal(productPublications(db,'bob').get('q')[0].remote_id,'999');
+ assert.equal(productPublications(db,'empty').size,0);
+ db.close();
+});
