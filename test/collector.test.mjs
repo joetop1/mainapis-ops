@@ -54,7 +54,7 @@ test('SKU配图按属性名或ID精确匹配，不按主图顺序猜测',()=>{
 });
 test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
- assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.permissions.includes('cookies'),false);
+ assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.deepEqual(manifest.content_scripts,[{matches:['https://ops.mainapis.com/*'],js:['version-bridge.js'],run_at:'document_idle'}]);assert.equal(manifest.permissions.includes('cookies'),false);
  const source=readFileSync(new URL('../extensions/1688-collector/popup.js',import.meta.url),'utf8');
  const fn=source.slice(source.indexOf('export async function importIntoOps'),source.indexOf("\n$('#send')")).replace('export ','');
  const run=context=>vm.runInNewContext('('+fn+')({source_url:"https://detail.1688.com/offer/123.html"})',context);

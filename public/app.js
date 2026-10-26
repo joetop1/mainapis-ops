@@ -1,3 +1,4 @@
+import {compareVersions,safariCollectorVersion} from './collector-version.js';
 import {specificationMatrix,remapSpecificationValues,matchSpecificationImport} from './specifications.js';
 import {channelConfiguration} from './connection-status.js';
 import {detailImagesFromJSON,detailHTML} from './detail-images.js';
@@ -323,9 +324,29 @@ async function loadCollectorDownload(){
  $('#collectorDownloadStatus').textContent='正在读取插件版本…';$('#refreshCollectorDownload').classList.add('hidden');
  try{
   const release=await api('/api/extensions/1688-collector');
-  $('#collectorVersion').textContent='v'+release.version;
+  $('#collectorVersion').textContent='最新版 v'+release.version;
+  detectCollectorVersion(release.version);
   $('#collectorDownload').classList.remove('hidden');
   $('#collectorDownloadStatus').textContent='当前版本 v'+release.version+' · '+Math.ceil(release.bytes/1024)+' KB · 适用于 Chrome / Edge';
  }catch(e){$('#collectorVersion').textContent='暂不可用';$('#collectorDownload').classList.add('hidden');$('#collectorDownloadStatus').textContent=e.message;$('#refreshCollectorDownload').classList.remove('hidden');}
+}
+let collectorProbe=()=>{};
+function detectCollectorVersion(chromiumVersion){
+ collectorProbe();
+ const nonce=crypto.randomUUID(),node=$('#collectorInstalledStatus');
+ node.textContent='正在检测此浏览器已安装的插件…';
+ const received=event=>{
+  if(event.source!==window||event.origin!==location.origin||event.data?.type!=='mainapis:collector:version'||event.data.nonce!==nonce)return;
+  const {channel,version}=event.data;if(!['safari','chromium'].includes(channel))return;
+  const latest=channel==='safari'?safariCollectorVersion:chromiumVersion;
+  const compared=compareVersions(version,latest);if(compared===null)return;
+  clearTimeout(timer);
+  node.textContent=`已安装 ${channel==='safari'?'Safari':'Chrome / Edge'} v${version} · `+(compared<0?`发现新版 v${latest}，请${channel==='safari'?'通过 TestFlight / App Store 更新':'下载新版 ZIP，替换原插件目录后，在扩展管理页点击重新加载'}`:compared===0?'已是最新版本':'高于系统提供的版本');
+  node.classList.toggle('collector-update-needed',compared<0);
+ };
+ window.addEventListener('message',received);
+ const timer=setTimeout(()=>{node.textContent='未检测到版本响应：可能尚未安装、未启用、未允许访问 OPS，或仍使用不支持检测的旧版插件。旧版需先手动更新一次，再刷新本页。';$('#refreshCollectorDownload').classList.remove('hidden');},2000);
+ collectorProbe=()=>{clearTimeout(timer);window.removeEventListener('message',received);node.classList.remove('collector-update-needed');};
+ window.postMessage({type:'mainapis:collector:query',nonce},location.origin);
 }
 $('#refreshCollectorDownload').onclick=loadCollectorDownload;

@@ -1,9 +1,29 @@
 {
   "manifest_version": 3,
   "name": "MainAPIs · 1688 采集助手",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "读取当前打开的 1688 商品，预览后导入 OPS 待整理采集箱。",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["https://ops.mainapis.com/*"],
-  "action": {"default_popup": "popup.html", "default_title": "采集到 OPS"}
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://ops.mainapis.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "采集到 OPS"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ops.mainapis.com/*"
+      ],
+      "js": [
+        "version-bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }
