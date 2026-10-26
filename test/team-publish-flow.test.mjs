@@ -41,7 +41,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
    const actor=mode==='team'?'bob':'alice';
    const owner=mode==='team'?db.prepare('SELECT team_id FROM team_members WHERE sub=?').get('alice').team_id:'alice';
    for(const result of ['success','502']){
-    const pid=mode+'-'+result,p={...product,source_url:product.source_url+'?case='+pid};
+    const pid=mode+'-'+result,p={...product,attributes:[{name:'容量',value:'30ml'},{name:'下游平台',value:'ebay'}],source_url:product.source_url+'?case='+pid};
     db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run(pid,owner,p.source_url,JSON.stringify(p),'approved',2,'now','now');
     const published=await call('/api/products/'+pid+'/publish','POST',{revision:2,target:'crmeb-store'},actor);assert.equal(published.status,202,JSON.stringify(published.data));
     const id=published.data.id,request=outbound.at(-1),token=request.body.callback.token;
@@ -50,7 +50,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
     const inspected=await call(claimPath,'POST',{action:'inspect_publish'},'',token);assert.equal(inspected.status,200);
     const auth=await call('/api/callback/'+id+'/merchant-token','POST',{},'',token);assert.equal(auth.status,200);
     const prepared=vm.runInNewContext(`(function(){${source}})()`,{$:()=>({first:()=>({json:inspected.data})}),$json:auth.data})[0].json;
-    assert.equal(prepared.payload.description,'<p><img src="https://example.com/detail.jpg" alt=""></p>');assert.equal(prepared.payload.applicable_type,0);
+    assert.equal(prepared.payload.description,'产品基本信息<br>容量：30ml<p><img src="https://example.com/detail.jpg" alt=""></p>');assert.equal(JSON.parse(db.prepare('SELECT data FROM products WHERE id=?').get(pid).data).description,product.description);assert.equal(prepared.payload.applicable_type,0);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,200);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,409);
     if(result==='502'){

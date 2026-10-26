@@ -7,6 +7,7 @@ function preview(result){
  $('#preview').hidden=false;$('#title').textContent=result.product.title||'标题待补充';$('#counts').textContent=`${result.product.images.length} 张主图 · ${result.product.detail_images?.length||0} 张详情图 · ${result.product.skus.length} 个 SKU · ${result.product.spec_names?.length||(result.product.skus.length?1:0)} 个规格维度`;
  $('#skuPreview').replaceChildren(...result.product.skus.slice(0,5).map(s=>{const p=document.createElement('p');p.textContent=s.spec+' · 参考成本 ¥'+s.cost+(s.image?' · 已配图':' · 未配图');if(s.image){const img=document.createElement('img');img.src=s.image;img.alt=s.spec;img.width=48;img.height=48;img.referrerPolicy='no-referrer';img.style.objectFit='cover';p.prepend(img);}return p;}));
  $('#warnings').replaceChildren(...(result.warnings||[]).map(message=>{const li=document.createElement('li');li.textContent=message;return li;}));
+ $('#attributePreview').textContent=(result.product.attributes||[]).map(row=>row.name+'：'+row.value).join('\n')||'未识别到产品参数，可在 OPS 补充。';
  $('#json').value=JSON.stringify({products:[result.product]},null,2);
 }
 async function busy(button,work){button.disabled=true;try{await work();}catch(e){status(e.message||'操作失败，请重试');}finally{button.disabled=false;}}

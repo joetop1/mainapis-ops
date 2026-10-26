@@ -1,4 +1,4 @@
-# MainAPIs Safari 采集助手 0.1.12（待真机验收）
+# MainAPIs Safari 采集助手 0.1.14（待真机验收）
 
 此包是 Safari Web Extension 资源包，不是可以直接安装的 IPA。需使用自己的 Apple Developer 账号签名、构建后，通过 TestFlight 安装。桌面 Chrome/Edge 采集插件保持原样。
 
@@ -41,3 +41,5 @@ node scripts/build-safari-collector.mjs
 ```
 
 只打包固定公开资源文件和图标，不包含账号密码、Cookie、数据库或服务器配置。
+
+0.1.14：采集产品基本信息，过滤下游平台、销售地区和出口专供等供货信息；OPS 0.2.2 支持参数编辑及随详情发布。

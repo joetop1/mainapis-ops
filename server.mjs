@@ -1,3 +1,4 @@
+import {descriptionWithAttributes} from './public/product-attributes.js';
 import {systemVersion} from './system-version.mjs';
 import {productPublications} from './product-publications.mjs';
 import {createCollectorPackage} from './collector-package.mjs';
@@ -130,7 +131,7 @@ const handleRequest=async(req,res)=>{
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/specifications.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
     let s=sessionGet(req);if(s?.user)actorContext.getStore().actor=s.user.sub;
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}
@@ -329,6 +330,7 @@ const handleRequest=async(req,res)=>{
         if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct,owner);
+        publishingProduct.description=descriptionWithAttributes(publishingProduct.description,publishingProduct.attributes);
         if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={fx:await fetchTigshopFX(),shipping:{templateId:getTigshopConnection(owner).templateId}};}
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
         const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}

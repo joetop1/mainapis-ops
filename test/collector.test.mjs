@@ -83,3 +83,9 @@ test('现代1688详情组件：穿透开放Shadow DOM，保留详情顺序并隔
  assert.deepEqual(r.product.images,['https://cbu01.alicdn.com/img/main.jpg']);
  assert.equal(r.warnings.some(x=>x.includes('未采集到真实商品详情图')),false);
 });
+test('产品参数按页面实际字段采集，平台字段过滤，推荐商品参数不混入',()=>{
+ const result=JSON.parse(JSON.stringify(capture({offer:{offerId:'123456',attributes:[{name:'品牌',value:'示例品牌'},{name:'容量',value:'30ml'},{name:'主要下游平台',value:'ebay'},{name:'主要销售地区',value:'欧洲'},{name:'是否跨境出口专供货源',value:'是'}]},recommend:{offerId:'999',attributes:[{name:'材质',value:'推荐商品参数'}]}})));
+ assert.deepEqual(result.product.attributes,[{name:'品牌',value:'示例品牌'},{name:'容量',value:'30ml'}]);
+ const dom=JSON.parse(JSON.stringify(capture({}, {querySelectorAll:s=>s.startsWith('.offer-attr-item,')?[{querySelector:s=>({textContent:s.includes('name')?'材质':'硅胶'})}]:[]})));
+ assert.deepEqual(dom.product.attributes,[{name:'材质',value:'硅胶'}]);
+});
