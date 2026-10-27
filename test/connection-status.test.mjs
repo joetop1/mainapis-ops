@@ -24,3 +24,12 @@ test('Tigshop同时要求已保存Token和运费模板；三个渠道表单只�
  const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);assert.equal(ids.length,new Set(ids).size);
  for(const target of ['crmeb-pro','crmeb-store'])for(const kind of ['auth','publishing'])assert.equal((html.match(new RegExp(`data-crmeb-${kind}="${target}"`,'g'))||[]).length,1);
 });
+
+import {yunzhongConfiguration} from '../public/connection-status.js';
+test('芸众三级分类连接成功与缺少凭证明确区分，保留发布限制',()=>{
+ assert.equal(yunzhongConfiguration({configured:false}).state,'unconfigured');
+ assert.equal(yunzhongConfiguration({configured:true}).label,'需重新测试');
+ const status=yunzhongConfiguration({configured:true,mode:'official',testedAt:'now',categoryLevel:3,publishingReady:false});
+ assert.equal(status.state,'readonly');assert.equal(status.label,'已连接 · 暂不支持发布');assert.match(status.detail,/无需重新填写密钥/);
+ assert.equal(yunzhongConfiguration({configured:true,mode:'official',testedAt:'now',categoryLevel:2,publishingReady:true}).state,'configured');
+});

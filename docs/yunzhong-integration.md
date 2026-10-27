@@ -29,3 +29,11 @@
 列表和 getOption 无法读回完整分类、主图组、详情内容，因此无论可见字段是否匹配，都停留 awaiting_review，不自动判 succeeded。
 
 版本0.3.1为本地准备版本。自动测试模拟 PHP 接口响应、鉴权、团队权限、加密保存、分步写入失败及重复发布保护；尚无真实凭证联调或真实商品发布记录。按用户要求暂不更新线上 OPS。
+
+## 三级分类现场确认与进一步核查
+
+用户已在现有商城成功读取「计生 / 人体润滑 / 润滑液」等三级分类，保存返回连接成功。OPS 0.3.2将其显示为「已连接 · 暂不支持发布」，不再误导为缺少配置。
+
+再次审阅 routes/outside.php 和 ShopOutsideRoute：动态分发也只进入 app/outside 命名空间；现有商品创建与更新均仅组装 parentid/childid，不能靠额外传 category_tid 或 thirdid 解决。ai-query/outsides.php只声明工作助手接口，无额外商品创建接口。
+
+backend GoodsController::create调用 CreateGoodsService，属于后台商品创建路径；尚未确认它的完整路由与认证契约，不能把后台端点当成 APPID/APP_Secret 外部API调用。下一步应由芸众提供支持 category thirdid、正文参数和多维规格的官方 API 契约或升级修复；不修改源码，不尝试绕过后台认证。

@@ -1,7 +1,7 @@
 import {normalizeProductAttributes,descriptionWithAttributes,productAttributesFromJSON} from './product-attributes.js';
 import {compareVersions,safariCollectorVersion} from './collector-version.js';
 import {specificationMatrix,remapSpecificationValues,matchSpecificationImport} from './specifications.js';
-import {channelConfiguration} from './connection-status.js';
+import {channelConfiguration,yunzhongConfiguration} from './connection-status.js';
 import {detailImagesFromJSON,detailHTML} from './detail-images.js';
 import {batchPrices} from './pricing.js';
 import {matchSkuImages} from './sku-images.js';
@@ -364,7 +364,7 @@ function detectCollectorVersion(chromiumVersion){
 $('#refreshCollectorDownload').onclick=loadCollectorDownload;
 
 async function loadYunzhongConnection(){
- try{const c=await api('/api/connections/yunzhong');$('#yunzhongAppid').value=c.appid;$('#yunzhongCategoryLevel').value=c.categoryLevel||'';$('#yunzhongDispatchPrice').value=c.dispatchPrice||'';$('#yunzhongSecret').placeholder=c.configured?'已保存，留空保留原密钥':'填写 API 应用 APP_Secret';$('#yunzhongBadge').textContent=c.publishingReady?'已配置':c.configured?'待完善':'未配置';$('#yunzhongCard').dataset.state=c.publishingReady?'configured':c.configured?'partial':'unconfigured';$('#yunzhongDetails').open=!c.configured;$('#yunzhongStatus').textContent=c.publishingReady?'已保存官方API连接；受支持商品可创建下架草稿，完成后需人工核对。':c.configured?'凭证已保存；请核对分类模式并重新测试。三级分类暂不支持创建。':'填写 API 应用凭证后测试连接。';}catch(error){$('#yunzhongBadge').textContent='读取失败';$('#yunzhongStatus').textContent=error.message;}
+ try{const c=await api('/api/connections/yunzhong');$('#yunzhongAppid').value=c.appid;$('#yunzhongCategoryLevel').value=c.categoryLevel||'';$('#yunzhongDispatchPrice').value=c.dispatchPrice||'';$('#yunzhongSecret').placeholder=c.configured?'已保存，留空保留原密钥':'填写 API 应用 APP_Secret';const status=yunzhongConfiguration(c);$('#yunzhongBadge').textContent=status.label;$('#yunzhongCard').dataset.state=status.state;$('#yunzhongDetails').open=!c.configured;$('#yunzhongStatus').textContent=status.detail;}catch(error){$('#yunzhongBadge').textContent='读取失败';$('#yunzhongStatus').textContent=error.message;}
 }
 async function saveYunzhongConnection(testOnly){
  const form=$('#yunzhongForm');form.querySelectorAll('input,select,button').forEach(node=>node.disabled=true);$('#yunzhongStatus').textContent='正在测试签名并读取分类…';

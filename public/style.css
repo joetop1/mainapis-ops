@@ -22,3 +22,5 @@
 .system-version{font-size:10px;color:#718275;white-space:nowrap;user-select:all}@media(max-width:760px){.header-right{flex-wrap:wrap;justify-content:flex-end}.system-version{font-size:9px}}
 
 .product-attributes{border:1px solid #e0e8e2;border-radius:8px;padding:16px;margin:20px 0}.product-attributes h3{font-size:14px;margin:0 0 8px}.attribute-row{display:grid;grid-template-columns:minmax(90px,1fr) minmax(120px,2fr) auto;gap:8px;margin:8px 0}.attribute-row input{min-width:0;width:100%}.product-attributes>button{margin:8px 0 16px}@media(max-width:500px){.attribute-row{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) auto}.attribute-row input{padding:9px 6px}}
+
+.channel-card[data-state="readonly"]{border-top-color:#607f94}.channel-card[data-state="readonly"] .connection-badge{background:#eaf1f6;color:#466477}
