@@ -16,3 +16,15 @@ test('文字、参数、三级分类和未核验字段均在写入前阻止，�
  assert.throws(()=>buildYunzhongProduct(lease,{...config,categoryLevel:3,categoryIds:[1,9,2]}));
  assert.throws(()=>buildYunzhongProduct(lease,{...config,dispatchPrice:undefined}));
 });
+import {verifyYunzhongProduct} from '../yunzhong-product.mjs';
+test('独立兼容模式保留文字参数、三级分类与品牌，完整读回后才确认成功',()=>{
+ const example=structuredClone(lease);Object.assign(example.product,{description:'详情<正文>',attributes:[{name:'材质',value:'硅胶'}],brand_ids:[7],category_id:3});example.candidate_id='99';
+ const configuration={categoryLevel:3,categoryIds:[1,2,3],dispatchPrice:'8.00',compatibility:true};
+ const payload=buildYunzhongProduct(example,configuration);
+ assert.match(payload.content_html,/材质：硅胶/);assert.match(payload.content_html,/详情&lt;正文&gt;/);assert.equal(payload.base.brand_id,7);
+ const actual={id:'99',marker:example.marker,status:0,title:example.product.title,brand_id:7,category_paths:[[1,2,3]],images:payload.base.thumb_url,content_html:payload.content_html,spec_names:example.product.spec_names,skus:payload.options.option.map((row,index)=>({sku:row.goods_sn,price:row.product_price,cost:row.cost_price,stock:row.stock,image:row.thumb,spec_values:example.product.skus[index].spec_values}))};
+ assert.equal(verifyYunzhongProduct(actual,example,configuration).status,'succeeded');
+ for(const mutate of [d=>d.content_html='',d=>d.images.reverse(),d=>d.category_paths=[[1,2]],d=>d.skus[0].stock=9,d=>d.skus[1].spec_values=['错','L'],d=>d.brand_id=0,d=>d.status=1]){
+  const copy=structuredClone(actual);mutate(copy);if(JSON.stringify(copy)===JSON.stringify(actual))continue;assert.equal(verifyYunzhongProduct(copy,example,configuration).status,'awaiting_review');
+ }
+});
