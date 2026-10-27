@@ -105,3 +105,7 @@ curl -sS -i --max-time 15 'https://asns.cc/addons/yun_shop/api.php?i=1&route=mai
 未签名请求预期HTTP400，含响应头 X-Mainapis-Bridge:0.2.1。只有实际HTTP响应证明入口可达，CLI路由校验不替代HTTP联调。
 
 然后更新OPS至0.4.1再测试签名读取，不再使用 /ops-bridge.php。此前前端0.4.0不能使用新的地址；源码已经更新，具体服务器更新命令见第三步。
+
+## 已安装站点的最新修复
+
+独立入口0.2.3／OPS0.4.3修复实际写连接的事务元数据查询，并增加签名只读check_absent操作及安全原任务恢复流程。已安装站点按 [upgrade-0.2.3.md](upgrade-0.2.3.md) 操作，不重复运行初始安装器。

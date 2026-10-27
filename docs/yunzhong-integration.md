@@ -57,3 +57,11 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 任务OPS-0abead4e58e94affab052b6a4bb78ce3的现场只读检查未发现回执或同货号商品；五个商品模型的旧元数据查询均返回engine:null。尚不能仅据此认定完整400链路的唯一原因，也不能认定商品表不支持事务。
 
 旧代码依赖默认连接配置中的database名称。修正为在各模型实际写PDO会话中用DATABASE()查询，并使用明确的小写别名，检查元数据是否唯一、表类型和InnoDB；商品模型与回执的写PDO必须相同，否则拒绝创建。只读检查增加metadata_found、table_type和same_write_connection供现场验证。真实环境结果未返回前，不恢复任务或发送新增请求。
+
+## 现场确认与受控恢复（0.2.3／OPS0.4.3）
+
+更新的只读检查已在实际容器返回五张表metadata_found=1、InnoDB、BASE TABLE、same_write_connection=true；原任务商品和回执仍为空。
+
+新增签名GET check_absent，以物理表查询包含删除商品及同商城全部appid回执。恢复接口只支持本工作空间的独立入口直连、claimed且unknown、无候选ID/核对nonce、收到HTTP400的任务；入口必须支持safe_absence_check，并严格返回原marker、absent=true和两个零计数。响应期间连接和任务快照/更新时间变化会中止；本地事务把原任务改为accepted、claimed=0，不创建商品或新任务。正常重发仍用冻结快照与原任务标记。编辑角色不能恢复。
+
+本地自动测试覆盖空记录恢复、商品/回执存在、错误或缺失证明、跨团队、旧扩展、状态与连接变化及诊断信息过滤。真实商品创建仍待部署补丁后验证。

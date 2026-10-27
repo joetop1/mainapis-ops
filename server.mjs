@@ -1,3 +1,4 @@
+import {recoverYunzhongUncreated} from './yunzhong-recovery.mjs';
 import {createYunzhongBridge,yunzhongCatalog,YUNZHONG_BRIDGE} from './yunzhong-bridge.mjs';
 import {createYunzhongRunner} from './yunzhong-direct.mjs';
 import {buildYunzhongProduct} from './yunzhong-product.mjs';
@@ -316,6 +317,12 @@ const handleRequest=async(req,res)=>{
     const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store|tigshop|yunzhong)$/);
     if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoader(catalogRoute[1],owner)(new URL(req.url,origin).searchParams.get('refresh')==='1'));
     if(path==='/api/jobs/650b74d9-6d5e-4174-9245-4d45163e3699/recover-zero-stock'&&req.method==='POST'){if(demo)throw Error('演示模式不执行商城操作');return json(res,200,await recoverTigshopZeroStock(db,owner,getTigshopConnection));}
+    const yunzhongRecoveryRoute=path.match(/^\/api\/jobs\/([^/]+)\/recover-uncreated$/);
+    if(yunzhongRecoveryRoute&&req.method==='POST'){
+      if(demo)throw Error('演示模式不执行恢复');
+      const result=await recoverYunzhongUncreated({db,owner,id:yunzhongRecoveryRoute[1],getConnection:key=>yunzhongConnections.get(key)});
+      audit(owner,'job.recover_yunzhong_uncreated',result.id);return json(res,200,result);
+    }
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
     if(retryRoute && req.method==='POST'){
       if(demo)return json(res,503,{error:'演示模式不执行发布'});

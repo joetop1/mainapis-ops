@@ -22,3 +22,8 @@ test('独立映射保存三级路径、正文参数和真实多维组合，任�
  assert.equal(verifyYunzhongProduct(actual,lease,config).status,'succeeded');
  for(const mutate of [p=>p.category_paths=[[1,2]],p=>p.content_html='',p=>p.spec_names.reverse(),p=>p.skus[0].stock=50,p=>p.dispatch_price=9,p=>p.stock=0,p=>p.status=1,p=>p.images=[]]){const changed=structuredClone(actual);mutate(changed);assert.equal(verifyYunzhongProduct(changed,lease,config).status,'awaiting_review');}
 });
+test('失败响应仅展示已知诊断码及安全源码位置，不展示服务器原始信息',async()=>{
+ const client=createYunzhongBridge({appid:'1',appsecret:'test-secret'},async()=>({ok:false,status:400,text:async()=>JSON.stringify({result:0,msg:'password=private',data:{error_code:'TABLE_METADATA_MISSING',error_file:'Bridge.php',error_line:152}})}));
+ await assert.rejects(client('capabilities'),e=>e.message.includes('TABLE_METADATA_MISSING')&&e.message.includes('Bridge.php:152')&&!e.message.includes('private'));
+ const unsafe=createYunzhongBridge({appid:'1',appsecret:'test-secret'},async()=>({ok:false,status:400,text:async()=>JSON.stringify({result:0,msg:'private',data:{error_code:'SQL private',error_file:'../../private.php',error_line:1}})}));await assert.rejects(unsafe('capabilities'),e=>!e.message.includes('private')&&!e.message.includes('SQL'));
+});

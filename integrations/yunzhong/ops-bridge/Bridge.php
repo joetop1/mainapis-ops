@@ -44,10 +44,10 @@ final class Bridge
     {
         $level = (int)(\Setting::get('shop.category')['cat_level'] ?? 2);
         if (!in_array($level, [2,3], true)) throw new \RuntimeException('暂不支持当前分类层级');
-        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.2', 'categoryLevel'=>$level,
+        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.3', 'categoryLevel'=>$level,
             'categories'=>Category::uniacid()->where('enabled',1)->where('plugin_id',0)->select(['id','name','parent_id','level'])->limit(5001)->get()->toArray(),
             'brands'=>Brand::uniacid()->select(['id','name'])->limit(5001)->get()->toArray(),
-            'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail']];
+            'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail','safe_absence_check']];
     }
 
     private function receiptQuery($marker)
@@ -61,6 +61,17 @@ final class Bridge
         $receipt=$this->receiptQuery($marker)->first();
         if (!$receipt) return ['found'=>false];
         return ['found'=>true,'product'=>$this->readProduct($receipt)];
+    }
+
+    public function checkAbsent($marker)
+    {
+        $this->checkMarker($marker);
+        // Query physical rows directly so deleted goods and receipts under another app ID still block recovery.
+        $connection=DB::connection();$goodsModel=new Goods();
+        if ($goodsModel->getConnection()->getPdo()!==$connection->getPdo()) throw new \RuntimeException('写入连接不一致');
+        $goodsCount=$connection->table($goodsModel->getTable())->where('uniacid',$this->uniacid)->where('goods_sn',$marker)->count();
+        $receiptCount=$connection->table($this->table)->where('uniacid',$this->uniacid)->where('marker',$marker)->count();
+        return ['marker'=>$marker,'goods_count'=>(int)$goodsCount,'receipt_count'=>(int)$receiptCount,'absent'=>$goodsCount===0 && $receiptCount===0];
     }
 
     public function detail($marker, $id)

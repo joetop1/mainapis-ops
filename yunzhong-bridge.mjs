@@ -5,14 +5,19 @@ export const YUNZHONG_CONTRACT='mainapis-yunzhong-2';
 export function createYunzhongBridge(credentials,fetcher=fetch){
  const {appid,appsecret}=requireYunzhongCredentials(credentials);
  return async(op,parameters={})=>{
-  if(!['capabilities','lookup','detail','create'].includes(op))throw Error('芸众兼容接口操作无效');
+  if(!['capabilities','lookup','detail','create','check_absent'].includes(op))throw Error('芸众兼容接口操作无效');
   if(['op','app_id','sign','sign_type','ver','timestamp','nonce','route','i'].some(key=>key in parameters))throw Error('不能覆盖接口鉴权参数');
   const data={...parameters,op,app_id:appid,sign_type:'SHA256',ver:1,timestamp:Math.floor(Date.now()/1000),nonce:randomBytes(16).toString('hex')};data.sign=signYunzhong(data,appsecret);
   const writing=op==='create',url=writing?YUNZHONG_BRIDGE:YUNZHONG_BRIDGE+'&'+new URLSearchParams(Object.entries(data).map(([key,value])=>[key,String(value)]));
   let response;try{response=await fetcher(url,{method:writing?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(writing?45000:15000),headers:{Accept:'application/json',...(writing?{'Content-Type':'application/json'}:{})},...(writing?{body:JSON.stringify(data)}:{})});}catch{throw Error('芸众兼容扩展连接未确认，请检查安装与网络；写入后必须先核对任务编码');}
-  if(!response.ok)throw Error('芸众兼容扩展返回 HTTP '+response.status+'，请核对安装、签名或商品字段');
-  let body;try{const text=await response.text();if(text.length>3e6)throw Error();body=JSON.parse(text);}catch{throw Error('芸众兼容扩展响应格式无效');}
-  if(body?.result!==1||!body.data||typeof body.data!=='object')throw Error('芸众兼容扩展拒绝请求，请核对安装、签名或字段；不要重复创建商品');
+  const httpError='芸众兼容扩展返回 HTTP '+response.status+'，请核对安装、签名或商品字段';
+  let body;try{const text=await response.text();if(text.length>3e6)throw Error();body=JSON.parse(text);}catch{throw Error(response.ok?'芸众兼容扩展响应格式无效':httpError);}
+  if(!response.ok||body?.result!==1||!body.data||typeof body.data!=='object'){
+   const diagnostics=body?.data,codes=['TABLE_METADATA_MISSING','NON_TRANSACTIONAL_TABLE','WRITE_CONNECTION_MISMATCH','GOODS_VALIDATION_FAILED','BRIDGE_EXECUTION_ERROR'];
+   const code=codes.includes(diagnostics?.error_code)?diagnostics.error_code:'';
+   const location=code&&/^[A-Za-z0-9_.-]{1,100}\.php$/.test(diagnostics.error_file||'')&&Number.isSafeInteger(diagnostics.error_line)&&diagnostics.error_line>0&&diagnostics.error_line<1000000?'，位置 '+diagnostics.error_file+':'+diagnostics.error_line:'';
+   throw Error((response.ok?'芸众兼容扩展拒绝请求，请核对安装、签名或字段；不要重复创建商品':httpError)+(code?'；诊断码 '+code+location:''));
+  }
   return body.data;
  };
 }
