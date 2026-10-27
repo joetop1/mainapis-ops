@@ -80,3 +80,28 @@ docker exec shop-asns-cc-runtime php /var/www/html/ops-bridge/install.php --disa
 ```
 
 只写本入口配置，商品和回执保留。不要删除回执表，否则会丢失重复创建保护。现有官方API连接保留，可用于读取；三级分类仍不能改走原官方创建接口。
+
+## LaravelS/Swoole 部署入口修正（OPS 0.4.1）
+
+现场确认运行容器把所有PHP路径交给Swoole，普通独立PHP文件不会执行；旧 `/ops-bridge.php` 返回404。截图确认 ShopRouteFactory 将 `addons/yun_shop/api.php` 分发给命名空间 app/frontend 的 ShopFrontendRoute。
+
+新增本包自有控制器 `app/frontend/controllers/MainapisOpsController.php`，使用已注册的 API 路径和 `route=mainapis-ops.index`。不修改原控制器、路由、Nginx 或 Composer 配置；不在Swoole工作进程中再次bootstrap Laravel，不调用exit，也不使用全局header输出。签名仍强制校验，固定路由元数据i/route不参加签名，业务参数必须全部签名。
+
+已安装0.2.0的服务器只需补传新的 install.php 与 MainapisOpsController.php 到原临时包目录，执行：
+
+```bash
+docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/install.php --adapt-swoole /var/www/html /var/www/html
+```
+
+该步骤检查原扩展和回执表存在，拒绝覆盖不同内容的既有控制器文件；通过现有 ShopFrontendRoute::shopMatch 在CLI验证类和动作分发。只新增本包控制器，不建表，不创建商品。新安装也需在 --install 后执行此步骤。
+
+若返回ok:true，再重启商城容器加载新增类（会短暂中断商城访问）：
+
+```bash
+docker restart shop-asns-cc-runtime
+curl -sS -i --max-time 15 'https://asns.cc/addons/yun_shop/api.php?i=1&route=mainapis-ops.index'
+```
+
+未签名请求预期HTTP400，含响应头 X-Mainapis-Bridge:0.2.1。只有实际HTTP响应证明入口可达，CLI路由校验不替代HTTP联调。
+
+然后更新OPS至0.4.1再测试签名读取，不再使用 /ops-bridge.php。此前前端0.4.0不能使用新的地址；源码已经更新，具体服务器更新命令见第三步。

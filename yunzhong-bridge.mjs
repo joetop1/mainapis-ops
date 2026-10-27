@@ -1,14 +1,14 @@
 import {randomBytes} from 'node:crypto';
 import {signYunzhong,requireYunzhongCredentials} from './yunzhong-client.mjs';
-export const YUNZHONG_BRIDGE='https://asns.cc/ops-bridge.php';
+export const YUNZHONG_BRIDGE='https://asns.cc/addons/yun_shop/api.php?i=1&route=mainapis-ops.index';
 export const YUNZHONG_CONTRACT='mainapis-yunzhong-2';
 export function createYunzhongBridge(credentials,fetcher=fetch){
  const {appid,appsecret}=requireYunzhongCredentials(credentials);
  return async(op,parameters={})=>{
   if(!['capabilities','lookup','detail','create'].includes(op))throw Error('芸众兼容接口操作无效');
-  if(['op','app_id','sign','sign_type','ver','timestamp','nonce'].some(key=>key in parameters))throw Error('不能覆盖接口鉴权参数');
+  if(['op','app_id','sign','sign_type','ver','timestamp','nonce','route','i'].some(key=>key in parameters))throw Error('不能覆盖接口鉴权参数');
   const data={...parameters,op,app_id:appid,sign_type:'SHA256',ver:1,timestamp:Math.floor(Date.now()/1000),nonce:randomBytes(16).toString('hex')};data.sign=signYunzhong(data,appsecret);
-  const writing=op==='create',url=writing?YUNZHONG_BRIDGE:YUNZHONG_BRIDGE+'?'+new URLSearchParams(Object.entries(data).map(([key,value])=>[key,String(value)]));
+  const writing=op==='create',url=writing?YUNZHONG_BRIDGE:YUNZHONG_BRIDGE+'&'+new URLSearchParams(Object.entries(data).map(([key,value])=>[key,String(value)]));
   let response;try{response=await fetcher(url,{method:writing?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(writing?45000:15000),headers:{Accept:'application/json',...(writing?{'Content-Type':'application/json'}:{})},...(writing?{body:JSON.stringify(data)}:{})});}catch{throw Error('芸众兼容扩展连接未确认，请检查安装与网络；写入后必须先核对任务编码');}
   if(!response.ok)throw Error('芸众兼容扩展返回 HTTP '+response.status+'，请核对安装、签名或商品字段');
   let body;try{const text=await response.text();if(text.length>3e6)throw Error();body=JSON.parse(text);}catch{throw Error('芸众兼容扩展响应格式无效');}

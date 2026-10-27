@@ -7,8 +7,9 @@ test('独立入口签名含时效和随机数，仅允许四个固定操作；�
  const calls=[],client=createYunzhongBridge({appid:'1',appsecret:'test-only-secret'},async(url,options)=>{calls.push({url,options});return {ok:true,text:async()=>JSON.stringify({result:1,data:{}})};});
  await client('capabilities');await client('create',{product:{marker:'x'}});
  const data=calls.map(({url,options})=>options.method==='POST'?JSON.parse(options.body):Object.fromEntries(new URL(url).searchParams));
- for(const p of data){assert.equal(p.sign,signYunzhong(p,'test-only-secret'));assert.ok(Math.abs(Number(p.timestamp)-Date.now()/1000)<10);assert.match(p.nonce,/^[0-9a-f]{32}$/);}
+ for(const p of data){const signed={...p};delete signed.i;delete signed.route;assert.equal(p.sign,signYunzhong(signed,'test-only-secret'));assert.ok(Math.abs(Number(p.timestamp)-Date.now()/1000)<10);assert.match(p.nonce,/^[0-9a-f]{32}$/);}
  assert.notEqual(data[0].nonce,data[1].nonce);assert.equal(calls[0].options.method,'GET');assert.equal(calls[1].options.method,'POST');
+ assert.equal(new URL(calls[0].url).searchParams.get('route'),'mainapis-ops.index');assert.equal(new URL(calls[0].url).searchParams.get('i'),'1');
  await assert.rejects(client('query',{sql:'invalid'}));await assert.rejects(client('detail',{timestamp:0}));assert.equal(calls.length,2);
  const bad=createYunzhongBridge({appid:'1',appsecret:'test-only-secret'},async()=>({ok:true,text:async()=>JSON.stringify({result:0,msg:'sensitive-stack'})}));await assert.rejects(bad('capabilities'),e=>!e.message.includes('sensitive-stack'));
  assert.throws(()=>yunzhongCatalog({contract:'mainapis-yunzhong-1'}));

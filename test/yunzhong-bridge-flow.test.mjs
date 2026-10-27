@@ -12,7 +12,7 @@ test('完整芸众HTTP流程：保存连接、三级分类品牌、团队发布�
  const dir=await mkdtemp(join(tmpdir(),'ops-yun-flow-'));Object.assign(process.env,{DATA_DIR:dir,APP_ORIGIN:'https://ops.mainapis.com',DEMO_MODE:'false'});
  const oldFetch=globalThis.fetch;let saved,creates=0;
  globalThis.fetch=async(url,options)=>{
-  const args=options.method==='POST'?JSON.parse(options.body):Object.fromEntries(new URL(url).searchParams);assert.equal(args.sign,signYunzhong(args,'private-secret'));assert.equal(options.redirect,'error');
+  const args=options.method==='POST'?JSON.parse(options.body):Object.fromEntries(new URL(url).searchParams);const signed={...args};delete signed.i;delete signed.route;assert.equal(args.sign,signYunzhong(signed,'private-secret'));assert.equal(options.redirect,'error');
   let data;if(args.op==='capabilities')data=caps;else if(args.op==='lookup')data={found:!!saved,...(saved?{product:saved}:{})};else if(args.op==='create'){
    creates++;const p=args.product;data=saved={id:'55',marker:p.marker,status:0,price:p.base.price,cost_price:p.base.cost_price,stock:p.base.stock,dispatch_type:1,dispatch_price:p.base.dispatch_price,title:p.base.title,brand_id:p.base.brand_id,category_paths:[p.category_ids],images:p.base.thumb_url,content_html:p.content_html,spec_names:p.options.specs.map(spec=>spec.title),skus:p.options.option.map(row=>({sku:row.goods_sn,price:row.product_price,cost:row.cost_price,stock:row.stock,image:row.thumb,spec_values:['红','M']}))};
   }else if(args.op==='detail')data=saved;else throw Error('unexpected operation');

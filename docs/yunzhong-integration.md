@@ -45,3 +45,9 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 实现和安装检查见 integrations/yunzhong/README.md。独立入口0.2.0使用新的契约 mainapis-yunzhong-2，带时效签名，15个源文件逐请求核对；旧0.1.0草稿不兼容、不接受。创建走原服务，三级分类以后台服务所需 category 二维数组传递，文字参数放正文，多维规格完成后修正仅新商品的序列化维度列表。读回额外核对固定运费、基础金额和总库存。
 
 真实PHP运行验证尚未完成；先做容器 --check，再安装、验证签名读取，最后人工核对一个下架测试商品。不得将本地模拟通过描述为真实商城发布成功。
+
+## Swoole 现场入口适配（OPS 0.4.1）
+
+安装预检已在真实PHP8.3.31容器通过，读取分类11、品牌579；安装回执表和自有文件成功。旧独立PHP URL在Swoole部署返回404，尚未创建任何真实商品。
+
+现场Nginx所有php路径均反代5200的LaravelS；ShopRouteFactory截图确认前台API路径转ShopFrontendRoute，命名空间app/frontend。新控制器加入app/frontend/controllers，不改任何原文件；通过CLI真实shopMatch检查后仍必须验证HTTP请求命中。OPS地址改为 /addons/yun_shop/api.php?i=1&route=mainapis-ops.index。详见安装说明末段，不继续猜测独立脚本可执行。

@@ -4,7 +4,7 @@ if (PHP_SAPI!=='cli') {http_response_code(404);exit;}
 $mode=$argv[1] ?? '--check';$root=$argv[2] ?? '/var/www/html';
 try {
     if (PHP_VERSION_ID<70300) throw new RuntimeException('php_version_requires_7_3_or_newer');
-    if (!in_array($mode,['--check','--install','--disable'],true)) throw new RuntimeException('unknown_mode');
+    if (!in_array($mode,['--check','--install','--disable','--adapt-swoole'],true)) throw new RuntimeException('unknown_mode');
     if (!is_file($root.'/artisan') || !is_file($root.'/bootstrap/app.php')) throw new RuntimeException('not_laravel_root');
     $target=$root.'/ops-bridge';
     if ($mode==='--disable') {
@@ -26,7 +26,7 @@ try {
         }
     }
     if (!$public) throw new RuntimeException('document_root_not_identified');
-    foreach (['Bridge.php','entry.php','config.php','Compatibility.php'] as $name) {
+    foreach (['Bridge.php','entry.php','config.php','Compatibility.php','MainapisOpsController.php'] as $name) {
         exec(escapeshellarg(PHP_BINARY).' -l '.escapeshellarg(__DIR__.'/'.$name).' 2>&1',$lines,$status);
         if ($status!==0) throw new RuntimeException('php_lint_failed');
     }
@@ -45,6 +45,17 @@ try {
     $goods=new \app\backend\modules\goods\models\Goods();
     foreach (['validator','getAttributes','hasManyGoodsCategory'] as $method) if (!method_exists($goods,$method)) throw new RuntimeException('required_goods_method_missing');
     if (!class_exists('app\\backend\\modules\\goods\\services\\CreateGoodsService')) throw new RuntimeException('create_service_missing');
+    if ($mode==='--adapt-swoole') {
+        if (!is_dir($target) || !is_file($target.'/Bridge.php') || !Illuminate\Support\Facades\Schema::hasTable('mainapis_ops_receipts')) throw new RuntimeException('existing_bridge_required');
+        $destination=$root.'/app/frontend/controllers/MainapisOpsController.php';
+        if (!is_dir(dirname($destination))) throw new RuntimeException('frontend_directory_missing');
+        if (is_file($destination) && hash_file('sha256',$destination)!==hash_file('sha256',__DIR__.'/MainapisOpsController.php')) throw new RuntimeException('controller_exists_refusing_overwrite');
+        if (!is_file($destination) && !copy(__DIR__.'/MainapisOpsController.php',$destination)) throw new RuntimeException('controller_copy_failed');
+        $router=new \app\common\route\ShopFrontendRoute('addons/yun_shop/api.php');
+        list($controller,$action)=$router->shopMatch(['index'],'mainapis-ops');
+        if ($controller!=='app\\frontend\\controllers\\MainapisOpsController' || $action!=='index') throw new RuntimeException('frontend_dispatch_mismatch');
+        echo json_encode(['ok'=>true,'mode'=>'adapt-swoole','controller'=>$controller,'action'=>$action,'message'=>'已新增独立控制器，未修改原文件、未建表、未创建商品；需重载工作进程后测试HTTP入口'],JSON_UNESCAPED_UNICODE).PHP_EOL;exit;
+    }
     if ($mode==='--check') {echo json_encode(['ok'=>true,'mode'=>'check','entry_directory'=>$public,'php'=>PHP_VERSION,'category_level'=>$level,'category_count'=>$categoryCount,'brand_count'=>$brandCount,'message'=>'只读预检通过，未安装、未建表、未创建商品'],JSON_UNESCAPED_UNICODE).PHP_EOL;exit;}
     if (is_dir($target) || is_file($public.'/ops-bridge.php')) throw new RuntimeException('destination_exists_refusing_overwrite');
     if (Illuminate\Support\Facades\Schema::hasTable('mainapis_ops_receipts')) throw new RuntimeException('receipt_table_exists_refusing_overwrite');
@@ -52,7 +63,7 @@ try {
         $table->engine='InnoDB';$table->bigIncrements('id');$table->unsignedInteger('uniacid');$table->string('app_id',30);$table->string('marker',36);$table->string('payload_hash',64);$table->unsignedBigInteger('goods_id');$table->timestamp('created_at');$table->unique(['uniacid','app_id','marker'],'mainapis_ops_receipt_unique');
     });
     mkdir($target,0755,true);
-    foreach (['Bridge.php','config.php','install.php','entry.php','Compatibility.php','reviewed-sources.json'] as $name) if (!copy(__DIR__.'/'.$name,$target.'/'.$name)) throw new RuntimeException('copy_failed');
+    foreach (['Bridge.php','config.php','install.php','entry.php','Compatibility.php','reviewed-sources.json','MainapisOpsController.php'] as $name) if (!copy(__DIR__.'/'.$name,$target.'/'.$name)) throw new RuntimeException('copy_failed');
     if (!copy(__DIR__.'/entry.php',$public.'/ops-bridge.php')) throw new RuntimeException('entry_copy_failed');
     $written=file_put_contents($target.'/config.php',"<?php\nif (!defined('MAINAPIS_OPS_ENTRY')) {http_response_code(404);exit;}\nreturn ['enabled'=>true,'uniacid'=>1];\n");
     if ($written===false) throw new RuntimeException('activation_failed');
