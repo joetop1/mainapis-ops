@@ -7,7 +7,7 @@ try {
  require_once __DIR__.'/Compatibility.php';
  \MainApis\OpsBridge\Compatibility::check($root);
  $targets=['Bridge.php'=>'ops-bridge/Bridge.php','MainapisOpsController.php'=>'app/frontend/controllers/MainapisOpsController.php'];
- $reviewed=['Bridge.php'=>['250bb96afe800328aa331ac8e9039c329d3653927dd4f5d93315e5c26b8f5470','ea42479dfb1fb1d0db528e02a4a29d3cc4bcbc9c123d25cc2b28f94cbf9fd81e','9bddcd2f02272dbb7df5e46a1cf45d1966a6aa12fa1012e030143e944c6bb8e8'],'MainapisOpsController.php'=>['261ebb9e891ddae7682600f84b03289e1ded34aba1a4a290926727df488a78f4','81e3fa8fc08a5beeee28fadb3d2eee4235a0c528c5d23a98bb0a63ad3ca8d878','42ea7c81ba0cad722d3da5b4371e69d94ae081cbb865a250983c5482c94c06e7']];
+ $reviewed=['Bridge.php'=>['523acb97a01ab585c10e1f4520dd35870f5cc6c1cfd50461a061e6f5752ae05e','250bb96afe800328aa331ac8e9039c329d3653927dd4f5d93315e5c26b8f5470','ea42479dfb1fb1d0db528e02a4a29d3cc4bcbc9c123d25cc2b28f94cbf9fd81e','9bddcd2f02272dbb7df5e46a1cf45d1966a6aa12fa1012e030143e944c6bb8e8'],'MainapisOpsController.php'=>['5cf0cfc505ebec17aa7cb2b035657823a974c48b2b9e433821ef2a4ca14d8ed5','261ebb9e891ddae7682600f84b03289e1ded34aba1a4a290926727df488a78f4','81e3fa8fc08a5beeee28fadb3d2eee4235a0c528c5d23a98bb0a63ad3ca8d878','42ea7c81ba0cad722d3da5b4371e69d94ae081cbb865a250983c5482c94c06e7']];
  foreach ($targets as $name=>$relative) {
   $destination=$root.'/'.$relative;$source=__DIR__.'/'.$name;
   if (!is_file($source) || !is_file($destination) || is_link($destination)) throw new RuntimeException('missing_or_linked_owned_file');
@@ -37,6 +37,9 @@ try {
  if (class_exists('MainApis\\OpsBridge\\Bridge',false)) throw new RuntimeException('bridge_loaded_before_row_probe');
  require_once __DIR__.'/Bridge.php';
  $bridge=new \MainApis\OpsBridge\Bridge();
+ $decode=new ReflectionMethod($bridge,'decodeStoredContent');$decode->setAccessible(true);
+ $html='<p>A &amp; B &lt;literal&gt;</p><p><img src="https://example.com/a.jpg?a=1&amp;b=2" alt=""></p>';
+ if ($decode->invoke($bridge,htmlspecialchars($html))!==$html || $decode->invoke($bridge,'')!=='') throw new RuntimeException('rich_text_decode_probe_failed');
  $normalize=new ReflectionMethod($bridge,'normalizeReceipt');$normalize->setAccessible(true);
  $fixture=['uniacid'=>1,'app_id'=>'1234567890123456','marker'=>'OPS-'.str_repeat('a',32),'goods_id'=>'123','payload_hash'=>str_repeat('b',64)];
  foreach ([$fixture,(object)$fixture,array_change_key_case($fixture,CASE_UPPER),(object)array_change_key_case($fixture,CASE_UPPER)] as $row) {
@@ -48,7 +51,7 @@ try {
  $raw=Illuminate\Support\Facades\DB::connection()->query()->selectRaw('1 AS bridge_probe')->useWritePdo()->first();
  $normalized=$normalize->invoke($bridge,$raw);
  if ((string)($normalized->bridge_probe ?? '')!=='1') throw new RuntimeException('framework_row_probe_failed');
- if ($mode==='--check') {echo json_encode(['ok'=>true,'mode'=>'check','version'=>'0.2.5','request_context_check'=>true,'receipt_row_check'=>true,'framework_row_type'=>gettype($raw),'message'=>'更新检查通过，未修改运行文件'],JSON_UNESCAPED_UNICODE).PHP_EOL;exit;}
+ if ($mode==='--check') {echo json_encode(['ok'=>true,'mode'=>'check','version'=>'0.2.6','request_context_check'=>true,'receipt_row_check'=>true,'rich_text_decode_check'=>true,'framework_row_type'=>gettype($raw),'message'=>'更新检查通过，未修改运行文件'],JSON_UNESCAPED_UNICODE).PHP_EOL;exit;}
  foreach ($targets as $name=>$relative) {
   $destination=$root.'/'.$relative;
   if (hash_equals(hash_file('sha256',$destination),hash_file('sha256',__DIR__.'/'.$name))) continue;
@@ -59,7 +62,7 @@ try {
   chmod($temp,0644);
   if (!rename($temp,$destination)) throw new RuntimeException('owned_file_replace_failed');
  }
- echo json_encode(['ok'=>true,'mode'=>'apply','version'=>'0.2.5','request_context_check'=>true,'receipt_row_check'=>true,'framework_row_type'=>gettype($raw),'message'=>'仅更新MainAPIs独立入口文件；未修改商城原文件、表结构或商品。需重载商城容器后验证。'],JSON_UNESCAPED_UNICODE).PHP_EOL;
+ echo json_encode(['ok'=>true,'mode'=>'apply','version'=>'0.2.6','request_context_check'=>true,'receipt_row_check'=>true,'rich_text_decode_check'=>true,'framework_row_type'=>gettype($raw),'message'=>'仅更新MainAPIs独立入口文件；未修改商城原文件、表结构或商品。需重载商城容器后验证。'],JSON_UNESCAPED_UNICODE).PHP_EOL;
 } catch (Throwable $error) {
  fwrite(STDERR,json_encode(['ok'=>false,'error'=>$error instanceof RuntimeException && in_array($error->getFile(),[__FILE__,__DIR__.'/Compatibility.php'],true)?$error->getMessage():get_class($error)],JSON_UNESCAPED_UNICODE).PHP_EOL);exit(1);
 }

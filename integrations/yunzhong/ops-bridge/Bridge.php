@@ -49,7 +49,7 @@ final class Bridge
     {
         $level = (int)(\Setting::get('shop.category')['cat_level'] ?? 2);
         if (!in_array($level, [2,3], true)) throw new \RuntimeException('暂不支持当前分类层级');
-        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.5', 'categoryLevel'=>$level,
+        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.6', 'categoryLevel'=>$level,
             'categories'=>Category::uniacid()->where('enabled',1)->where('plugin_id',0)->select(['id','name','parent_id','level'])->limit(5001)->get()->toArray(),
             'brands'=>Brand::uniacid()->select(['id','name'])->limit(5001)->get()->toArray(),
             'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail','safe_absence_check']];
@@ -58,6 +58,12 @@ final class Bridge
     private function receiptQuery($marker)
     {
         return DB::table($this->table)->useWritePdo()->where('uniacid',$this->uniacid)->where('app_id',$this->appId)->where('marker',$marker);
+    }
+
+    // The vendor formatter stores exactly one htmlspecialchars layer; preserve entities inside the HTML.
+    private function decodeStoredContent($content)
+    {
+        return htmlspecialchars_decode($content, ENT_QUOTES);
     }
 
     private function normalizeReceipt($row)
@@ -248,6 +254,6 @@ final class Bridge
         $gallery=@unserialize(($goods->getAttributes()['thumb_url'] ?? ''),['allowed_classes'=>false]);
         if (!is_array($gallery)) throw new \RuntimeException('主图列表格式无效');
         $dispatch=\app\backend\modules\goods\models\GoodsDispatch::withoutGlobalScopes()->where('goods_id',$goods->id)->useWritePdo()->first();
-        return ['price'=>(string)$goods->price,'cost_price'=>(string)$goods->cost_price,'stock'=>(int)$goods->stock,'dispatch_type'=>$dispatch?(int)$dispatch->dispatch_type:null,'dispatch_price'=>$dispatch?(string)$dispatch->dispatch_price:null,'id'=>(string)$goods->id,'marker'=>$goods->goods_sn,'status'=>(int)$goods->status,'title'=>$goods->title,'brand_id'=>(int)$goods->brand_id,'category_paths'=>$goods->hasManyGoodsCategory()->withoutGlobalScopes()->useWritePdo()->get()->map(function($row){return array_map('intval',explode(',',$row->category_ids));})->values()->all(),'images'=>array_map('yz_tomedia',$gallery),'content_html'=>(string)$goods->content,'spec_names'=>$names,'skus'=>$skus];
+        return ['price'=>(string)$goods->price,'cost_price'=>(string)$goods->cost_price,'stock'=>(int)$goods->stock,'dispatch_type'=>$dispatch?(int)$dispatch->dispatch_type:null,'dispatch_price'=>$dispatch?(string)$dispatch->dispatch_price:null,'id'=>(string)$goods->id,'marker'=>$goods->goods_sn,'status'=>(int)$goods->status,'title'=>$goods->title,'brand_id'=>(int)$goods->brand_id,'category_paths'=>$goods->hasManyGoodsCategory()->withoutGlobalScopes()->useWritePdo()->get()->map(function($row){return array_map('intval',explode(',',$row->category_ids));})->values()->all(),'images'=>array_map('yz_tomedia',$gallery),'content_html'=>$this->decodeStoredContent((string)$goods->content),'spec_names'=>$names,'skus'=>$skus];
     }
 }
