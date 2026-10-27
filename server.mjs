@@ -1,3 +1,4 @@
+import {createYunzhongClient,requireYunzhongCredentials,testYunzhongConnection,loadYunzhongCategories,YUNZHONG_BASE} from './yunzhong-client.mjs';
 import {descriptionWithAttributes} from './public/product-attributes.js';
 import {systemVersion} from './system-version.mjs';
 import {productPublications} from './product-publications.mjs';
@@ -49,6 +50,7 @@ const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recu
 const db=openStore(join(dataDir,'ops.sqlite'));
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
 const savedConnections=await connectionStore(db,dataDir);
+const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
@@ -214,7 +216,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
     if(path==='/api/team'&&req.method==='POST'){
       if(demo)throw Error('演示模式不创建团队');const b=await body(req);
-      const created=teams.create(actor,b.name,[savedConnections,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
+      const created=teams.create(actor,b.name,[savedConnections,yunzhongConnections,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
     }
     if(path==='/api/team/members'&&req.method==='POST'){
       if(demo)throw Error('演示模式不修改团队');const b=await body(req);const result=teams.setMember(actor,b.sub,b.role,b.active??1);audit(owner,'team.member_updated',b.sub);return json(res,200,result);
@@ -265,6 +267,17 @@ const handleRequest=async(req,res)=>{
         store.set(owner,{...old,appid,appsecret,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,target]));
         audit(owner,'connection.'+target+'_brands_saved',target);return json(res,200,{ok:true,count:brands.length});
       }
+    }
+    if(path==='/api/connections/yunzhong'&&req.method==='GET'){
+      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:YUNZHONG_BASE,version:'2.3.700',publishingReady:false});
+    }
+    if(['/api/connections/yunzhong','/api/connections/yunzhong/test'].includes(path)&&req.method==='POST'){
+      if(demo)throw Error('演示模式不保存凭据或连接商城');
+      const b=await body(req),old=yunzhongConnections.get(owner),credentials=requireYunzhongCredentials(b,old);
+      const client=createYunzhongClient(credentials);await testYunzhongConnection(client);const catalog=await loadYunzhongCategories(client);
+      if(path.endsWith('/test'))return json(res,200,{ok:true,categories:catalog.categories,message:'读取测试成功，请求已签名；发布适配尚未完成。请保存连接。'});
+      yunzhongConnections.set(owner,{...credentials,testedAt:now()});audit(owner,'connection.yunzhong_saved','yunzhong');
+      return json(res,200,{ok:true,categories:catalog.categories,message:'芸众连接已加密保存，分类可读取；商品发布尚未开放。'});
     }
     if(path==='/api/connections/tigshop'&&req.method==='GET'){
       const c=getTigshopConnection(owner);return json(res,200,{configured:!!c?.token,templateId:c?.templateId||0,testedAt:c?.testedAt||'',url:'https://xiaolango.com',currency:'EUR'});

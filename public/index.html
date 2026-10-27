@@ -62,6 +62,13 @@
  <form id="tigshopConnectionForm"><label>API Token<input id="tigshopToken" type="password" autocomplete="new-password" spellcheck="false" placeholder="填写 API Token" maxlength="128"></label><p id="tigshopConnectionStatus" class="hint" role="status">正在读取连接状态…</p><div class="actions"><button type="button" id="testTigshop" class="secondary">测试连接并读取模板</button></div><label>运费模板<select id="tigshopTemplate"><option value="0">请先测试连接</option></select></label><button type="submit" id="saveTigshop" class="primary">保存连接</button><p class="hint">密钥加密保存；留空保留已保存的 Token。</p></form>
  <details class="fx-preview"><summary>人民币 → 欧元换算</summary><button type="button" id="refreshTigshopFX" class="text">读取最新汇率</button><p id="tigshopFXStatus" class="hint" role="status">发布时读取最新有效报价，重试沿用原任务汇率。</p><label>人民币金额<input id="tigshopCnyPreview" type="number" min="0" step="0.01" value="100"></label><p id="tigshopEurPreview"></p></details>
  </div></details></article></div>
+ <article id="yunzhongCard" class="connection-card channel-card" data-state="loading" style="margin-top:18px">
+ <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2>芸众商城</h2><p>asns.cc · 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
+ <p class="hint">接入准备：可测试签名并读取分类，商品发布暂未开放。</p>
+ <details id="yunzhongDetails" class="channel-details"><summary>管理芸众连接</summary><div class="channel-content">
+ <form id="yunzhongForm"><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
+ <div class="actions"><button id="yunzhongTest" type="button" class="secondary">测试连接并读取分类</button><button type="submit" class="primary">保存连接</button></div><p id="yunzhongStatus" class="hint" role="status"></p></form>
+ <details><summary>已读取分类</summary><ul id="yunzhongCategories"></ul></details></div></details></article>
  <details class="connection-system"><summary>账号与服务状态</summary><p id="connectionSystemStatus"></p></details>
  </div>
  <p id="connectionMemberHint" class="hint hidden">商城连接由团队管理员配置。你可以在上方下载采集助手。</p>

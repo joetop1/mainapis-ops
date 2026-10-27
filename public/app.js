@@ -63,7 +63,7 @@ function render(){
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
  $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
-document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadCrmebAuthConnections();loadCrmebPublishConnections();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadYunzhongConnection();loadCrmebAuthConnections();loadCrmebPublishConnections();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=render;
 let editingSpecNames=[];
 function readSkuRows(){
@@ -362,3 +362,13 @@ function detectCollectorVersion(chromiumVersion){
  window.postMessage({type:'mainapis:collector:query',nonce},location.origin);
 }
 $('#refreshCollectorDownload').onclick=loadCollectorDownload;
+
+async function loadYunzhongConnection(){
+ try{const c=await api('/api/connections/yunzhong');$('#yunzhongAppid').value=c.appid;$('#yunzhongSecret').placeholder=c.configured?'已保存，留空保留原密钥':'填写 API 应用 APP_Secret';$('#yunzhongBadge').textContent=c.configured?'凭证已保存 · 待完成适配':'未配置';$('#yunzhongCard').dataset.state=c.configured?'partial':'unconfigured';$('#yunzhongDetails').open=!c.configured;$('#yunzhongStatus').textContent=c.configured?'已保存芸众凭证；可重新测试签名和分类读取，商品发布暂未开放。':'填写 API 应用凭证后测试连接。';}catch(error){$('#yunzhongBadge').textContent='读取失败';$('#yunzhongStatus').textContent=error.message;}
+}
+async function saveYunzhongConnection(testOnly){
+ const form=$('#yunzhongForm');form.querySelectorAll('input,button').forEach(node=>node.disabled=true);$('#yunzhongStatus').textContent='正在测试签名并读取分类…';
+ try{const result=await api('/api/connections/yunzhong'+(testOnly?'/test':''),'POST',{appid:$('#yunzhongAppid').value.trim(),appsecret:$('#yunzhongSecret').value});if(!testOnly){$('#yunzhongSecret').value='';await loadYunzhongConnection();}$('#yunzhongStatus').textContent=result.message;$('#yunzhongCategories').replaceChildren(...result.categories.map(row=>{const li=document.createElement('li');li.textContent=row.label+'（'+row.id+'）';return li;}));}catch(error){$('#yunzhongStatus').textContent=error.message;}finally{form.querySelectorAll('input,button').forEach(node=>node.disabled=false);}
+}
+$('#yunzhongForm').onsubmit=event=>{event.preventDefault();saveYunzhongConnection(false);};
+$('#yunzhongTest').onclick=()=>saveYunzhongConnection(true);
