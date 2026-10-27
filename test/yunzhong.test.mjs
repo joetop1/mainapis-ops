@@ -9,11 +9,11 @@ test('签名兼容PHP字典序、空值、布尔值及默认转义JSON',()=>{
  assert.equal(signYunzhong(input,'secret'),createHmac('sha256','secret').update(expected).digest('hex'));
  assert.throws(()=>yunzhongQueryString({price:1.23}));
 });
-test('固定商城只读请求，鉴权签名不含密钥，不允许覆盖鉴权或新增商品',async()=>{
+test('固定商城只读请求，鉴权签名不含密钥，不允许覆盖鉴权或调用未支持接口',async()=>{
  const calls=[],client=createYunzhongClient({appid:'2026102700151259',appsecret:'secret'},async(url,options)=>{calls.push({url,options});return {ok:true,text:async()=>JSON.stringify({result:1,data:{data:[]}})};});
  await client('goods/list',{page:1,status:0});const {url,options}=calls[0],query=Object.fromEntries(new URL(url).searchParams);
  assert.ok(url.startsWith(YUNZHONG_BASE));assert.equal(query.sign_type,'SHA256');assert.equal(options.method,'GET');assert.equal(options.redirect,'error');assert.equal(query.sign,signYunzhong(query,'secret'));assert.equal(url.includes('secret'),false);
- await assert.rejects(client('goods/create',{}));await assert.rejects(client('goods/list',{app_id:'other'}));assert.equal(calls.length,1);
+ await assert.rejects(client('goods/update',{}));await assert.rejects(client('goods/list',{app_id:'other'}));assert.equal(calls.length,1);
  const bad=createYunzhongClient({appid:'1',appsecret:'secret'},async()=>({ok:true,text:async()=>JSON.stringify({result:0,msg:'secret',data:{token:'sensitive'}})}));await assert.rejects(bad('goods/list'),error=>!error.message.includes('secret'));
  assert.throws(()=>requireYunzhongCredentials({appid:'2',appsecret:''},{appid:'1',appsecret:'old'}));
  assert.equal(requireYunzhongCredentials({appid:'1',appsecret:''},{appid:'1',appsecret:'old'}).appsecret,'old');

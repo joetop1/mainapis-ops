@@ -1,24 +1,25 @@
 import {specificationMatrix} from './public/specifications.js';
-import {normalizeProductAttributes,descriptionWithAttributes} from './public/product-attributes.js';
+import {normalizeProductAttributes} from './public/product-attributes.js';
 const image=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\u0000-\u0020]/.test(value))throw Error();return value;}catch{throw Error('芸众图片必须是无账号密码的 HTTPS 地址');}};
 // Source-verified payload preparation only. This module does not issue writes.
-export function buildYunzhongProduct(lease,{categoryIds,categoryLevel,dispatchPrice,compatibility=false}={}){
+export function buildYunzhongProduct(lease,{categoryIds,categoryLevel,dispatchPrice}={}){
  const product=lease?.product;
  if(!/^OPS-[0-9a-f]{32}$/.test(lease?.marker||''))throw Error('缺少可信任务标记');
  if(product?.catalog_target!=='yunzhong')throw Error('商品资料不属于芸众商城');
  if(!Number.isSafeInteger(product.category_id)||product.category_id<=0)throw Error('请从芸众商城选择分类');
- if(!compatibility&&categoryLevel!==2)throw Error('现有芸众外部接口只传入两级分类；三级分类模式尚未兼容');
- if(![2,3].includes(categoryLevel)||!Array.isArray(categoryIds)||categoryIds.length!==(compatibility?categoryLevel:2)||categoryIds.at(-1)!==product.category_id||categoryIds.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('请选择真实的两级芸众分类路径');
+ if(categoryLevel!==2)throw Error('现有芸众外部接口只传入两级分类；三级分类模式尚未兼容');
+ if(![2,3].includes(categoryLevel)||!Array.isArray(categoryIds)||categoryIds.length!==2||categoryIds.at(-1)!==product.category_id||categoryIds.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('请选择真实的两级芸众分类路径');
  if(typeof product.title!=='string'||!product.title.trim()||product.title.length>100)throw Error('芸众商品标题须为1–100字');
  if(!Array.isArray(product.images)||product.images.length<1||product.images.length>30)throw Error('商品主图须为1–30张');
  if(product.detail_images!==undefined&&(!Array.isArray(product.detail_images)||product.detail_images.length>100))throw Error('详情图最多100张');
- if(!compatibility&&(String(product.description||'').trim()||normalizeProductAttributes(product.attributes).length))throw Error('现有芸众接口仅接受图片详情；尚不能完整保存文字详情和产品参数，已阻止创建以免丢失内容');
- if(compatibility?((product.brand_ids?.length||0)>1||product.brand_ids?.some(id=>!Number.isSafeInteger(id)||id<=0)):product.brand_ids?.length)throw Error('请选择有效的单个芸众品牌');
+ if(String(product.description||'').trim()||normalizeProductAttributes(product.attributes).length)throw Error('现有芸众接口仅接受图片详情；尚不能完整保存文字详情和产品参数，已阻止创建以免丢失内容');
+ if(product.brand_ids?.length)throw Error('芸众官方接口未提供品牌校验，请不要设置品牌');
  if(product.tag_ids?.length||product.virtual_sales)throw Error('芸众标签和虚拟销量尚未映射，请清空CRMEB标签并将虚拟销量设为0');
  if(typeof dispatchPrice!=='string'||!/^\d{1,7}(\.\d{1,2})?$/.test(dispatchPrice))throw Error('请明确配置芸众固定运费，单位元');
  if(!Array.isArray(product.skus)||product.skus.length<1||product.skus.length>100)throw Error('请使用1–100个SKU');
  const images=product.images.map(image),detail=(product.detail_images||[]).map(image),matrix=specificationMatrix(product);
  const names=matrix.structured?matrix.names:['规格'];
+ if(names.length!==1)throw Error('当前芸众规格服务存在跨维度ID累积问题，暂不提交多维SKU；请等待官方接口修复');
  const values=matrix.structured?matrix.rows:product.skus.map(s=>[String(s.spec||'默认').trim()]);
  const codes=new Set(),combinations=new Set();let stock=0;
  product.skus.forEach((sku,index)=>{
@@ -33,22 +34,22 @@ export function buildYunzhongProduct(lease,{categoryIds,categoryLevel,dispatchPr
  const specifications=names.map((name,index)=>({id:'SC'+index,title:name,spec_item:[...new Set(values.map(row=>row[index]))].map((value,item)=>({id:'SV'+index+'X'+item,title:value,show:1}))}));
  const options=product.skus.map((sku,index)=>({id:'SP'+index,specs:specifications.map((spec,dimension)=>spec.spec_item.find(item=>item.title===values[index][dimension]).id).join('_'),product_price:sku.price.toFixed(2),cost_price:sku.cost.toFixed(2),market_price:sku.price.toFixed(2),stock:sku.stock,weight:0,volume:0,goods_sn:sku.sku,product_sn:'',thumb:sku.image?image(sku.image):images[0],extra_info:{option_title:'',alias:'',thumb_url:[],content:'',param:[],video_image_path:'',goods_video_path:''}}));
  const minimum=key=>Math.min(...product.skus.map(sku=>sku[key])).toFixed(2);
- const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
- const content=descriptionWithAttributes(product.description,product.attributes);
- return {...(compatibility?{marker:lease.marker,category_ids:categoryIds,content_html:(content?'<p>'+escape(content).replace(/\n/g,'<br>')+'</p>':'')+detail.map(url=>'<p><img src="'+escape(url)+'" alt=""></p>').join('')}:{}),base:{title:product.title,alias:'',brand_id:compatibility?(product.brand_ids?.[0]||0):0,thumb:images[0],thumb_url:images,good_content:detail,cost_price:minimum('cost'),market_price:minimum('price'),price:minimum('price'),sku:'件',stock,goods_sn:lease.marker,product_sn:'',status:0,category_pid:categoryIds[0],category_cid:categoryIds[1],dispatch_price:dispatchPrice},options:{specs:specifications,option:options}};
+ return {base:{title:product.title,alias:'',brand_id:0,thumb:images[0],thumb_url:images,good_content:detail,cost_price:minimum('cost'),market_price:minimum('price'),price:minimum('price'),sku:'件',stock,goods_sn:lease.marker,product_sn:'',status:0,category_pid:categoryIds[0],category_cid:categoryIds[1],dispatch_price:dispatchPrice},options:{specs:specifications,option:options}};
 }
 
-export function verifyYunzhongProduct(actual,lease,config){
- const pending=message=>({status:'awaiting_review',message});
- let expected;try{expected=buildYunzhongProduct(lease,{...config,compatibility:true});}catch{return pending('本地芸众字段映射未通过，请核对任务快照');}
- if(String(actual?.id)!==String(lease.candidate_id)||actual?.marker!==lease.marker||actual?.status!==0)return pending('商品 ID、任务货号或下架状态不匹配');
- if(actual.title!==expected.base.title||Number(actual.brand_id)!==expected.base.brand_id||JSON.stringify(actual.category_paths)!==JSON.stringify([expected.category_ids]))return pending('标题、品牌或分类不一致');
- if(JSON.stringify(actual.images)!==JSON.stringify(expected.base.thumb_url)||actual.content_html!==expected.content_html)return pending('主图或详情内容不一致，请在商城核对');
- const matrix=specificationMatrix(lease.product);
- if(JSON.stringify(actual.spec_names)!==JSON.stringify(matrix.names)||!Array.isArray(actual.skus)||actual.skus.length!==expected.options.option.length||new Set(actual.skus.map(row=>row.sku)).size!==actual.skus.length)return pending('规格维度或 SKU 数量不一致');
- for(const [index,want] of expected.options.option.entries()){
-  const row=actual.skus.find(s=>s.sku===want.goods_sn),values=matrix.structured?matrix.rows[index]:[String(lease.product.skus[index].spec||'默认').trim()];
-  if(!row||Number(row.price)!==Number(want.product_price)||Number(row.cost)!==Number(want.cost_price)||row.stock!==want.stock||row.image!==want.thumb||JSON.stringify(row.spec_values)!==JSON.stringify(values))return pending('SKU 编码、价格成本、库存、配图或规格值不一致');
+export function verifyYunzhongOfficialProduct(actual,optionData,lease,config){
+ const pending=message=>({status:'awaiting_review',remote_id:String(lease.candidate_id||''),message});
+ let expected;try{expected=buildYunzhongProduct(lease,config);}catch{return pending('任务字段不受当前芸众官方API支持，请核对原任务');}
+ if(String(actual?.id)!==String(lease.candidate_id)||actual.goods_sn!==lease.marker||Number(actual.status)!==0||actual.title!==expected.base.title)return pending('商品ID、任务货号、下架状态或标题不匹配');
+ if(Number(actual.price)!==Number(expected.base.price)||Number(actual.cost_price)!==Number(expected.base.cost_price)||Number(actual.stock)!==expected.base.stock||actual.thumb!==expected.base.thumb)return pending('基础价格成本、总库存或首图不一致');
+ const definitions=optionData?.specs,rows=optionData?.option;
+ if(Number(optionData?.has_option)!==1||!Array.isArray(definitions)||definitions.length!==1||definitions[0].title!==expected.options.specs[0].title||!Array.isArray(rows)||rows.length!==expected.options.option.length||new Set(rows.map(row=>row.goods_sn)).size!==rows.length)return pending('SKU数量、编码或规格维度不一致');
+ const items=definitions[0].spec_item;if(!Array.isArray(items))return pending('规格值未返回');
+ const names=new Map(items.map(item=>[String(item.id),item.title]));
+ for(const want of expected.options.option){
+  const row=rows.find(item=>item.goods_sn===want.goods_sn),specs=String(row?.specs||'').split('_');
+  const value=expected.options.specs[0].spec_item.find(item=>item.id===want.specs)?.title;
+  if(!row||Number(row.product_price)!==Number(want.product_price)||Number(row.cost_price)!==Number(want.cost_price)||Number(row.stock)!==want.stock||row.thumb!==want.thumb||specs.length!==1||names.get(specs[0])!==value)return pending('SKU价格成本、库存、图片或规格值不一致');
  }
- return {status:'succeeded',remote_id:String(actual.id),message:'芸众下架入库已核对：任务货号、标题、分类品牌、SKU、价格库存及主图详情一致；图片内容仍需人工检查'};
+ return pending('已创建下架商品，基础字段与SKU已核对；官方API未返回分类、完整主图组和详情内容，请到商城人工核对，当前尚未确认为发布成功');
 }

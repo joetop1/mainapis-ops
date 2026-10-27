@@ -1,38 +1,31 @@
-# 芸众商城 2.3.700：接入阶段与源码依据
+# 芸众 2.3.700 官方接口依据与边界
 
-目标商城 asns.cc；原始接口 https://asns.cc/outside/1/ 。以下保留各阶段源码核对依据；当前独立兼容扩展使用 /ops-bridge.php，详见 integrations/yunzhong/README.md。OPS 0.3.0 已实现模拟完整发布核对，真实PHP运行时待预检，尚未部署。
+目标站点 https://asns.cc，接口前缀 https://asns.cc/outside/1/。依据用户提供的只读源码审阅；商城源码和配置均不修改。先前兼容入口方案已移除，不再生成或安装商城扩展包。
 
-## 已完成
+## 鉴权
 
-- 管理员在 OPS 连接与配置中输入 app_id / APP_Secret。只发送到固定商城，HTTPS 且拒绝重定向。
-- 按提供的 NotifyService.php 排序参数、排除 sign，HMAC-SHA256 小写十六进制；sign_type=SHA256，ver=1。不假设时间戳等源码中不存在的参数。
-- 请求 /goods/list?page=1&status=0 测试读取；/goods/category 按 parent_id 和 page 读取各级分类。
-- 数据库独立芸众连接表，复用持久化 connections.key 的 AES-GCM。测试不保存，成功后才保存，留空保留同一 APPID 的旧密钥；团队创建时迁移。密钥不返回浏览器。
-- 没有商品创建入口和自动创建流程。连接已保存不等于发布适配完成。
+数字 app_id、sign_type=SHA256、ver=1。按照 NotifyService 的 PHP 顶层 ksort 排序，排除 sign，数组使用默认 json_encode 的 Unicode 和斜线转义，原始 k=v 连接后以 APP_Secret 做 HMAC-SHA256。金额传字符串。客户端始终签名且禁止重定向；原商城 sign_required 判断存在反向条件，测试成功不能证明服务端强制校验签名。
 
-## 未完成及依据
+## 接口
 
-提供的 app/outside/modules/goods/controllers/GoodsController.php：
+- GET goods/category：逐父类分页读取，拒绝异常父子关系或不完整分页。
+- GET goods/list：包含下架商品；按标题搜索并用 OPS 任务货号匹配，分页有限制，超限不视为查无商品。
+- POST goods/create：两级分类 category_pid/category_cid；主图 thumb/thumb_url；good_content 仅图片数组；固定运费 dispatch_price；status=0 下架。
+- POST goods/createOption：SC/SV/SP 为插入标记；只保存真实 SKU，不产生笛卡尔组合。
+- GET goods/getOption：读回规格和 SKU，结合列表核对标题、货号、状态、首图、价格成本、库存及 SKU 数据。
 
-- create 接收基本商品字段、分类 parentid/childid，返回 data.goods_id；thumb_url 使用 PHP serialize 保存。
-- good_content 仅在值为数组时逐项作为图片地址拼接 img，文字 description/content/HTML 没有被读取。因此不能把 OPS 的文字和产品参数静默丢弃。
-- createOption 单独写规格，委托 backend Goods SpecOptionService::store。需要确认 specs/option 的真实结构和临时 ID 映射，不能猜测或生成不存在的 SKU。
-- getOption 可读规格，但 list 的模型字段没有详情内容，需要另寻可核验的读取方式。
-- OutsideController 的签名启用条件依赖 sign_required，当前仅始终发送签名，不宣称服务端一定启用了验证。
+不调用 goods/update，不更改已有商城商品。未使用上传、订单、会员等接口。
 
-下一步需要 app/backend/modules/goods 的 PHP 源码，以及 app/frontend/controllers/UploadController.php，确认 SKU 持久化、校验与上传行为。不得因源码不足而反复请求真实新增接口试错。
+## 明确拦截的商品
 
-## 第二份商品源码核对结果
+三级分类、文字详情或产品参数、多维规格、未映射品牌/标签/虚拟销量均在写入前拒绝。三级分类模式可保存为仅连接读取状态。不会为了通过接口而清空、合并或转图片处理原始资料。
 
-- SpecOptionService 接受 SC 开头规格 ID、SV 开头规格值 ID、SP 开头 SKU ID，服务内部换成数据库真实 ID。option.specs 用下划线连接规格值临时 ID。
-- option 字段使用 product_price、cost_price、market_price、stock、goods_sn、thumb，extra_info 的 SKU 详情不等同于商品详情。
-- GoodsService::saveGoodsCategory 在 cat_level=3 时读取 thirdid；现有 outside create/update 没有传入 thirdid，不得直接用于三级分类。
-- UploadController 使用 multipart 字段 file，返回 data.img（相对地址）和 data.img_url（绝对地址）。文件被排除签名，但 upload_type 等普通参数参与签名。
-- 已添加 yunzhong-product.mjs 的两级、图片详情字段映射及测试，未接到真实写入流程。文字详情、参数、品牌标签或三级分类未兼容时显式拒绝，防止静默丢数据。
-- 完整接入应使用可独立停用的扩展，补充商品文本/参数、三级分类及完整详情读取；不能修改未知核心保存流程或复用后台 Cookie。
+依据：GoodsController::create 仅传两级分类，good_content 只在数组时生成图片；SpecOptionService::saveSpec 的 itemids 跨维度累积，未提供可安全修正它的官方请求方式。商城升级后需要重新审阅契约，不能自行假定已修复。
 
-## 独立兼容扩展阶段
+## 结果语义与验证
 
-不猜测未知的芸众市场插件元数据，也不修改 ai-query 注册文件。采用独立入口 ops-bridge.php 与 ops-bridge 目录，初始化原 Laravel 运行环境并设置商城1上下文，始终验证原 API 应用签名。安装器只新增自身文件及独立回执表，--check 在目标PHP环境执行语法检查与只读模型查询，不安装、不建表。
+基础商品和 SKU 非原子写入。OPS 领取锁后不自动重建，先保存已获得的商品 ID；结果不明标为 unknown，后续核对仅发 GET 请求。已有同任务货号时不再次新增或覆盖 SKU。
 
-创建时同时保存商品、详情、多维规格、二或三级分类和唯一任务回执；凭据/商城/任务编码均绑定。分类品牌从扩展能力接口读取。读回商品校验价格、库存、每SKU图片、维度、分类品牌和完整详情后，OPS 才确认成功。原生品牌与扩展已支持，CRMEB标签和虚拟销量未映射时仍显式阻止。
+列表和 getOption 无法读回完整分类、主图组、详情内容，因此无论可见字段是否匹配，都停留 awaiting_review，不自动判 succeeded。
+
+版本0.3.1为本地准备版本。自动测试模拟 PHP 接口响应、鉴权、团队权限、加密保存、分步写入失败及重复发布保护；尚无真实凭证联调或真实商品发布记录。按用户要求暂不更新线上 OPS。

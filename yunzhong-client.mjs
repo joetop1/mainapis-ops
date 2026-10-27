@@ -25,13 +25,13 @@ export function signYunzhong(parameters,secret){return createHmac('sha256',secre
 export function createYunzhongClient(credentials,fetcher=fetch){
  const {appid,appsecret}=requireYunzhongCredentials(credentials);
  return async(route,parameters={})=>{
-  // This integration stage is deliberately read-only; no caller-controlled upstream or POST.
-  if(!['goods/category','goods/list'].includes(route))throw Error('当前只开放芸众分类和商品列表读取');
+  const writing=['goods/create','goods/createOption'].includes(route);
+  if(!['goods/category','goods/list','goods/getOption','goods/create','goods/createOption'].includes(route))throw Error('芸众接口操作无效');
   if(['app_id','sign_type','ver','sign'].some(key=>key in parameters))throw Error('不能覆盖接口鉴权参数');
-  const data={...parameters,app_id:appid,sign_type:'SHA256',ver:1};
-  const query=Object.fromEntries(Object.entries(data).map(([key,value])=>{if(!['string','number'].includes(typeof value))throw Error('读取接口只支持文本和整数参数');return [key,String(value)];}));
-  query.sign=signYunzhong(data,appsecret);
-  let res;try{res=await fetcher(YUNZHONG_BASE+route+'?'+new URLSearchParams(query),{method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),headers:{Accept:'application/json'}});}catch{throw Error('芸众接口连接失败，请检查网络与商城访问限制');}
+  const data={...parameters,app_id:appid,sign_type:'SHA256',ver:1};data.sign=signYunzhong(data,appsecret);
+  let url=YUNZHONG_BASE+route;
+  if(!writing)url+='?'+new URLSearchParams(Object.entries(data).map(([key,value])=>{if(!['string','number'].includes(typeof value))throw Error('读取接口只支持文本和整数参数');return [key,String(value)];}));
+  let res;try{res=await fetcher(url,{method:writing?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(writing?45000:15000),headers:{Accept:'application/json',...(writing?{'Content-Type':'application/json'}:{})},...(writing?{body:JSON.stringify(data)}:{})});}catch{throw Error('芸众接口连接未确认；如已提交创建，请先核对商城，不要重复创建');}
   if(!res.ok)throw Error('芸众接口返回 HTTP '+res.status);
   let body;try{const text=await res.text();if(text.length>2e6)throw Error();body=JSON.parse(text);}catch{throw Error('芸众接口未返回有效 JSON');}
   if(body?.result!==1){
@@ -67,5 +67,18 @@ export async function loadYunzhongCategories(client){
    else if(data.data.length<100)break;
   }
  }
- return {target:'yunzhong',categories,brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:'芸众分类已读取；商品发布、规格和文字详情兼容性正在适配，当前不可发布。'};
+ return {target:'yunzhong',categories,brands:[],categoryError:'',brandError:'',fetched_at:new Date().toISOString(),notice:'使用芸众现有官方接口；品牌列表、完整详情和分类读回未提供。仅支持两级分类、单维SKU及图片详情，创建后需在商城人工核对。'};
+}
+
+export async function findYunzhongGoods(client,{marker,title}){
+ for(let page=1;page<=100;page++){
+  const response=await client('goods/list',{page,status:0,goods_title:title});const data=response.data;
+  if(!Array.isArray(data?.data))throw Error('芸众商品列表格式无效');
+  const matches=data.data.filter(row=>row.goods_sn===marker);
+  if(matches.length>1)throw Error('存在重复任务货号，请人工核对');
+  if(matches.length===1)return matches[0];
+  const perPage=Number(data.per_page||15),total=Number(data.total);
+  if(data.data.length===0||data.data.length<perPage||(Number.isFinite(total)&&page*perPage>=total))return null;
+ }
+ throw Error('商品搜索超过分页限制，未确认入库结果');
 }
