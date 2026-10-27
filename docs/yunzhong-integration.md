@@ -21,3 +21,12 @@
 - OutsideController 的签名启用条件依赖 sign_required，当前仅始终发送签名，不宣称服务端一定启用了验证。
 
 下一步需要 app/backend/modules/goods 的 PHP 源码，以及 app/frontend/controllers/UploadController.php，确认 SKU 持久化、校验与上传行为。不得因源码不足而反复请求真实新增接口试错。
+
+## 第二份商品源码核对结果
+
+- SpecOptionService 接受 SC 开头规格 ID、SV 开头规格值 ID、SP 开头 SKU ID，服务内部换成数据库真实 ID。option.specs 用下划线连接规格值临时 ID。
+- option 字段使用 product_price、cost_price、market_price、stock、goods_sn、thumb，extra_info 的 SKU 详情不等同于商品详情。
+- GoodsService::saveGoodsCategory 在 cat_level=3 时读取 thirdid；现有 outside create/update 没有传入 thirdid，不得直接用于三级分类。
+- UploadController 使用 multipart 字段 file，返回 data.img（相对地址）和 data.img_url（绝对地址）。文件被排除签名，但 upload_type 等普通参数参与签名。
+- 已添加 yunzhong-product.mjs 的两级、图片详情字段映射及测试，未接到真实写入流程。文字详情、参数、品牌标签或三级分类未兼容时显式拒绝，防止静默丢数据。
+- 完整接入应使用可独立停用的扩展，补充商品文本/参数、三级分类及完整详情读取；不能修改未知核心保存流程或复用后台 Cookie。
