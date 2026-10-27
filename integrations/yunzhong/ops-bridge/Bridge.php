@@ -35,16 +35,21 @@ final class Bridge
         if (!is_string($input['sign'] ?? null) || !hash_equals($expected, $input['sign'])) throw new \RuntimeException('鉴权失败');
         if (!isset($input['timestamp']) || !preg_match('/^[0-9]{10}$/D',(string)$input['timestamp']) || abs(time()-(int)$input['timestamp'])>300 || !preg_match('/^[0-9a-f]{32}$/D',(string)($input['nonce'] ?? ''))) throw new \RuntimeException('请求已过期');
         $this->appId = (string)$setting->app_id;
+        $this->setTenantContext();
+        if (!Schema::hasTable($this->table)) throw new \RuntimeException('兼容扩展尚未安装数据表');
+    }
+
+    private function setTenantContext()
+    {
         \Setting::$uniqueAccountId = \YunShop::app()->uniacid = $this->uniacid;
         AccountWechats::setConfig(AccountWechats::getAccountByUniacid($this->uniacid));
-        if (!Schema::hasTable($this->table)) throw new \RuntimeException('兼容扩展尚未安装数据表');
     }
 
     public function capabilities()
     {
         $level = (int)(\Setting::get('shop.category')['cat_level'] ?? 2);
         if (!in_array($level, [2,3], true)) throw new \RuntimeException('暂不支持当前分类层级');
-        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.3', 'categoryLevel'=>$level,
+        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.4', 'categoryLevel'=>$level,
             'categories'=>Category::uniacid()->where('enabled',1)->where('plugin_id',0)->select(['id','name','parent_id','level'])->limit(5001)->get()->toArray(),
             'brands'=>Brand::uniacid()->select(['id','name'])->limit(5001)->get()->toArray(),
             'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail','safe_absence_check']];
@@ -52,7 +57,7 @@ final class Bridge
 
     private function receiptQuery($marker)
     {
-        return DB::table($this->table)->where('uniacid',$this->uniacid)->where('app_id',$this->appId)->where('marker',$marker);
+        return DB::table($this->table)->useWritePdo()->where('uniacid',$this->uniacid)->where('app_id',$this->appId)->where('marker',$marker);
     }
 
     public function lookup($marker)
@@ -178,31 +183,45 @@ final class Bridge
             $fields=array_intersect_key($base,array_flip(['title','alias','brand_id','thumb','cost_price','market_price','price','sku','stock','goods_sn','product_sn']));
             $fields=array_merge($fields,['thumb_url'=>$base['thumb_url'],'content'=>$plan['content_html'],'type'=>1,'status'=>0,'virtual_sales'=>0,'is_deleted'=>0,'comment_num'=>0,'is_plugin'=>0,'plugin_id'=>0,'reduce_stock_method'=>0,'weight'=>0,'video_image'=>'','goods_video'=>'','category'=>[array_map(function($id){return ['id'=>$id];},$plan['category_ids'])],'category_to_option'=>[]]);
             $widgets=['dispatch'=>['dispatch_type'=>1,'dispatch_price'=>$base['dispatch_price'],'dispatch_type_ids'=>[1],'is_cod'=>0],'commission'=>['is_commission'=>1],'area_dividend'=>['is_dividend'=>1],'team_dividend'=>['is_dividend'=>1],'merchant'=>['is_open_bonus_center'=>1,'is_open_bonus_staff'=>1],'param'=>[],'option'=>array_merge($plan['options'],['has_option'=>1])];
-            $request=\Illuminate\Http\Request::create('/','POST',['goods'=>$fields,'widgets'=>$widgets]);
-            // Run the existing creation service and observers; emit the final create event after specification consistency repair.
-            $service=new class($request,1) extends \app\backend\modules\goods\services\CreateGoodsService {
-                public function afterSaving() {}
-                public function finishEvent() {parent::afterSaving();}
-            };
-            $result=$service->create();
-            if (($result['status'] ?? -1)!==1) throw new \RuntimeException('商城创建服务校验失败');
-            $goods=$service->goods_model;
-            // Vendor 2.3.700 accumulates content IDs across dimensions. Only normalize this newly-created product's dimension lists.
-            foreach (GoodsSpec::where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->get() as $spec) {
-                $ids=GoodsSpecItem::where('uniacid',$this->uniacid)->where('specid',$spec->id)->orderBy('display_order')->pluck('id')->all();
-                $spec->content=serialize($ids);if (!$spec->save()) throw new \RuntimeException('规格值列表保存失败');
+            $request=request();
+            $originalForm=clone $request->request;
+            $originalJson=$request->isJson()?clone $request->json():null;
+            try {
+                $request->replace(['goods'=>$fields,'widgets'=>$widgets]);
+                // Run the existing creation service and observers; emit the final create event after specification consistency repair.
+                $service=new class($request,1) extends \app\backend\modules\goods\services\CreateGoodsService {
+                    public function afterSaving() {}
+                    public function finishEvent() {parent::afterSaving();}
+                };
+                $result=$service->create();
+                if (($result['status'] ?? -1)!==1) throw new \RuntimeException('商城创建服务校验失败');
+                $goods=$service->goods_model;
+                // Vendor 2.3.700 accumulates content IDs across dimensions. Only normalize this newly-created product's dimension lists.
+                foreach (GoodsSpec::withoutGlobalScopes()->where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->useWritePdo()->get() as $spec) {
+                    $ids=GoodsSpecItem::withoutGlobalScopes()->where('uniacid',$this->uniacid)->where('specid',$spec->id)->useWritePdo()->orderBy('display_order')->pluck('id')->all();
+                    $spec->content=serialize($ids);if (!$spec->save()) throw new \RuntimeException('规格值列表保存失败');
+                }
+                $service->finishEvent();
+                $this->receiptQuery($plan['marker'])->update(['goods_id'=>$goods->id]);
+                return $this->readProduct($this->receiptQuery($plan['marker'])->first());
+            } finally {
+                if ($originalJson!==null) $request->setJson($originalJson);
+                $request->request=$originalForm;
             }
-            $service->finishEvent();
-            $this->receiptQuery($plan['marker'])->update(['goods_id'=>$goods->id]);
-            return $this->readProduct($this->receiptQuery($plan['marker'])->first());
         });
     }
 
     private function readProduct($receipt)
     {
-        $goods=Goods::uniacid()->where('id',$receipt->goods_id)->first();
-        if (!$goods || $goods->goods_sn!==$receipt->marker) throw new \RuntimeException('任务对应商品不存在或货号不匹配');
-        $specs=GoodsSpec::where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->orderBy('display_order')->with('hasManySpecsItem')->get();
+        if (!$receipt || (int)$receipt->uniacid!==$this->uniacid || (string)$receipt->app_id!==$this->appId || !preg_match('/^OPS-[0-9a-f]{32}$/D',(string)$receipt->marker) || (int)$receipt->goods_id<1) throw new \RuntimeException('任务回执无效');
+        $this->setTenantContext();
+        // Receipt ownership plus an explicit tenant filter replaces ambient tenant scopes; marker validation remains mandatory.
+        $goods=Goods::withoutGlobalScopes()->where('uniacid',$this->uniacid)->where('id',$receipt->goods_id)->useWritePdo()->first();
+        if (!$goods) throw new \RuntimeException('任务所属商城中未读到商品');
+        $attributes=$goods->getAttributes();
+        if (($attributes['goods_sn'] ?? null)!==$receipt->marker || $goods->goods_sn!==$receipt->marker) throw new \RuntimeException('任务货号与已保存商品不一致');
+        if ((int)($attributes['is_deleted'] ?? 0)!==0) throw new \RuntimeException('任务商品已删除');
+        $specs=GoodsSpec::withoutGlobalScopes()->where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->useWritePdo()->orderBy('display_order')->with(['hasManySpecsItem'=>function($query){$query->withoutGlobalScopes()->where('uniacid',$this->uniacid)->useWritePdo()->orderBy('display_order');}])->get();
         $valueMap=[];$names=[];
         foreach ($specs as $spec) {
             $names[]=$spec->title;$ids=[];
@@ -213,13 +232,13 @@ final class Bridge
             if ($ids!==$stored) throw new \RuntimeException('规格值列表不一致');
         }
         $skus=[];
-        foreach (GoodsOption::where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->orderBy('display_order')->get() as $option) {
+        foreach (GoodsOption::withoutGlobalScopes()->where('uniacid',$this->uniacid)->where('goods_id',$goods->id)->useWritePdo()->orderBy('display_order')->get() as $option) {
             $values=[];foreach(explode('_',$option->specs) as $id) { if (!isset($valueMap[$id])) throw new \RuntimeException('SKU规格值缺失');$values[]=$valueMap[$id]; }
             $skus[]=['sku'=>$option->goods_sn,'price'=>(string)$option->product_price,'cost'=>(string)$option->cost_price,'stock'=>(int)$option->stock,'image'=>yz_tomedia($option->thumb),'spec_values'=>$values];
         }
         $gallery=@unserialize(($goods->getAttributes()['thumb_url'] ?? ''),['allowed_classes'=>false]);
         if (!is_array($gallery)) throw new \RuntimeException('主图列表格式无效');
-        $dispatch=\app\backend\modules\goods\models\GoodsDispatch::where('goods_id',$goods->id)->first();
-        return ['price'=>(string)$goods->price,'cost_price'=>(string)$goods->cost_price,'stock'=>(int)$goods->stock,'dispatch_type'=>$dispatch?(int)$dispatch->dispatch_type:null,'dispatch_price'=>$dispatch?(string)$dispatch->dispatch_price:null,'id'=>(string)$goods->id,'marker'=>$goods->goods_sn,'status'=>(int)$goods->status,'title'=>$goods->title,'brand_id'=>(int)$goods->brand_id,'category_paths'=>$goods->hasManyGoodsCategory()->get()->map(function($row){return array_map('intval',explode(',',$row->category_ids));})->values()->all(),'images'=>array_map('yz_tomedia',$gallery),'content_html'=>(string)$goods->content,'spec_names'=>$names,'skus'=>$skus];
+        $dispatch=\app\backend\modules\goods\models\GoodsDispatch::withoutGlobalScopes()->where('goods_id',$goods->id)->useWritePdo()->first();
+        return ['price'=>(string)$goods->price,'cost_price'=>(string)$goods->cost_price,'stock'=>(int)$goods->stock,'dispatch_type'=>$dispatch?(int)$dispatch->dispatch_type:null,'dispatch_price'=>$dispatch?(string)$dispatch->dispatch_price:null,'id'=>(string)$goods->id,'marker'=>$goods->goods_sn,'status'=>(int)$goods->status,'title'=>$goods->title,'brand_id'=>(int)$goods->brand_id,'category_paths'=>$goods->hasManyGoodsCategory()->withoutGlobalScopes()->useWritePdo()->get()->map(function($row){return array_map('intval',explode(',',$row->category_ids));})->values()->all(),'images'=>array_map('yz_tomedia',$gallery),'content_html'=>(string)$goods->content,'spec_names'=>$names,'skus'=>$skus];
     }
 }

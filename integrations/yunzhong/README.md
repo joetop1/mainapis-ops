@@ -109,3 +109,5 @@ curl -sS -i --max-time 15 'https://asns.cc/addons/yun_shop/api.php?i=1&route=mai
 ## 已安装站点的最新修复
 
 独立入口0.2.3／OPS0.4.3修复实际写连接的事务元数据查询，并增加签名只读check_absent操作及安全原任务恢复流程。已安装站点按 [upgrade-0.2.3.md](upgrade-0.2.3.md) 操作，不重复运行初始安装器。
+
+入口0.2.4另有保存事件请求上下文与显式租户读回修正，已安装0.2.3站点见 [upgrade-0.2.4.md](upgrade-0.2.4.md)。该更新不要求升级OPS0.4.3或采集插件。

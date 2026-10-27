@@ -1,7 +1,7 @@
 <?php
 namespace app\frontend\controllers;
 
-// MainAPIs-owned Swoole adapter 0.2.3. Never bootstrap Laravel again inside a worker.
+// MainAPIs-owned Swoole adapter 0.2.4. Never bootstrap Laravel again inside a worker.
 class MainapisOpsController extends \app\common\components\BaseController
 {
     // This isolated endpoint authenticates every operation itself with the scoped API application's HMAC.
@@ -48,6 +48,6 @@ class MainapisOpsController extends \app\common\components\BaseController
                 $body['data']=['error_code'=>$codes[$error->getMessage()] ?? 'BRIDGE_EXECUTION_ERROR','error_file'=>basename($error->getFile()),'error_line'=>$error->getLine()];
             }
         }
-        return response()->json($body,$status,['Cache-Control'=>'no-store','X-Content-Type-Options'=>'nosniff','X-Mainapis-Bridge'=>'0.2.3']);
+        return response()->json($body,$status,['Cache-Control'=>'no-store','X-Content-Type-Options'=>'nosniff','X-Mainapis-Bridge'=>'0.2.4']);
     }
 }

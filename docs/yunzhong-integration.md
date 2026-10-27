@@ -65,3 +65,11 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 新增签名GET check_absent，以物理表查询包含删除商品及同商城全部appid回执。恢复接口只支持本工作空间的独立入口直连、claimed且unknown、无候选ID/核对nonce、收到HTTP400的任务；入口必须支持safe_absence_check，并严格返回原marker、absent=true和两个零计数。响应期间连接和任务快照/更新时间变化会中止；本地事务把原任务改为accepted、claimed=0，不创建商品或新任务。正常重发仍用冻结快照与原任务标记。编辑角色不能恢复。
 
 本地自动测试覆盖空记录恢复、商品/回执存在、错误或缺失证明、跨团队、旧扩展、状态与连接变化及诊断信息过滤。真实商品创建仍待部署补丁后验证。
+
+## 保存事件请求上下文与显式租户读回（入口0.2.4）
+
+现场CLI确认fillable_goods_sn、raw_marker_matches、getter_marker_matches均true，separate_read_connection=false，原任务仍无商品/回执。Common Goods有全局uniacid作用域，GoodsObserverBase保存事件读取全局request()业务参数。没有发现观察器直接改写goods_sn，不能将这一猜测当成已证实根因。
+
+修正服务与事件的请求对象不一致：仅在已鉴权创建的事务内替换当前Request业务参数，finally恢复原JSON/form；不替换Swoole容器全局request绑定。读回通过已验证归属的回执和显式uniacid+主键、写PDO定位，货号保持原始值与getter双重一致，缺失与不匹配分别报错。真实请求替换/异常恢复内存自检已加入更新器，执行前不创建商品。
+
+部署步骤见integrations/yunzhong/upgrade-0.2.4.md；只更新自有PHP入口文件，OPS0.4.3继续使用。
