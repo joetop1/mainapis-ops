@@ -51,3 +51,9 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 安装预检已在真实PHP8.3.31容器通过，读取分类11、品牌579；安装回执表和自有文件成功。旧独立PHP URL在Swoole部署返回404，尚未创建任何真实商品。
 
 现场Nginx所有php路径均反代5200的LaravelS；ShopRouteFactory截图确认前台API路径转ShopFrontendRoute，命名空间app/frontend。新控制器加入app/frontend/controllers，不改任何原文件；通过CLI真实shopMatch检查后仍必须验证HTTP请求命中。OPS地址改为 /addons/yun_shop/api.php?i=1&route=mainapis-ops.index。详见安装说明末段，不继续猜测独立脚本可执行。
+
+## 首次创建400与事务元数据检查修正
+
+任务OPS-0abead4e58e94affab052b6a4bb78ce3的现场只读检查未发现回执或同货号商品；五个商品模型的旧元数据查询均返回engine:null。尚不能仅据此认定完整400链路的唯一原因，也不能认定商品表不支持事务。
+
+旧代码依赖默认连接配置中的database名称。修正为在各模型实际写PDO会话中用DATABASE()查询，并使用明确的小写别名，检查元数据是否唯一、表类型和InnoDB；商品模型与回执的写PDO必须相同，否则拒绝创建。只读检查增加metadata_found、table_type和same_write_connection供现场验证。真实环境结果未返回前，不恢复任务或发送新增请求。

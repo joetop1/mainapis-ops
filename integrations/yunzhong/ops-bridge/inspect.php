@@ -15,9 +15,10 @@ try {
     echo json_encode(['marker'=>$marker,'receipt_goods'=>$receipts->toArray(),'matching_goods'=>$goods->toArray()],JSON_UNESCAPED_UNICODE).PHP_EOL;
     $engines=[];
     foreach ([new \app\backend\modules\goods\models\Goods(),new \app\backend\modules\goods\models\GoodsOption(),new \app\backend\modules\goods\models\GoodsSpec(),new \app\backend\modules\goods\models\GoodsSpecItem(),new \app\backend\modules\goods\models\GoodsDispatch()] as $model) {
-        $table=$model->getTable();$prefix=$connection->getTablePrefix();$name=$prefix.$table;
-        $rows=Illuminate\Support\Facades\DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',[$connection->getDatabaseName(),$name]);
-        $engines[]=['model'=>basename(str_replace('\\','/',get_class($model))),'table'=>$table,'prefix'=>$prefix,'engine'=>count($rows)===1?$rows[0]->ENGINE:null];
+        $modelConnection=$model->getConnection();$table=$model->getTable();$prefix=$modelConnection->getTablePrefix();$name=$prefix.$table;
+        $rows=$modelConnection->select('SELECT ENGINE AS bridge_engine, TABLE_TYPE AS bridge_type FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',[$name],false);
+        $metadata=count($rows)===1?array_change_key_case((array)$rows[0],CASE_LOWER):[];
+        $engines[]=['model'=>basename(str_replace('\\','/',get_class($model))),'table'=>$table,'prefix'=>$prefix,'metadata_found'=>count($rows),'engine'=>$metadata['bridge_engine'] ?? null,'table_type'=>$metadata['bridge_type'] ?? null,'same_write_connection'=>$modelConnection->getPdo()===$connection->getPdo()];
     }
     echo json_encode(['table_checks'=>$engines],JSON_UNESCAPED_UNICODE).PHP_EOL;
     echo json_encode(['ok'=>true,'readonly'=>true,'message'=>'只读核对完成，未创建或修改商品'],JSON_UNESCAPED_UNICODE).PHP_EOL;

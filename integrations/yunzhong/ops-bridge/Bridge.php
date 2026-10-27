@@ -44,7 +44,7 @@ final class Bridge
     {
         $level = (int)(\Setting::get('shop.category')['cat_level'] ?? 2);
         if (!in_array($level, [2,3], true)) throw new \RuntimeException('暂不支持当前分类层级');
-        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.0', 'categoryLevel'=>$level,
+        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.2', 'categoryLevel'=>$level,
             'categories'=>Category::uniacid()->where('enabled',1)->where('plugin_id',0)->select(['id','name','parent_id','level'])->limit(5001)->get()->toArray(),
             'brands'=>Brand::uniacid()->select(['id','name'])->limit(5001)->get()->toArray(),
             'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail']];
@@ -143,11 +143,16 @@ final class Bridge
     {
         $this->checkPlan($plan);
         // Validate lower-level transaction support without accepting SQL or identifiers from the request.
-        $connection=DB::connection();$database=$connection->getDatabaseName();
+        $connection=DB::connection();
         foreach ([new Goods(),new GoodsOption(),new GoodsSpec(),new GoodsSpecItem(),new \app\backend\modules\goods\models\GoodsDispatch()] as $model) {
-            $table=$connection->getTablePrefix().$model->getTable();
-            $rows=DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',[$database,$table]);
-            if (count($rows)!==1 || strcasecmp($rows[0]->ENGINE,'InnoDB')!==0) throw new \RuntimeException('商品表不支持事务');
+            $modelConnection=$model->getConnection();
+            if ($modelConnection->getPdo()!==$connection->getPdo()) throw new \RuntimeException('商品与回执未使用同一写入连接，禁止创建');
+            $table=$modelConnection->getTablePrefix().$model->getTable();
+            // Ask the actual write session for its current database; configured names can differ in tenant routing.
+            $rows=$modelConnection->select('SELECT ENGINE AS bridge_engine, TABLE_TYPE AS bridge_type FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',[$table],false);
+            if (count($rows)!==1) throw new \RuntimeException('未找到商品表的事务元数据，未执行创建');
+            $metadata=array_change_key_case((array)$rows[0],CASE_LOWER);
+            if (strcasecmp($metadata['bridge_engine'] ?? '', 'InnoDB')!==0 || ($metadata['bridge_type'] ?? '')!=='BASE TABLE') throw new \RuntimeException('商品表不支持事务');
         }
         $hash=hash('sha256',json_encode($plan));
         return DB::transaction(function () use ($plan,$hash) {
