@@ -20,7 +20,7 @@
 
 ```bash
 cd /Users/j/Documents/Codex/2026-10-24/new-chat/goods-ops
-scp dist/mainapis-yunzhong-bridge-0.2.0.tar.gz root@YUNZHONG_SERVER_IP:/tmp/
+scp dist/mainapis-yunzhong-bridge-0.2.0.tar.gz root@47.98.177.115:/tmp/
 ```
 
 芸众服务器执行：
@@ -29,7 +29,7 @@ scp dist/mainapis-yunzhong-bridge-0.2.0.tar.gz root@YUNZHONG_SERVER_IP:/tmp/
 mkdir -p /tmp/mainapis-yunzhong-0.2.0
 tar -xzf /tmp/mainapis-yunzhong-bridge-0.2.0.tar.gz -C /tmp/mainapis-yunzhong-0.2.0
 docker cp /tmp/mainapis-yunzhong-0.2.0 shop-asns-cc-runtime:/tmp/mainapis-yunzhong-0.2.0
-docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/install.php --check /var/www/html
+docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/install.php --check /var/www/html /var/www/html
 ```
 
 应返回 `ok:true`、实际入口目录和分类层级。source_changed 表示实际源码与已审阅版本不一致，不继续安装；required_class_missing 等错误也须先解决。
@@ -39,7 +39,7 @@ docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/ins
 先保存商城常规备份，然后运行：
 
 ```bash
-docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/install.php --install /var/www/html
+docker exec shop-asns-cc-runtime php /tmp/mainapis-yunzhong-0.2.0/ops-bridge/install.php --install /var/www/html /var/www/html
 ```
 
 安装器拒绝覆盖已存在入口/目录或回执表，不自动清理已有数据。安装失败后不要反复执行或删除表。

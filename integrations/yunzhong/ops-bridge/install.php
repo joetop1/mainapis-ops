@@ -14,8 +14,16 @@ try {
         echo "扩展已停用，商品和任务回执保留。\n";exit;
     }
     $public=null;
-    foreach ([$root.'/public',$root] as $candidate) {
-        if (is_file($candidate.'/index.php') && strpos(file_get_contents($candidate.'/index.php'),'bootstrap')!==false) {$public=$candidate;break;}
+    if (isset($argv[3])) {
+        // Explicit path must come from the operator's web-server configuration, not HTTP input.
+        $candidate=realpath($argv[3]);
+        $allowed=array_filter([realpath($root),realpath($root.'/public')]);
+        if ($candidate===false || !in_array($candidate,$allowed,true) || !is_file($candidate.'/index.php')) throw new RuntimeException('invalid_explicit_document_root');
+        $public=$candidate;
+    } else {
+        foreach ([$root.'/public',$root] as $candidate) {
+            if (is_file($candidate.'/index.php') && strpos(file_get_contents($candidate.'/index.php'),'bootstrap')!==false) {$public=$candidate;break;}
+        }
     }
     if (!$public) throw new RuntimeException('document_root_not_identified');
     foreach (['Bridge.php','entry.php','config.php','Compatibility.php'] as $name) {
