@@ -381,8 +381,20 @@ function detectCollectorVersion(chromiumVersion){
 }
 $('#refreshCollectorDownload').onclick=loadCollectorDownload;
 
+let yunzhongAvailableVersion='';
+async function loadYunzhongRelease(){
+ try {
+  const r=await api('/api/extensions/yunzhong-bridge');yunzhongAvailableVersion=r.version;
+  $('#yunzhongRelease').textContent=`最新扩展 v${r.version} · ${Math.ceil(r.bytes/1024)} KB · SHA256：${r.sha256}`;
+  const path='/tmp/mainapis-yunzhong-'+r.version,php='docker exec CONTAINER php '+path+'/';
+  const unpack=`mkdir -p ${path}\ntar -xzf /tmp/${r.filename} -C ${path}\ndocker cp ${path} CONTAINER:${path}\n`;
+  $('#yunzhongInstallCommands').textContent=unpack+php+'install.php --check SHOP_ROOT DOCUMENT_ROOT\n# 仅预检 ok:true 后执行：\n'+php+'install.php --install SHOP_ROOT DOCUMENT_ROOT\n# Swoole 环境：\n'+php+'install.php --adapt-swoole SHOP_ROOT DOCUMENT_ROOT\n# 成功后安排重载：\ndocker restart CONTAINER';
+  $('#yunzhongUpdateCommands').textContent=unpack+php+'apply-update.php --check SHOP_ROOT\n# 仅检查 ok:true 后执行：\n'+php+'apply-update.php --apply SHOP_ROOT\n# 仅更新 ok:true 后重载：\ndocker restart CONTAINER';
+ }catch(e){$('#yunzhongRelease').textContent='扩展下载信息读取失败：'+e.message;}
+}
+$('#yunzhongReleaseRefresh').onclick=async()=>{await loadYunzhongRelease();await loadYunzhongConnection();};
 async function loadYunzhongConnection(){
- try{const c=await api('/api/connections/yunzhong');$('#yunzhongAppid').value=c.appid;$('#yunzhongMode').value=c.mode||'official';updateYunzhongMode();$('#yunzhongCategoryLevel').value=c.categoryLevel||'';$('#yunzhongDispatchPrice').value=c.dispatchPrice||'';$('#yunzhongSecret').placeholder=c.configured?'已保存，留空保留原密钥':'填写 API 应用 APP_Secret';const status=yunzhongConfiguration(c);$('#yunzhongBadge').textContent=status.label;$('#yunzhongCard').dataset.state=status.state;$('#yunzhongDetails').open=!c.configured;$('#yunzhongStatus').textContent=status.detail;}catch(error){$('#yunzhongBadge').textContent='读取失败';$('#yunzhongStatus').textContent=error.message;}
+ try{await loadYunzhongRelease();const c=await api('/api/connections/yunzhong');$('#yunzhongInstalledVersion').textContent=c.mode==='bridge'&&c.testedAt?'远端扩展（最近测试）：'+(c.bridgeVersion?'v'+c.bridgeVersion:'版本未知，请重新测试并保存')+' · '+c.testedAt+(c.bridgeVersion&&yunzhongAvailableVersion&&c.bridgeVersion!==yunzhongAvailableVersion?' · 与下载版本不同，请测试连接并核对更新说明':''):'远端版本：尚未验证独立入口；请测试连接并保存';$('#yunzhongAppid').value=c.appid;$('#yunzhongMode').value=c.mode||'official';updateYunzhongMode();$('#yunzhongCategoryLevel').value=c.categoryLevel||'';$('#yunzhongDispatchPrice').value=c.dispatchPrice||'';$('#yunzhongSecret').placeholder=c.configured?'已保存，留空保留原密钥':'填写 API 应用 APP_Secret';const status=yunzhongConfiguration(c);$('#yunzhongBadge').textContent=status.label;$('#yunzhongCard').dataset.state=status.state;$('#yunzhongDetails').open=!c.configured;$('#yunzhongStatus').textContent=status.detail;}catch(error){$('#yunzhongBadge').textContent='读取失败';$('#yunzhongStatus').textContent=error.message;}
 }
 async function saveYunzhongConnection(testOnly){
  const form=$('#yunzhongForm');form.querySelectorAll('input,select,button').forEach(node=>node.disabled=true);$('#yunzhongStatus').textContent='正在测试签名并读取分类…';

@@ -26,3 +26,5 @@
 .channel-card[data-state="readonly"]{border-top-color:#607f94}.channel-card[data-state="readonly"] .connection-badge{background:#eaf1f6;color:#466477}
 
 .dialog-feedback{margin:16px 0 0;padding:13px 15px;border:1px solid #cadfd2;border-radius:7px;background:#eef6f0;color:#28583d;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.dialog-feedback.is-error{background:#fff2ec;border-color:#edc4b5;color:#8f3827}
+
+#yunzhongCard pre{padding:14px;background:#f3f6f4;border:1px solid #dce5df;border-radius:7px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.8}#yunzhongRelease{overflow-wrap:anywhere}#yunzhongCard ol{padding-left:24px;line-height:1.9}#yunzhongCard .actions a{display:inline-block;padding:10px 12px;color:#245b47;text-decoration:underline}

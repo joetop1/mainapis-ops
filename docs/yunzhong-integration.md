@@ -81,3 +81,9 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 新增normalizeReceipt边界转换，支持关联数组/stdClass及列名大小写，保持值不变，拒绝其他类型。事务内已存在回执的hash校验和readProduct前统一转换，保留归属、主键、货号等校验。更新器在真实PHP中测试两种返回类型、null和错误类型，并用SELECT 1的真实结果验证候选转换逻辑；不写商品。
 
 OPS0.4.3继续使用；只部署入口0.2.5，步骤见integrations/yunzhong/upgrade-0.2.5.md。
+
+## OPS 0.4.4：扩展分发与安装说明
+
+连接与配置的芸众卡片新增扩展下载与安装入口。登录用户可获取完整 0.2.6 包、SHA256 和安装说明；未登录及停用成员不能下载。Docker 镜像包含受控扩展源码，服务动态生成标准 tar.gz（固定文件白名单，不含运行环境凭据）。新包同时包含 install.php 和 apply-update.php，首次安装和已有扩展更新流程分别展示。连接签名测试记录远端 bridgeVersion 与测试时间；版本显示为最近验证记录，并非实时监测。
+
+当前商城 URL 仍固定，安装说明明确限制：仅核验 2.3.700、商城账号 i=1，未开放任意域名自助接入。本次未修改商城或浏览器采集插件。部署 OPS：git pull --ff-only 后 docker compose up -d --build。验证：137 项测试通过；下载包经系统 tar 列表检查。真实 PHP 安装须在商城服务器预检。

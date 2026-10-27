@@ -1,3 +1,4 @@
+import {createYunzhongPackage} from './yunzhong-package.mjs';
 import {recoverYunzhongUncreated} from './yunzhong-recovery.mjs';
 import {createYunzhongBridge,yunzhongCatalog,YUNZHONG_BRIDGE} from './yunzhong-bridge.mjs';
 import {createYunzhongRunner} from './yunzhong-direct.mjs';
@@ -211,6 +212,12 @@ const handleRequest=async(req,res)=>{
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
+    if(req.method==='GET'&&['/api/extensions/yunzhong-bridge','/api/extensions/yunzhong-bridge/download','/api/extensions/yunzhong-bridge/guide'].includes(path)){
+      if(path.endsWith('/guide')){const bytes=await readFile(join(root,'integrations/yunzhong/ops-bridge/INSTALL.md'));res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="yunzhong-install.md"','Cache-Control':'private, no-store'});return res.end(bytes);}
+      const release=await createYunzhongPackage(join(root,'integrations/yunzhong/ops-bridge'));
+      if(path.endsWith('/download')){res.writeHead(200,{'Content-Type':'application/gzip','Content-Disposition':'attachment; filename="'+release.filename+'"','Content-Length':release.bytes.length,'Cache-Control':'private, no-store'});return res.end(release.bytes);}
+      return json(res,200,{version:release.version,filename:release.filename,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/yunzhong-bridge/download'});
+    }
     if(req.method==='GET'&&['/api/extensions/1688-collector','/api/extensions/1688-collector/download'].includes(path)){
       const release=await collectorRelease();
       if(path.endsWith('/download')){
@@ -276,17 +283,17 @@ const handleRequest=async(req,res)=>{
       }
     }
     if(path==='/api/connections/yunzhong'&&req.method==='GET'){
-      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.mode==='bridge'?YUNZHONG_BRIDGE:YUNZHONG_BASE,version:'2.3.700',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
+      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.mode==='bridge'?YUNZHONG_BRIDGE:YUNZHONG_BASE,version:'2.3.700',bridgeVersion:c?.bridgeVersion||'',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
     }
     if(['/api/connections/yunzhong','/api/connections/yunzhong/test'].includes(path)&&req.method==='POST'){
       if(demo)throw Error('演示模式不保存凭据或连接商城');
       const b=await body(req),old=yunzhongConnections.get(owner),credentials=requireYunzhongCredentials(b,old);
       const dispatchPrice=String(b.dispatchPrice??old?.dispatchPrice??'').trim();if(!/^\d{1,7}(\.\d{1,2})?$/.test(dispatchPrice))throw Error('请填写固定运费，单位元，免运费请明确填写0');
       const mode=b.mode??old?.mode??'official';if(!['official','bridge'].includes(mode))throw Error('连接方式无效');
-      let catalog,categoryLevel,publishingReady,message;
+      let catalog,categoryLevel,publishingReady,message,bridgeVersion='';
       if(mode==='bridge'){
-        catalog=yunzhongCatalog(await createYunzhongBridge(credentials)('capabilities'));categoryLevel=catalog.categoryLevel;publishingReady=true;
-        message='独立入口连接成功，实际分类模式已读取；支持三级分类、多维规格及文字参数详情，默认创建下架商品。';
+        const caps=await createYunzhongBridge(credentials)('capabilities');bridgeVersion=/^\d+\.\d+\.\d+$/.test(caps.bridgeVersion||'')?caps.bridgeVersion:'';catalog=yunzhongCatalog(caps);categoryLevel=catalog.categoryLevel;publishingReady=true;
+        message='独立入口 '+(bridgeVersion||'版本未知')+' 连接成功，实际分类模式已读取；支持三级分类、多维规格及文字参数详情，默认创建下架商品。';
       }else{
         categoryLevel=Number(b.categoryLevel??old?.categoryLevel);if(![2,3].includes(categoryLevel))throw Error('请按照商城实际设置选择两级或三级分类模式');
         const client=createYunzhongClient(credentials);await testYunzhongConnection(client);catalog=await loadYunzhongCategories(client);
@@ -295,7 +302,7 @@ const handleRequest=async(req,res)=>{
         message=publishingReady?'官方API连接与分类读取成功，仅支持两级分类、单维规格和图片详情；创建后仍需人工核对。':'官方API连接成功；三级分类暂不支持发布，连接仅供读取。';
       }
       if(path.endsWith('/test'))return json(res,200,{ok:true,categories:catalog.categories,message:message+'测试不会保存，请保存连接。'});
-      yunzhongConnections.set(owner,{...credentials,testedAt:now(),dispatchPrice,categoryLevel,mode,publishingReady});audit(owner,'connection.yunzhong_saved','yunzhong');
+      yunzhongConnections.set(owner,{...credentials,testedAt:now(),dispatchPrice,categoryLevel,mode,publishingReady,bridgeVersion});audit(owner,'connection.yunzhong_saved','yunzhong');
       return json(res,200,{ok:true,categories:catalog.categories,message:'已保存。'+message});
     }
     if(path==='/api/connections/tigshop'&&req.method==='GET'){
