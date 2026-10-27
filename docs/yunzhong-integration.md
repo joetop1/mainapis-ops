@@ -73,3 +73,11 @@ backend GoodsController::create调用 CreateGoodsService，属于后台商品创
 修正服务与事件的请求对象不一致：仅在已鉴权创建的事务内替换当前Request业务参数，finally恢复原JSON/form；不替换Swoole容器全局request绑定。读回通过已验证归属的回执和显式uniacid+主键、写PDO定位，货号保持原始值与getter双重一致，缺失与不匹配分别报错。真实请求替换/异常恢复内存自检已加入更新器，执行前不创建商品。
 
 部署步骤见integrations/yunzhong/upgrade-0.2.4.md；只更新自有PHP入口文件，OPS0.4.3继续使用。
+
+## 原始回执类型根因（入口0.2.5）
+
+现场真实QueryBuilder SELECT 1返回array而非stdClass。此前receipt->goods_id等对象访问无法读取数组数据；这解释了保存后回执/标记校验失败，重放分支的payload_hash也有同类问题。原引擎检查曾直接访问rows[0]->ENGINE，亦存在同种不兼容；其元数据查询同时做了写连接修正，不能把旧null单独归因为配置库名错误。
+
+新增normalizeReceipt边界转换，支持关联数组/stdClass及列名大小写，保持值不变，拒绝其他类型。事务内已存在回执的hash校验和readProduct前统一转换，保留归属、主键、货号等校验。更新器在真实PHP中测试两种返回类型、null和错误类型，并用SELECT 1的真实结果验证候选转换逻辑；不写商品。
+
+OPS0.4.3继续使用；只部署入口0.2.5，步骤见integrations/yunzhong/upgrade-0.2.5.md。

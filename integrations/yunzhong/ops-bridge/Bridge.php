@@ -49,7 +49,7 @@ final class Bridge
     {
         $level = (int)(\Setting::get('shop.category')['cat_level'] ?? 2);
         if (!in_array($level, [2,3], true)) throw new \RuntimeException('暂不支持当前分类层级');
-        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.4', 'categoryLevel'=>$level,
+        return ['contract'=>self::CONTRACT, 'bridgeVersion'=>'0.2.5', 'categoryLevel'=>$level,
             'categories'=>Category::uniacid()->where('enabled',1)->where('plugin_id',0)->select(['id','name','parent_id','level'])->limit(5001)->get()->toArray(),
             'brands'=>Brand::uniacid()->select(['id','name'])->limit(5001)->get()->toArray(),
             'features'=>['atomic_create','marker_receipt','text_detail','sku','full_detail','safe_absence_check']];
@@ -58,6 +58,14 @@ final class Bridge
     private function receiptQuery($marker)
     {
         return DB::table($this->table)->useWritePdo()->where('uniacid',$this->uniacid)->where('app_id',$this->appId)->where('marker',$marker);
+    }
+
+    private function normalizeReceipt($row)
+    {
+        if ($row===null) return null;
+        // Raw query rows are arrays in this deployment; PDO object fetch mode remains supported.
+        if (!is_array($row) && !($row instanceof \stdClass)) throw new \RuntimeException('任务回执返回格式无效');
+        return (object)array_change_key_case((array)$row,CASE_LOWER);
     }
 
     public function lookup($marker)
@@ -172,7 +180,7 @@ final class Bridge
         }
         $hash=hash('sha256',json_encode($plan));
         return DB::transaction(function () use ($plan,$hash) {
-            $receipt=$this->receiptQuery($plan['marker'])->lockForUpdate()->first();
+            $receipt=$this->normalizeReceipt($this->receiptQuery($plan['marker'])->lockForUpdate()->first());
             if ($receipt) {
                 if (!hash_equals($receipt->payload_hash,$hash)) throw new \RuntimeException('任务已存在且内容不同，禁止重新创建');
                 return $this->readProduct($receipt);
@@ -213,6 +221,7 @@ final class Bridge
 
     private function readProduct($receipt)
     {
+        $receipt=$this->normalizeReceipt($receipt);
         if (!$receipt || (int)$receipt->uniacid!==$this->uniacid || (string)$receipt->app_id!==$this->appId || !preg_match('/^OPS-[0-9a-f]{32}$/D',(string)$receipt->marker) || (int)$receipt->goods_id<1) throw new \RuntimeException('任务回执无效');
         $this->setTenantContext();
         // Receipt ownership plus an explicit tenant filter replaces ambient tenant scopes; marker validation remains mandatory.
