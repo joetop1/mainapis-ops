@@ -1,0 +1,17 @@
+{
+  "app/backend/modules/goods/services/CreateGoodsService.php": "df42ad108bc45076b5d95f50c545162a88dff31ad599a690be01dd791fd28695",
+  "app/backend/modules/goods/services/SpecOptionService.php": "f00c2333388610419a2e6cd35f20753dddd1b1be7a5ba404ceac35d0d953a70f",
+  "app/backend/modules/goods/services/GoodsService.php": "8b44561a9cd5de9b871dd9bb91116127144e74e18643568d9bb4172a1c9d6ef4",
+  "app/backend/modules/goods/models/Goods.php": "52cc2335269fb733a8ee8c8fc5cd24e88b7f83162ac67ca5ae6f06a9761f468a",
+  "app/backend/modules/goods/models/GoodsSpec.php": "b6c5810a46072f5c6b313d49f2f117ef8d57de0c559a0faab2bdf182c02bf4b0",
+  "app/backend/modules/goods/models/GoodsSpecItem.php": "652fabb03c2d60932fba00bb4d3ad3e677a7f35fe2a974b500b2bd973381c7c6",
+  "app/backend/modules/goods/models/GoodsOption.php": "15e753f9b225acadceb3caa91e4d0e1397fd824d2d7cc055a3e2f58719e767d5",
+  "app/backend/modules/goods/observers/GoodsObserver.php": "91b6061ca123787a8c315b666b24b334f6c2cb6ee801a73eef1e65debcd9c84c",
+  "app/outside/services/NotifyService.php": "ba0a30b87dfe3de5ff675c90f5e33b02a47590f96599c95dbbf508aa477191ff",
+  "app/outside/modes/OutsideAppSetting.php": "fc894a2d6c4cfe1c83a114c289d03499384ca28d0a902a3154d5a3e1a275f4a7",
+  "app/backend/modules/goods/models/GoodsDispatch.php": "09a1c9bf19597a509f22d5cae18f336f03051abf79460dd310132983547aced6",
+  "app/backend/modules/goods/models/GoodsParam.php": "e827004ae73e43460528a5c1c27c46e71a98c2cf78a70be9a4e0dddde1a3b1c7",
+  "app/backend/modules/goods/models/GoodsOptionParam.php": "fb8b939e9161ba50fb1c9ad647b439d3570479d70dd8954d5942326ab04261cd",
+  "app/backend/modules/goods/models/GoodsOptionVideo.php": "13e45a5d44badbc376c26a06de913a7ea77fc537d15c1a1bfecc454d53dc8c73",
+  "app/backend/modules/goods/models/GoodsVideo.php": "b90cfff29b667cffe18ede5dc319060179dafd1f62be42c66aeb62915904c202"
+}

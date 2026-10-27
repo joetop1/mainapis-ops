@@ -1,7 +1,9 @@
+import {createYunzhongBridgeRunner} from './yunzhong-bridge-runner.mjs';
 import {randomUUID} from 'node:crypto';
 import {createYunzhongClient,loadYunzhongCategories,findYunzhongGoods} from './yunzhong-client.mjs';
 import {buildYunzhongProduct,verifyYunzhongOfficialProduct} from './yunzhong-product.mjs';
 export function createYunzhongRunner({db,getConnection,audit,fetcher=fetch}){
+ const bridgeRunner=createYunzhongBridgeRunner({db,getConnection,audit,fetcher});
  const update=(job,status,message,remote='')=>{db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(status,message.slice(0,500),remote,new Date().toISOString(),job.id);audit(job.owner,'job.'+status,job.id);};
  async function verify(job,client,lease,nonce){
   const actual=await findYunzhongGoods(client,{marker:lease.marker,title:lease.product.title});
@@ -11,6 +13,8 @@ export function createYunzhongRunner({db,getConnection,audit,fetcher=fetch}){
   const result=verifyYunzhongOfficialProduct(actual,options.data,lease,lease.product.yunzhong);update(job,result.status,result.message,result.remote_id||'');
  }
  return async(job,action='publish_draft')=>{
+  const plan=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(job.id);
+  if(plan&&JSON.parse(plan.product).yunzhong?.mode==='bridge')return bridgeRunner(job,action);
   let writing=false;const verifying=action==='verify_draft';
   try{
    const connection=getConnection(job.owner);if(connection?.mode!=='official'||!connection?.publishingReady)throw Error('请先测试并保存芸众官方API连接');

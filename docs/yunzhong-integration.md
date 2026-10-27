@@ -37,3 +37,11 @@
 再次审阅 routes/outside.php 和 ShopOutsideRoute：动态分发也只进入 app/outside 命名空间；现有商品创建与更新均仅组装 parentid/childid，不能靠额外传 category_tid 或 thirdid 解决。ai-query/outsides.php只声明工作助手接口，无额外商品创建接口。
 
 backend GoodsController::create调用 CreateGoodsService，属于后台商品创建路径；尚未确认它的完整路由与认证契约，不能把后台端点当成 APPID/APP_Secret 外部API调用。下一步应由芸众提供支持 category thirdid、正文参数和多维规格的官方 API 契约或升级修复；不修改源码，不尝试绕过后台认证。
+
+## 用户授权的独立入口方案（0.4.0）
+
+用户提供的 ShopFW PHP 明确将请求数据交给 PDO query/exec 执行。用户随后同意开发独立且固定操作的入口，更新了先前「任何商城新增文件都不部署」的范围；仍不覆盖商城原有源码。旧官方接口模式保留，不自动切换。
+
+实现和安装检查见 integrations/yunzhong/README.md。独立入口0.2.0使用新的契约 mainapis-yunzhong-2，带时效签名，15个源文件逐请求核对；旧0.1.0草稿不兼容、不接受。创建走原服务，三级分类以后台服务所需 category 二维数组传递，文字参数放正文，多维规格完成后修正仅新商品的序列化维度列表。读回额外核对固定运费、基础金额和总库存。
+
+真实PHP运行验证尚未完成；先做容器 --check，再安装、验证签名读取，最后人工核对一个下架测试商品。不得将本地模拟通过描述为真实商城发布成功。

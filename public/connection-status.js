@@ -13,6 +13,7 @@ export function channelConfiguration(target,parts){
 export function yunzhongConfiguration(connection){
  if(connection.error)return {state:'error',label:'状态读取失败',detail:'连接可能已保存，请刷新后重试。'};
  if(!connection.configured)return {state:'unconfigured',label:'未配置',detail:'填写 API 应用凭证后测试并保存连接。'};
+ if(connection.mode==='bridge'&&connection.testedAt&&connection.publishingReady)return {state:'configured',label:'已配置 · 独立入口',detail:'独立入口连接已验证；支持实际分类层级、多维SKU和文字参数详情。创建下架商品后读取实际数据核对。'};
  if(connection.mode!=='official')return {state:'partial',label:'需重新测试',detail:'已有凭证保留，请选择商城实际分类模式并测试、保存官方API连接。'};
  if(!connection.testedAt)return {state:'partial',label:'待测试',detail:'凭证已保存，尚未完成官方API连接测试。'};
  if(connection.categoryLevel===3)return {state:'readonly',label:'已连接 · 暂不支持发布',detail:'凭证与分类读取成功。商城使用三级分类，现有官方API不能完整创建三级分类商品，发布已停用；无需重新填写密钥。'};

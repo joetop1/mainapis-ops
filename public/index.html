@@ -64,10 +64,10 @@
  </div></details></article></div>
  <article id="yunzhongCard" class="connection-card channel-card" data-state="loading" style="margin-top:18px">
  <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2>芸众商城</h2><p>asns.cc · 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
- <p class="hint">使用商城现有官方 API，无需安装扩展。当前仅支持两级分类、单维规格和图片详情；文字参数、多维规格会在提交前拦截。创建后需到商城人工核对。</p>
+ <p class="hint">官方API仅支持两级分类、单维规格和图片详情。三级分类及完整商品资料需使用独立对接入口；入口单独安装，不覆盖商城原文件。</p>
  <details id="yunzhongDetails" class="channel-details"><summary>管理芸众连接</summary><div class="channel-content">
- <form id="yunzhongForm"><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
- <label>商城实际分类模式<select id="yunzhongCategoryLevel"><option value="">请按照商城分类设置选择</option><option value="2">两级分类（可创建）</option><option value="3">三级分类（仅连接读取）</option></select></label><label>固定运费（元）<input id="yunzhongDispatchPrice" inputmode="decimal" placeholder="请明确填写，免运费填0"></label><div class="actions"><button id="yunzhongTest" type="button" class="secondary">测试连接并读取分类</button><button type="submit" class="primary">保存连接</button></div><p id="yunzhongStatus" class="hint" role="status"></p></form>
+ <form id="yunzhongForm"><label>连接方式<select id="yunzhongMode"><option value="official">现有官方API（能力受限）</option><option value="bridge">独立对接入口（需先安装并预检）</option></select></label><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
+ <label id="yunzhongCategoryModeField">商城实际分类模式<select id="yunzhongCategoryLevel"><option value="">请按照商城分类设置选择</option><option value="2">两级分类（可创建）</option><option value="3">三级分类（仅连接读取）</option></select></label><label>固定运费（元）<input id="yunzhongDispatchPrice" inputmode="decimal" placeholder="请明确填写，免运费填0"></label><div class="actions"><button id="yunzhongTest" type="button" class="secondary">测试连接并读取分类</button><button type="submit" class="primary">保存连接</button></div><p id="yunzhongStatus" class="hint" role="status"></p></form>
  <details><summary>已读取分类</summary><ul id="yunzhongCategories"></ul></details></div></details></article>
  <details class="connection-system"><summary>账号与服务状态</summary><p id="connectionSystemStatus"></p></details>
  </div>
