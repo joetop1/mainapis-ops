@@ -21,6 +21,12 @@ test('芸众前端凭据加密、测试不保存、失败不覆盖、团队迁�
   assert.equal((await call(path,'POST',{...credentials,categoryLevel:3})).status,200);assert.equal((await call(path)).data.publishingReady,false);
   await call(path,'POST',credentials);
   bad=true;assert.equal((await call(path,'POST',{appid:credentials.appid,appsecret:'wrong'})).status,400);assert.equal(store.get('alice').appsecret,credentials.appsecret);bad=false;
+  const custom={...credentials,url:'https://merchant.example.com'};
+  assert.equal((await call(path,'POST',custom)).status,200);
+  assert.equal((await call(path)).data.url,custom.url);
+  assert.ok(calls.at(-1).url.startsWith(custom.url+'/outside/1/'));
+  assert.equal((await call(path,'POST',{...custom,url:'https://127.0.0.1'})).status,400);
+  assert.equal((await call(path)).data.url,custom.url);
   assert.equal((await call('/api/team','POST',{name:'团队'})).status,201);assert.equal((await call('/api/team/members','POST',{sub:'bob',role:'editor'})).status,200);
   assert.equal((await call(path)).data.configured,true);assert.equal((await call(path,'GET',{},'bob')).status,403);assert.equal((await call(path,'GET',{},'outsider')).data.configured,false);
   assert.ok(calls.every(c=>c.options.method==='GET'));assert.ok(calls.every(c=>!c.url.includes('goods/create')));

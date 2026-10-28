@@ -1,3 +1,4 @@
+import {mallOrigin,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
 import {createYunzhongPackage} from './yunzhong-package.mjs';
 import {recoverYunzhongUncreated} from './yunzhong-recovery.mjs';
 import {createYunzhongBridge,yunzhongCatalog,YUNZHONG_BRIDGE} from './yunzhong-bridge.mjs';
@@ -283,11 +284,12 @@ const handleRequest=async(req,res)=>{
       }
     }
     if(path==='/api/connections/yunzhong'&&req.method==='GET'){
-      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.mode==='bridge'?YUNZHONG_BRIDGE:YUNZHONG_BASE,version:'2.3.700',bridgeVersion:c?.bridgeVersion||'',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
+      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.url||LEGACY_YUNZHONG_ORIGIN,version:'2.3.700',bridgeVersion:c?.bridgeVersion||'',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
     }
     if(['/api/connections/yunzhong','/api/connections/yunzhong/test'].includes(path)&&req.method==='POST'){
       if(demo)throw Error('演示模式不保存凭据或连接商城');
       const b=await body(req),old=yunzhongConnections.get(owner),credentials=requireYunzhongCredentials(b,old);
+      if(old&&credentials.url!==mallOrigin(old.url||LEGACY_YUNZHONG_ORIGIN)&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND target='yunzhong' AND status NOT IN ('succeeded','failed') LIMIT 1").get(owner))throw Error('仍有芸众任务未完成，请先核对原商城任务后再更换地址');
       const dispatchPrice=String(b.dispatchPrice??old?.dispatchPrice??'').trim();if(!/^\d{1,7}(\.\d{1,2})?$/.test(dispatchPrice))throw Error('请填写固定运费，单位元，免运费请明确填写0');
       const mode=b.mode??old?.mode??'official';if(!['official','bridge'].includes(mode))throw Error('连接方式无效');
       let catalog,categoryLevel,publishingReady,message,bridgeVersion='';
@@ -376,7 +378,7 @@ const handleRequest=async(req,res)=>{
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct,owner);
         if(b.target!=='yunzhong')publishingProduct.description=descriptionWithAttributes(publishingProduct.description,publishingProduct.attributes);
-        if(b.target==='yunzhong'){const connection=yunzhongConnections.get(owner);const catalog=await catalogLoader('yunzhong',owner)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
+        if(b.target==='yunzhong'){const connection=yunzhongConnections.get(owner);const catalog=await catalogLoader('yunzhong',owner)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode,origin:connection.url||LEGACY_YUNZHONG_ORIGIN};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
         if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={fx:await fetchTigshopFX(),shipping:{templateId:getTigshopConnection(owner).templateId}};}
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
         const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}

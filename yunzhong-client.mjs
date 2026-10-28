@@ -1,3 +1,4 @@
+import {mallOrigin,mallDispatcher,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
 import {createHmac} from 'node:crypto';
 // Verified against OutsideController.php and NotifyService.php from asns.cc 2.3.700.
 export const YUNZHONG_BASE='https://asns.cc/outside/1/';
@@ -8,7 +9,9 @@ export function requireYunzhongCredentials(value,previous=null){
  if(!supplied&&previous?.appid!==appid)throw Error('首次配置或更换 APPID 时必须填写 APP_Secret');
  const appsecret=supplied||previous?.appsecret||'';
  if(!appsecret||appsecret.length>512||/[\u0000-\u0020\u007f]/.test(appsecret))throw Error('请填写有效的 APP_Secret');
- return {appid,appsecret};
+ const url=mallOrigin(value?.url||previous?.url||LEGACY_YUNZHONG_ORIGIN);
+ if(previous&&url!==mallOrigin(previous.url||LEGACY_YUNZHONG_ORIGIN)&&!supplied)throw Error('更换商城地址时必须重新填写 APP_Secret');
+ return {appid,appsecret,url};
 }
 // PHP json_encode uses escaped Unicode and slashes for array values by default.
 export function yunzhongQueryString(parameters){
@@ -29,9 +32,9 @@ export function createYunzhongClient(credentials,fetcher=fetch){
   if(!['goods/category','goods/list','goods/getOption','goods/create','goods/createOption'].includes(route))throw Error('芸众接口操作无效');
   if(['app_id','sign_type','ver','sign'].some(key=>key in parameters))throw Error('不能覆盖接口鉴权参数');
   const data={...parameters,app_id:appid,sign_type:'SHA256',ver:1};data.sign=signYunzhong(data,appsecret);
-  let url=YUNZHONG_BASE+route;
+  let url=mallOrigin(credentials.url||LEGACY_YUNZHONG_ORIGIN)+'/outside/1/'+route;
   if(!writing)url+='?'+new URLSearchParams(Object.entries(data).map(([key,value])=>{if(!['string','number'].includes(typeof value))throw Error('读取接口只支持文本和整数参数');return [key,String(value)];}));
-  let res;try{res=await fetcher(url,{method:writing?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(writing?45000:15000),headers:{Accept:'application/json',...(writing?{'Content-Type':'application/json'}:{})},...(writing?{body:JSON.stringify(data)}:{})});}catch{throw Error('芸众接口连接未确认；如已提交创建，请先核对商城，不要重复创建');}
+  let res;try{res=await fetcher(url,{method:writing?'POST':'GET',redirect:'error',dispatcher:mallDispatcher,signal:AbortSignal.timeout(writing?45000:15000),headers:{Accept:'application/json',...(writing?{'Content-Type':'application/json'}:{})},...(writing?{body:JSON.stringify(data)}:{})});}catch{throw Error('芸众接口连接未确认；如已提交创建，请先核对商城，不要重复创建');}
   if(!res.ok)throw Error('芸众接口返回 HTTP '+res.status);
   let body;try{const text=await res.text();if(text.length>2e6)throw Error();body=JSON.parse(text);}catch{throw Error('芸众接口未返回有效 JSON');}
   if(body?.result!==1){

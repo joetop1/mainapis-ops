@@ -63,13 +63,13 @@
  <details class="fx-preview"><summary>人民币 → 欧元换算</summary><button type="button" id="refreshTigshopFX" class="text">读取最新汇率</button><p id="tigshopFXStatus" class="hint" role="status">发布时读取最新有效报价，重试沿用原任务汇率。</p><label>人民币金额<input id="tigshopCnyPreview" type="number" min="0" step="0.01" value="100"></label><p id="tigshopEurPreview"></p></details>
  </div></details></article></div>
  <article id="yunzhongCard" class="connection-card channel-card" data-state="loading" style="margin-top:18px">
- <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2>芸众商城</h2><p>asns.cc · 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
+ <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2>芸众商城</h2><p id="yunzhongSiteLabel">芸众 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
  <p class="hint">官方API仅支持两级分类、单维规格和图片详情。三级分类及完整商品资料需使用独立对接入口；入口单独安装，不覆盖商城原文件。</p>
  <details class="channel-details"><summary>扩展下载与安装</summary><div class="channel-content">
  <p id="yunzhongRelease" role="status">正在读取扩展版本…</p>
  <p id="yunzhongInstalledVersion" class="hint">远端版本：尚未测试连接</p>
  <div class="actions"><a id="yunzhongDownload" href="/api/extensions/yunzhong-bridge/download" download>下载完整扩展包</a><a href="/api/extensions/yunzhong-bridge/guide" download>下载安装说明</a><button id="yunzhongReleaseRefresh" type="button" class="text">刷新版本</button></div>
- <p class="hint">安装在商城服务器，和浏览器采集插件分开更新。适用已核验的芸众 2.3.700、PHP 7.3+、商城账号 i=1；其他版本须先预检。当前 OPS 仍绑定既有商城地址，尚未开放任意商城自助接入。</p>
+ <p class="hint">安装在商城服务器，和浏览器采集插件分开更新。适用已核验的芸众 2.3.700、PHP 7.3+、商城账号 i=1；其他版本须先预检。可填写自己的公网商城域名，同一团队当前支持一个芸众连接。</p>
  <ol><li>在本机下载压缩包，通过 SCP 或服务器文件管理上传到商城服务器。</li><li>在商城服务器解压。先运行安装器的只读预检，通过后才安装。</li><li>Swoole 环境安装独立控制器并重载商城服务，等待商城恢复。</li><li>回到下方连接表单，选择独立对接入口，测试连接并保存。</li></ol>
  <p>以下模板在商城服务器执行。替换 CONTAINER、SHOP_ROOT、DOCUMENT_ROOT；完整上传步骤和非 Docker 方式见安装说明。重启会短暂中断商城。</p>
  <details><summary>首次安装命令</summary><pre id="yunzhongInstallCommands"></pre></details>
@@ -77,7 +77,7 @@
  <p class="hint">仅新增扩展文件和任务回执表，不覆盖商城原文件。预检失败请停止；已有商品的任务只核对商品 ID，不重复创建。</p>
  </div></details>
  <details id="yunzhongDetails" class="channel-details"><summary>管理芸众连接</summary><div class="channel-content">
- <form id="yunzhongForm"><label>连接方式<select id="yunzhongMode"><option value="official">现有官方API（能力受限）</option><option value="bridge">独立对接入口（需先安装并预检）</option></select></label><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
+ <form id="yunzhongForm"><label>商城网址<input id="yunzhongUrl" type="url" required placeholder="https://你的商城域名" autocomplete="url"></label><p class="hint">填写公网 HTTPS 域名，无需附加后台或接口路径。当前扩展仅支持商城账号 i=1；更换地址须重新填写密钥。</p><label>连接方式<select id="yunzhongMode"><option value="official">现有官方API（能力受限）</option><option value="bridge">独立对接入口（需先安装并预检）</option></select></label><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
  <label id="yunzhongCategoryModeField">商城实际分类模式<select id="yunzhongCategoryLevel"><option value="">请按照商城分类设置选择</option><option value="2">两级分类（可创建）</option><option value="3">三级分类（仅连接读取）</option></select></label><label>固定运费（元）<input id="yunzhongDispatchPrice" inputmode="decimal" placeholder="请明确填写，免运费填0"></label><div class="actions"><button id="yunzhongTest" type="button" class="secondary">测试连接并读取分类</button><button type="submit" class="primary">保存连接</button></div><p id="yunzhongStatus" class="hint" role="status"></p></form>
  <details><summary>已读取分类</summary><ul id="yunzhongCategories"></ul></details></div></details></article>
  <details class="connection-system"><summary>账号与服务状态</summary><p id="connectionSystemStatus"></p></details>

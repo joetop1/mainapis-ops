@@ -1,3 +1,4 @@
+import {mallOrigin,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
 import {now} from './core.mjs';
 import {createYunzhongBridge} from './yunzhong-bridge.mjs';
 // This operation only restores the original frozen task after a signed, full marker absence check.
@@ -11,12 +12,13 @@ export async function recoverYunzhongUncreated({db,owner,id,getConnection,fetche
  }
  const original=inspect(),connection=getConnection(owner);
  if(connection?.mode!=='bridge'||!connection.publishingReady)throw Error('请先测试并保存独立入口连接');
+ if(mallOrigin(JSON.parse(original.snapshot.product).yunzhong?.origin||LEGACY_YUNZHONG_ORIGIN)!==mallOrigin(connection.url||LEGACY_YUNZHONG_ORIGIN))throw Error('商城地址与任务快照不一致');
  const client=createYunzhongBridge(connection,fetcher),capabilities=await client('capabilities');
  if(capabilities.contract!=='mainapis-yunzhong-2'||!capabilities.features?.includes('safe_absence_check'))throw Error('请先更新商城独立入口，再核对未入库任务');
  const marker='OPS-'+id.replaceAll('-',''),proof=await client('check_absent',{marker});
  if(proof.marker!==marker||proof.absent!==true||proof.goods_count!==0||proof.receipt_count!==0)throw Error('商城没有确认商品和回执均不存在，未解除领取锁');
  const latestConnection=getConnection(owner);
- if(latestConnection?.appid!==connection.appid||latestConnection?.appsecret!==connection.appsecret||latestConnection?.mode!=='bridge'||!latestConnection?.publishingReady)throw Error('核对期间连接发生变化，请重新核对');
+ if(latestConnection?.url!==connection.url||latestConnection?.appid!==connection.appid||latestConnection?.appsecret!==connection.appsecret||latestConnection?.mode!=='bridge'||!latestConnection?.publishingReady)throw Error('核对期间连接发生变化，请重新核对');
  db.exec('BEGIN IMMEDIATE');
  try{
   const current=inspect();if(current.job.updated!==original.job.updated||current.snapshot.product!==original.snapshot.product)throw Error('核对期间任务发生变化，未恢复');

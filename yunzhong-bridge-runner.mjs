@@ -1,3 +1,4 @@
+import {mallOrigin,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
 import {randomUUID} from 'node:crypto';
 import {createYunzhongBridge,yunzhongCatalog} from './yunzhong-bridge.mjs';
 import {buildYunzhongProduct,verifyYunzhongProduct} from './yunzhong-product.mjs';
@@ -14,6 +15,7 @@ export function createYunzhongBridgeRunner({db,getConnection,audit,fetcher=fetch
    const connection=getConnection(job.owner);if(connection?.mode!=='bridge'||!connection?.publishingReady)throw Error('请先测试并保存芸众兼容扩展连接');
    const client=createYunzhongBridge(connection,fetcher),snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(job.id);if(!snapshot)throw Error('缺少任务快照');
    const lease={product:JSON.parse(snapshot.product),marker:'OPS-'+job.id.replaceAll('-',''),candidate_id:snapshot.candidate_id};
+   if(mallOrigin(lease.product.yunzhong?.origin||LEGACY_YUNZHONG_ORIGIN)!==mallOrigin(connection.url||LEGACY_YUNZHONG_ORIGIN))throw Error('商城地址与任务快照不一致，请使用原商城连接核对');
    if(verifying){await verify(job,client,lease,snapshot.verification_nonce);return;}
    if(snapshot.claimed)throw Error('创建操作已领取，不得重复创建');
    const catalog=yunzhongCatalog(await client('capabilities'));
