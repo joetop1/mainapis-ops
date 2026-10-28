@@ -127,7 +127,7 @@ function catalogLoader(target,owner,connectionId){
  if(target==='yunzhong')return async()=>{if(c?.mode==='bridge'&&c?.publishingReady)return {...yunzhongCatalog(await createYunzhongBridge(c)('capabilities')),connectionId:row.id};if(c?.mode!=='official'||!c?.publishingReady)throw Error('请先测试并保存该芸众连接');return {...await loadYunzhongCategories(createYunzhongClient(c)),categoryLevel:c.categoryLevel,connectionId:row.id};};
  if(target!=='tigshop'){
   if(!row.legacy&&!c?.url)throw Error('请先保存该商城连接');
-  if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader((url)=>remoteJSON(url,{dispatcher:mallDispatcher}),target,c?.appid&&c?.appsecret&&(c?.testedAt||c?.authTestedAt)?crmebBrandReader(target,c):null,c?.url));
+  if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader((url)=>remoteJSON(url,{dispatcher:mallDispatcher}),target,c?.appid&&c?.appsecret&&c?.testedAt?crmebBrandReader(target,c):null,c?.url));
   return async(force)=>({...await privateBrandCatalogs.get(key)(force),connectionId:row.id});
  }
  if(!tigshopCatalogs.has(key)){
