@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/gongfuxiang/shopxo",
+  "commit": "9a0a99fd54be5decc4c8587a5d07bbec7b80d399",
+  "branch": "v6.9.2",
+  "files": {
+    "public/core.php": "29fe989d9ff59a91f215270d0b1113a1629189e70737eb2846b5a1c318b9a6da",
+    "app/common.php": "9ee3d7cabf39d5ff1afdef47df495458f11e47745d1abdd74a0018931c2bdb1b",
+    "app/service/GoodsService.php": "0da0a50cfaea492590ee7dbdd1c8ab3e7d57f168260dee2df7541b67e5f38328",
+    "app/service/GoodsParamsService.php": "5db8a19f114e10fa79e6d08482a9419f9c84638e64efc875753224a3a3094400",
+    "app/service/WarehouseGoodsService.php": "5068126616fbcf16ecaa24987cb15c6542ae76a2ff6b72d3f5eb31faa2948f7e",
+    "app/service/ResourcesService.php": "57972c89f58195e3efe90ef3954667ee7de105a970c7b5bb5cc2350ce8607c97"
+  },
+  "normalization": "CRLF-to-LF"
+}

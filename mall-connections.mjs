@@ -1,5 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 export const MALL_SYSTEMS={
+ shopxo:{name:'ShopXO',version:'6.9.2',origin:'https://xiaolanyoupin.wang'},
  'crmeb-pro':{name:'CRMEB 会员商城',version:'4.3',origin:'https://xlupw.com'},
  'crmeb-store':{name:'CRMEB 多门店',version:'4.2',origin:'https://www.xlyp.cc'},
  tigshop:{name:'Tigshop 跨境 Java',version:'5.8.60',origin:'https://xiaolango.com'},

@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {openStore} from '../core.mjs';
-import {mallConnections} from '../mall-connections.mjs';
+import {mallConnections,MALL_SYSTEMS} from '../mall-connections.mjs';
 import {connectionStore} from '../connection-store.mjs';
 import {teamStore} from '../teams.mjs';
 test('旧数据库升级自动备份、历史任务绑定稳定连接，重复迁移不改变回执快照',async()=>{
@@ -17,7 +17,7 @@ test('旧数据库升级自动备份、历史任务绑定稳定连接，重复�
   db=openStore(path);const profiles=await connectionStore(db,dir,'profiles');profiles.set('alice',{yunzhong:{name:'旧商城'}});
   const m=mallConnections(db,profiles);m.ensure('alice');const row=m.get('alice',null,'yunzhong');
   const before=db.prepare('SELECT * FROM jobs').get();assert.equal(before.mall_connection_id,row.id);assert.equal(before.remote_id,'18');assert.equal(before.token,'private-token');assert.equal(before.status,'succeeded');assert.equal(row.name,'旧商城');
-  m.ensure('alice');assert.deepEqual(db.prepare('SELECT * FROM jobs').get(),before);assert.equal(m.list('alice').length,4);
+  m.ensure('alice');assert.deepEqual(db.prepare('SELECT * FROM jobs').get(),before);assert.equal(m.list('alice').length,Object.keys(MALL_SYSTEMS).length);
   const files=await readdir(dir);assert.equal(files.filter(f=>f.includes('.pre-mall-connections-')).length,1);
   const backup=new DatabaseSync(join(dir,files.find(f=>f.includes('.pre-mall-connections-'))));assert.equal(backup.prepare('SELECT remote_id FROM jobs').get().remote_id,'18');assert.equal(backup.prepare('PRAGMA table_info(jobs)').all().some(r=>r.name==='mall_connection_id'),false);backup.close();
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
