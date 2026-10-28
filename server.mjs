@@ -1,3 +1,4 @@
+import {jobPage} from './job-pages.mjs';
 import {mallConnections,MALL_SYSTEMS} from './mall-connections.mjs';
 import {createCrmebRunner} from './crmeb-direct.mjs';
 import {mallOrigin,mallDispatcher,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
@@ -172,7 +173,7 @@ const handleRequest=async(req,res)=>{
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
     let s=sessionGet(req);if(s?.user)actorContext.getStore().actor=s.user.sub;
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}
@@ -415,6 +416,7 @@ const handleRequest=async(req,res)=>{
       if(['tigshop','yunzhong'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,JSON.parse(snapshot.product),'verify_draft'));}else await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
+    if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size')));}
     if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {

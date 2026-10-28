@@ -1,3 +1,4 @@
+import {pageInfo,publicationMalls} from './list-view.js';
 import {normalizeProductAttributes,descriptionWithAttributes,productAttributesFromJSON} from './product-attributes.js';
 import {compareVersions,safariCollectorVersion} from './collector-version.js';
 import {specificationMatrix,remapSpecificationValues,matchSpecificationImport} from './specifications.js';
@@ -9,6 +10,7 @@ const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me={},state={products:[],jobs:[],targets:[]},page='products',filter='all',editing=null,publishing=null,catalog=null,catalogRequest=0;
 const selectedMalls={},settingsRequests={};
+let productPage=1,productSize=20,jobPageNumber=1,jobSize=20,jobView={rows:[],page:1,pages:1,total:0,start:0,end:0},jobRequest=0,jobLoading=false;
 const mallRows=()=>state.malls||state.targets.map(t=>({...t,type:t.id,id:t.connection_id||t.id}));
 const mallFor=(id,type)=>mallRows().find(m=>m.id===id)||mallRows().find(m=>m.type===type&&m.legacy)||mallRows().find(m=>m.type===type);
 const labels={draft:'待整理',approved:'审核通过',dispatching:'发送中',accepted:'执行中',unknown:'需核对',succeeded:'发布成功',failed:'执行失败',awaiting_review:'待核对商品ID',verifying:'核对中'};
@@ -58,12 +60,12 @@ function recordConnectionPart(target,key,value){
   if(!value.error&&!value.configured)card.querySelector('.channel-advanced').open=true;
  }
  const all=Object.keys(channelParts).map(t=>channelConfiguration(t,channelParts[t]));
- if(state.malls){$('#connectionCounts').textContent=state.malls.filter(m=>m.configured).length+' 个已配置 / '+state.malls.length+' 个商城';return;}
+ if(state.malls){$('#connectionCounts').textContent=state.malls.filter(m=>m.configured).length+' 个已配置 · '+state.malls.filter(m=>!m.configured).length+' 个待配置';return;}
  const counts=[['configured','已配置'],['partial','待完善'],['unconfigured','未配置'],['error','读取失败'],['loading','读取中']].map(([key,label])=>{const n=all.filter(s=>s.state===key).length;return n?n+' 个'+label:'';}).filter(Boolean);
  $('#connectionCounts').textContent=counts.join(' · ');
 }
 function publicationBadges(product){
- return '<div class="product-publications">'+mallRows().map(target=>{
+ return '<div class="product-publications">'+publicationMalls(product,mallRows()).map(target=>{
   const record=product.publications?.find(row=>row.mall_connection_id===target.id||!row.mall_connection_id&&row.target===target.type&&target.legacy);
   const status=record?.status||'none';
   const label=status==='succeeded'?'已发布':status==='failed'?'失败':status==='none'?'未发布':labels[status]||'需核对';
@@ -72,7 +74,9 @@ function publicationBadges(product){
   return `<span class="badge ${esc(status)}" title="${esc(detail)}">${esc(target.name)} · ${esc(label+old)}${record?.remote_id?`<small>ID ${esc(record.remote_id)}</small>`:''}</span>`;
  }).join('')+'</div>';
 }
-async function load(){state=await api('/api/state');render();renderMallNames();}
+async function load(){state=await api('/api/state');await loadJobPage();render();renderMallNames();}
+async function loadJobPage(){const request=++jobRequest;jobLoading=true;updateJobPager();try{const data=await api('/api/jobs?page='+jobPageNumber+'&page_size='+jobSize);if(request!==jobRequest)return;jobView=data;jobPageNumber=data.page;}finally{if(request===jobRequest){jobLoading=false;updateJobPager();}}}
+function updateJobPager(){$('#jobPrev').disabled=jobLoading||jobPageNumber<=1;$('#jobNext').disabled=jobLoading||jobPageNumber>=jobView.pages;$('#jobPageSize').disabled=jobLoading;}
 function renderMallNames(){
  for(const target of state.targets){
   const rows=mallRows().filter(m=>m.type===target.id),selector=document.querySelector('[data-mall-selector="'+target.id+'"]');
@@ -114,14 +118,17 @@ function render(){
  $('#username').textContent=me.user.name+(state.team?' · '+state.team.name:'');
  $('#total').textContent=state.products.length;$('#drafts').textContent=state.products.filter(p=>p.status==='draft').length;$('#approved').textContent=state.products.filter(p=>p.status==='approved').length;$('#success').textContent=state.jobs.filter(j=>j.status==='succeeded').length;
  const search=$('#search').value.toLowerCase(),products=state.products.filter(p=>(filter==='all'||p.status===filter)&&`${p.title} ${p.source_url}`.toLowerCase().includes(search));
- $('#count').textContent=`显示 ${products.length} 件 / 已加载 ${state.products.length} 件商品（最多 1000 件）`;
- $('#productRows').innerHTML=products.map(p=>`<tr><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title">${esc(p.title||'待采集 · '+p.source_url.match(/offer\/(\d+)/)?.[1])}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small></div></div></td><td><a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">1688 ↗</a></td><td>${p.skus.length} 个 SKU${p.spec_names?.length?`<small>${esc(p.spec_names.join(' × '))}</small>`:''}<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td><span class="badge ${p.status}">${labels[p.status]}</span></td><td>${publicationBadges(p)}</td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}">审核</button>`}</td></tr>`).join('')||empty(7,'采集箱已准备好','添加 1688 商品链接，或导入采集器整理好的 JSON 商品资料。');
- $('#jobRows').innerHTML=state.jobs.map(j=>`<tr><td>${esc(state.products.find(p=>p.id===j.product_id)?.title||'商品记录')}<small>${j.id.slice(0,8)} · v${j.revision}</small></td><td>${esc(mallFor(j.mall_connection_id,j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&j.target==='yunzhong'&&j.claimed&&j.status==='unknown'&&!j.remote_id&&j.message.includes('兼容扩展返回 HTTP 400')?`<button class="text" data-recover-yunzhong="${j.id}">核对未入库并恢复原任务</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
+ const productPaging=pageInfo(products.length,productPage,productSize);productPage=productPaging.page;
+ $('#count').textContent=`第 ${productPaging.start}–${productPaging.end} 件 / 筛选结果 ${products.length} 件（已加载 ${state.products.length} 件，最多 1000 件）`;
+ $('#productPageInfo').textContent=productPaging.page+' / '+productPaging.pages+' 页';$('#productPrev').disabled=productPage<=1;$('#productNext').disabled=productPage>=productPaging.pages;
+ $('#productRows').innerHTML=products.slice(productPaging.offset,productPaging.offset+productPaging.pageSize).map(p=>`<tr><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title">${esc(p.title||'待采集 · '+p.source_url.match(/offer\/(\d+)/)?.[1])}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small></div></div></td><td><a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">1688 ↗</a></td><td>${p.skus.length} 个 SKU${p.spec_names?.length?`<small>${esc(p.spec_names.join(' × '))}</small>`:''}<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td><span class="badge ${p.status}">${labels[p.status]}</span></td><td>${publicationBadges(p)}</td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}">审核</button>`}</td></tr>`).join('')||empty(7,'采集箱已准备好','添加 1688 商品链接，或导入采集器整理好的 JSON 商品资料。');
+ $('#jobRows').innerHTML=jobView.rows.map(j=>`<tr><td>${esc(j.product_title||state.products.find(p=>p.id===j.product_id)?.title||'商品记录')}<small>${j.id.slice(0,8)} · v${j.revision}</small></td><td>${esc(mallFor(j.mall_connection_id,j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&j.target==='yunzhong'&&j.claimed&&j.status==='unknown'&&!j.remote_id&&j.message.includes('兼容扩展返回 HTTP 400')?`<button class="text" data-recover-yunzhong="${j.id}">核对未入库并恢复原任务</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
+ $('#jobCount').textContent='第 '+jobView.start+'–'+jobView.end+' 条 / 共 '+jobView.total+' 条记录';$('#jobPageInfo').textContent=jobPageNumber+' / '+jobView.pages+' 页';updateJobPager();
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
  $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadYunzhongConnection();loadCrmebAuthConnections();loadCrmebPublishConnections();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
-document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=render;
+document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;productPage=1;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=()=>{productPage=1;render();};
 let editingSpecNames=[];
 function readSkuRows(){
  return [...$('#skuRows').children].map(tr=>{
@@ -453,3 +460,15 @@ $('#yunzhongTest').onclick=()=>saveYunzhongConnection(true);
 
 function updateYunzhongMode(){$('#yunzhongCategoryModeField').classList.toggle('hidden',$('#yunzhongMode').value==='bridge');}
 $('#yunzhongMode').onchange=updateYunzhongMode;
+
+$('#productPrev').onclick=()=>{productPage--;render();$('#products').scrollIntoView({block:'start'});};
+$('#productNext').onclick=()=>{productPage++;render();$('#products').scrollIntoView({block:'start'});};
+$('#productPageSize').onchange=()=>{productSize=Number($('#productPageSize').value);productPage=1;render();};
+async function changeJobPage(next,size=jobSize){const previous=jobPageNumber,previousSize=jobSize;jobPageNumber=next;jobSize=size;try{await loadJobPage();render();$('#jobs').scrollIntoView({block:'start'});}catch(error){jobPageNumber=previous;jobSize=previousSize;$('#jobPageSize').value=String(previousSize);updateJobPager();toast(error.message);}}
+$('#jobPrev').onclick=()=>changeJobPage(jobPageNumber-1);
+$('#jobNext').onclick=()=>changeJobPage(jobPageNumber+1);
+$('#jobPageSize').onchange=()=>changeJobPage(1,Number($('#jobPageSize').value));
+const backToTop=$('#backToTop');
+function updateBackToTop(){backToTop.classList.toggle('hidden',window.scrollY<350);}
+window.addEventListener('scroll',updateBackToTop,{passive:true});updateBackToTop();
+backToTop.onclick=()=>window.scrollTo({top:0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
