@@ -64,3 +64,9 @@ test('商品详情只使用独立详情图片，不使用主图或规格图片�
  const payload=buildOfficialProduct(l,cfg);assert.ok(payload.description.includes('https://example.com/detail.jpg'));assert.equal(payload.description.includes(l.product.images[0]),false);
  delete l.product.detail_images;assert.equal(buildOfficialProduct(l,cfg).description.includes('<img'),false);
 });
+test('会员商品参数写入原生specs并核对，历史快照和多门店不改变',()=>{
+ const job={...lease,product:{...lease.product,catalog_target:'crmeb-pro',crmeb_native_specs:true,attributes:[{name:'材质',value:'硅胶'},{name:'尺寸',value:'10cm'}]}};
+ const payload=buildOfficialProduct(job,cfg);assert.deepEqual(payload.specs,[{id:0,temp_id:0,name:'材质',value:'硅胶',sort:2},{id:0,temp_id:0,name:'尺寸',value:'10cm',sort:1}]);assert.equal(payload.specs_id,0);
+ const response={status:200,data:{...payload,id:42}};assert.equal(verifyOfficialProduct(response,job,cfg).status,'succeeded');response.data.specs=JSON.stringify(payload.specs);assert.equal(verifyOfficialProduct(response,job,cfg).status,'succeeded');response.data.specs=[];assert.equal(verifyOfficialProduct(response,job,cfg).status,'awaiting_review');
+ assert.deepEqual(buildOfficialProduct({...job,product:{...job.product,crmeb_native_specs:undefined}},cfg).specs,[]);assert.deepEqual(buildOfficialProduct({...job,product:{...job.product,catalog_target:'crmeb-store'}},cfg).specs,[]);
+});
