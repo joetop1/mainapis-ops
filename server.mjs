@@ -294,7 +294,7 @@ const handleRequest=async(req,res)=>{
       if(demo)throw Error('演示模式不保存商城名称');
       const b=await body(req),name=typeof b.name==='string'?b.name.trim():'';
       if(!name||[...name].length>50||/[\u0000-\u001f\u007f]/.test(name))throw Error('商城名称须为1–50字，不能包含控制字符');
-      const target=profileRoute[1],profiles=mallProfiles.get(owner)||{};malls.rename(owner,settingsMall.id,name);
+      const target=profileRoute[1],profiles=mallProfiles.get(owner)||{};malls.rename(owner,settingsMall.id,name,b.badge);
       if(settingsMall.legacy)mallProfiles.set(owner,{...profiles,[target]:{name}});audit(owner,'connection.mall_renamed',target);
       return json(res,200,{ok:true,name,system:targets.find(t=>t.id===target).name});
     }

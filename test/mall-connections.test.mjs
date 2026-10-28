@@ -33,3 +33,12 @@ test('同系统连接ID和密钥scope独立，迁入团队后ID和新增连接�
   assert.throws(()=>m.get('alice',a.id));
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
+test('商城单字标识持久保存且隔离连接，非法标识不修改名称',()=>{
+ const db=openStore(':memory:');try{
+  const m=mallConnections(db),a=m.create('alice','shopxo','小蓝'),b=m.create('alice','shopxo','另一家');
+  m.rename('alice',a.id,'小蓝有品','蓝');assert.equal(m.get('alice',a.id).badge,'蓝');assert.equal(m.get('alice',b.id).badge,'');
+  assert.equal(mallConnections(db).get('alice',a.id).badge,'蓝');
+  assert.throws(()=>m.rename('alice',a.id,'错误名称','两个'));assert.equal(m.get('alice',a.id).name,'小蓝有品');
+  m.rename('alice',a.id,'改名');assert.equal(m.get('alice',a.id).badge,'蓝');m.rename('alice',a.id,'改名','');assert.equal(m.get('alice',a.id).badge,'');
+ }finally{db.close();}
+});

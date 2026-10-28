@@ -66,11 +66,9 @@ function recordConnectionPart(target,key,value){
 }
 function publicationRows(product){return publicationMalls(product,mallRows()).map(mall=>({mall,record:product.publications?.find(row=>row.mall_connection_id===mall.id||!row.mall_connection_id&&row.target===mall.type&&mall.legacy)}));}
 function publicationBadges(product){
- const rows=publicationRows(product),published=rows.filter(row=>row.record?.status==='succeeded').length;
+ const rows=publicationRows(product);
  if(!rows.length)return '<span class="hint">暂无商城</span>';
- const review=rows.filter(row=>['unknown','awaiting_review'].includes(row.record?.status)).length,failed=rows.filter(row=>row.record?.status==='failed').length,active=rows.filter(row=>['dispatching','accepted','verifying'].includes(row.record?.status)).length;
- const notice=[review?'待核对 '+review:'',failed?'失败 '+failed:'',active?'处理中 '+active:''].filter(Boolean).join(' · ');
- return `<div class="product-publications"><button type="button" class="publication-summary ${review||failed?'needs-attention':''}" data-publications="${esc(product.id)}" aria-label="查看${esc(product.title)}的商城发布记录"><span>已发布 <b>${published}/${rows.length}</b></span><span class="publication-view">查看 ›</span></button>${notice?`<small class="publication-notice">${esc(notice)}</small>`:''}</div>`;
+ return '<div class="product-publications publication-circles">'+rows.map(({mall,record})=>{const status=record?.status||'none',label=status==='succeeded'?'已发布':status==='none'?'未发布':labels[status]||'需核对',mark=mall.badge||Array.from(mall.name||'商')[0],description=mall.name+' · '+label+(record?' · v'+record.revision:'');return '<button type="button" class="publication-circle '+esc(status)+'" data-publications="'+esc(product.id)+'" title="'+esc(description)+'" aria-label="'+esc(description)+'，查看发布记录">'+esc(mark)+'</button>';}).join('')+'</div>';
 }
 function showPublicationDetails(product){
  $('#publicationTitle').textContent=product.title||'商品发布记录';
@@ -91,6 +89,7 @@ function renderMallNames(){
   const domain=document.querySelector('[data-mall-domain="'+target.id+'"]');if(domain)domain.textContent=mall?.url||'尚未填写商城地址';
   document.querySelectorAll('[data-mall-title="'+target.id+'"]').forEach(node=>node.textContent=mall?.name||target.name);
   const form=document.querySelector('[data-mall-profile="'+target.id+'"]');if(form&&document.activeElement!==form.elements.mall_name)form.elements.mall_name.value=mall?.name||target.name;
+  if(form&&document.activeElement!==form.elements.mall_badge)form.elements.mall_badge.value=mall?.badge||'';
   const option=$('#catalogTarget').querySelector('option[value="'+target.id+'"]');if(option)option.textContent=target.system;
  }
 }
@@ -114,7 +113,7 @@ $('#closeAddMall').onclick=()=>$('#addMallDialog').close();
 $('#addMallForm').onsubmit=async event=>{event.preventDefault();const form=event.target,button=event.submitter;button.disabled=true;try{const r=await api('/api/malls','POST',{system:form.elements.system.value,name:form.elements.name.value});selectedMalls[r.connection.system]=r.connection.id;await load();$('#addMallDialog').close();await loadMallSettings(r.connection.system);toast('商城已添加，请填写并测试连接');}catch(error){toast(error.message,{error:true});}finally{button.disabled=false;}};
 for(const form of document.querySelectorAll('[data-mall-profile]'))form.onsubmit=async event=>{
  event.preventDefault();const button=form.querySelector('button'),status=form.querySelector('[data-profile-status]');button.disabled=true;
- try{await api('/api/connections/'+form.dataset.mallProfile+'/profile','POST',{name:form.elements.mall_name.value});await load();status.textContent='商城名称已保存';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}
+ try{await api('/api/connections/'+form.dataset.mallProfile+'/profile','POST',{name:form.elements.mall_name.value,badge:form.elements.mall_badge.value});await load();status.textContent='商城名称与标识已保存';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}
 };
 function render(){
  const role=state.team?.role||'admin';
