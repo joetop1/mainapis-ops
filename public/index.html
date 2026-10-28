@@ -27,11 +27,11 @@
  <div class="connections-overview"><div><h2>商城渠道</h2><p id="connectionScope">当前工作空间的商城配置</p></div><p id="connectionCounts" role="status">正在读取渠道状态…</p></div>
  <p class="hint">已配置表示所需凭证已保存。展开渠道可测试连接或修改配置。</p>
  <div class="channels-grid"><article class="connection-card channel-card" data-channel="crmeb-pro" data-state="loading">
- <div class="channel-heading"><span class="channel-icon" aria-hidden="true">会员</span><div><h2>CRMEB 会员商城</h2><p>xlupw.com</p></div><span id="crmeb-pro-connection-badge" class="connection-badge" role="status">读取中</span></div>
+ <div class="channel-heading"><span class="channel-icon" aria-hidden="true">会员</span><div><h2 data-mall-title="crmeb-pro">CRMEB 会员商城</h2><small>商城系统：CRMEB 会员商城</small><p>xlupw.com</p></div><span id="crmeb-pro-connection-badge" class="connection-badge" role="status">读取中</span></div>
  <p id="crmeb-pro-connection-summary" class="channel-summary">正在读取已保存配置…</p>
  <div class="channel-parts"><span id="crmeb-pro-auth-part">商城授权 · 读取中</span><span id="crmeb-pro-publishing-part">发布通道 · 读取中</span></div>
  <details id="crmeb-pro-connection-details" class="channel-details"><summary><span id="crmeb-pro-connection-action">查看配置</span></summary><div class="channel-content">
- <h3>商城授权</h3><form data-crmeb-auth="crmeb-pro">
+ <form data-mall-profile="crmeb-pro"><label>商城名称<input name="mall_name" required maxlength="50" placeholder="例如：小蓝有品"></label><p class="hint">商城系统：CRMEB 会员商城（固定）。名称仅用于区分商城，不改变接口、凭据或发布记录归属。</p><button type="submit" class="secondary">保存商城名称</button><p data-profile-status role="status"></p></form><h3>商城授权</h3><form data-crmeb-auth="crmeb-pro">
  <label>AppID<input id="crmeb-pro-appid" autocomplete="off" placeholder="填写 xlupw.com 的对外接口 AppID"></label>
  <label>AppSecret<input id="crmeb-pro-appsecret" type="password" autocomplete="new-password" placeholder="填写 AppSecret"></label>
  <div class="actions"><button type="button" data-test-auth="crmeb-pro" class="secondary">测试授权</button><button type="submit" class="primary">保存商城授权</button></div>
@@ -41,11 +41,11 @@
  <p class="hint">此密钥连接发布工作流，与商城 AppSecret 不同。</p><div class="actions"><button type="button" data-test-publishing="crmeb-pro" class="secondary">测试发布通道</button><button type="submit" class="primary">保存发布通道</button></div><p id="crmeb-pro-publish-status" class="hint" role="status">正在读取发布配置…</p></form></details>
  <p class="hint">凭证加密保存；已保存的密钥留空即可保留。</p></div></details></article>
 <article class="connection-card channel-card" data-channel="crmeb-store" data-state="loading">
- <div class="channel-heading"><span class="channel-icon" aria-hidden="true">多店</span><div><h2>CRMEB 多门店</h2><p>xlyp.cc</p></div><span id="crmeb-store-connection-badge" class="connection-badge" role="status">读取中</span></div>
+ <div class="channel-heading"><span class="channel-icon" aria-hidden="true">多店</span><div><h2 data-mall-title="crmeb-store">CRMEB 多门店</h2><small>商城系统：CRMEB 多门店</small><p>xlyp.cc</p></div><span id="crmeb-store-connection-badge" class="connection-badge" role="status">读取中</span></div>
  <p id="crmeb-store-connection-summary" class="channel-summary">正在读取已保存配置…</p>
  <div class="channel-parts"><span id="crmeb-store-auth-part">商城授权 · 读取中</span><span id="crmeb-store-publishing-part">发布通道 · 读取中</span></div>
  <details id="crmeb-store-connection-details" class="channel-details"><summary><span id="crmeb-store-connection-action">查看配置</span></summary><div class="channel-content">
- <h3>商城授权</h3><form data-crmeb-auth="crmeb-store">
+ <form data-mall-profile="crmeb-store"><label>商城名称<input name="mall_name" required maxlength="50" placeholder="例如：小蓝有品"></label><p class="hint">商城系统：CRMEB 多门店（固定）。名称仅用于区分商城，不改变接口、凭据或发布记录归属。</p><button type="submit" class="secondary">保存商城名称</button><p data-profile-status role="status"></p></form><h3>商城授权</h3><form data-crmeb-auth="crmeb-store">
  <label>AppID<input id="crmeb-store-appid" autocomplete="off" placeholder="填写 xlyp.cc 的对外接口 AppID"></label>
  <label>AppSecret<input id="crmeb-store-appsecret" type="password" autocomplete="new-password" placeholder="填写 AppSecret"></label>
  <div class="actions"><button type="button" data-test-auth="crmeb-store" class="secondary">测试授权</button><button type="submit" class="primary">保存商城授权</button></div>
@@ -55,15 +55,15 @@
  <p class="hint">此密钥连接发布工作流，与商城 AppSecret 不同。</p><div class="actions"><button type="button" data-test-publishing="crmeb-store" class="secondary">测试发布通道</button><button type="submit" class="primary">保存发布通道</button></div><p id="crmeb-store-publish-status" class="hint" role="status">正在读取发布配置…</p></form></details>
  <p class="hint">凭证加密保存；已保存的密钥留空即可保留。</p></div></details></article>
 <article class="connection-card channel-card" data-channel="tigshop" data-state="loading">
- <div class="channel-heading"><span class="channel-icon" aria-hidden="true">T</span><div><h2>Tigshop 自营</h2><p>xiaolango.com · 欧元</p></div><span id="tigshop-connection-badge" class="connection-badge" role="status">读取中</span></div>
+ <div class="channel-heading"><span class="channel-icon" aria-hidden="true">T</span><div><h2 data-mall-title="tigshop">Tigshop 跨境 Java</h2><small>商城系统：Tigshop 跨境 Java</small><p>xiaolango.com · 欧元</p></div><span id="tigshop-connection-badge" class="connection-badge" role="status">读取中</span></div>
  <p id="tigshop-connection-summary" class="channel-summary">正在读取已保存配置…</p>
  <div class="channel-parts"><span id="tigshop-auth-part">API Token · 读取中</span><span id="tigshop-template-part">运费模板 · 读取中</span></div>
  <details id="tigshop-connection-details" class="channel-details"><summary><span id="tigshop-connection-action">查看配置</span></summary><div class="channel-content">
- <form id="tigshopConnectionForm"><label>API Token<input id="tigshopToken" type="password" autocomplete="new-password" spellcheck="false" placeholder="填写 API Token" maxlength="128"></label><p id="tigshopConnectionStatus" class="hint" role="status">正在读取连接状态…</p><div class="actions"><button type="button" id="testTigshop" class="secondary">测试连接并读取模板</button></div><label>运费模板<select id="tigshopTemplate"><option value="0">请先测试连接</option></select></label><button type="submit" id="saveTigshop" class="primary">保存连接</button><p class="hint">密钥加密保存；留空保留已保存的 Token。</p></form>
+ <form data-mall-profile="tigshop"><label>商城名称<input name="mall_name" required maxlength="50" placeholder="例如：小蓝有品"></label><p class="hint">商城系统：Tigshop 跨境 Java（固定）。名称仅用于区分商城，不改变接口、凭据或发布记录归属。</p><button type="submit" class="secondary">保存商城名称</button><p data-profile-status role="status"></p></form><form id="tigshopConnectionForm"><label>API Token<input id="tigshopToken" type="password" autocomplete="new-password" spellcheck="false" placeholder="填写 API Token" maxlength="128"></label><p id="tigshopConnectionStatus" class="hint" role="status">正在读取连接状态…</p><div class="actions"><button type="button" id="testTigshop" class="secondary">测试连接并读取模板</button></div><label>运费模板<select id="tigshopTemplate"><option value="0">请先测试连接</option></select></label><button type="submit" id="saveTigshop" class="primary">保存连接</button><p class="hint">密钥加密保存；留空保留已保存的 Token。</p></form>
  <details class="fx-preview"><summary>人民币 → 欧元换算</summary><button type="button" id="refreshTigshopFX" class="text">读取最新汇率</button><p id="tigshopFXStatus" class="hint" role="status">发布时读取最新有效报价，重试沿用原任务汇率。</p><label>人民币金额<input id="tigshopCnyPreview" type="number" min="0" step="0.01" value="100"></label><p id="tigshopEurPreview"></p></details>
  </div></details></article></div>
  <article id="yunzhongCard" class="connection-card channel-card" data-state="loading" style="margin-top:18px">
- <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2>芸众商城</h2><p id="yunzhongSiteLabel">芸众 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
+ <div class="channel-heading"><span class="channel-icon">芸众</span><div><h2 data-mall-title="yunzhong">芸众商城</h2><small>商城系统：芸众商城</small><p id="yunzhongSiteLabel">芸众 2.3.700</p></div><span id="yunzhongBadge" class="connection-badge">读取中</span></div>
  <p class="hint">官方API仅支持两级分类、单维规格和图片详情。三级分类及完整商品资料需使用独立对接入口；入口单独安装，不覆盖商城原文件。</p>
  <details class="channel-details"><summary>扩展下载与安装</summary><div class="channel-content">
  <p id="yunzhongRelease" role="status">正在读取扩展版本…</p>
@@ -77,7 +77,7 @@
  <p class="hint">仅新增扩展文件和任务回执表，不覆盖商城原文件。预检失败请停止；已有商品的任务只核对商品 ID，不重复创建。</p>
  </div></details>
  <details id="yunzhongDetails" class="channel-details"><summary>管理芸众连接</summary><div class="channel-content">
- <form id="yunzhongForm"><label>商城网址<input id="yunzhongUrl" type="url" required placeholder="https://你的商城域名" autocomplete="url"></label><p class="hint">填写公网 HTTPS 域名，无需附加后台或接口路径。当前扩展仅支持商城账号 i=1；更换地址须重新填写密钥。</p><label>连接方式<select id="yunzhongMode"><option value="official">现有官方API（能力受限）</option><option value="bridge">独立对接入口（需先安装并预检）</option></select></label><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
+ <form data-mall-profile="yunzhong"><label>商城名称<input name="mall_name" required maxlength="50" placeholder="例如：小蓝有品"></label><p class="hint">商城系统：芸众商城（固定）。名称仅用于区分商城，不改变接口、凭据或发布记录归属。</p><button type="submit" class="secondary">保存商城名称</button><p data-profile-status role="status"></p></form><form id="yunzhongForm"><label>商城网址<input id="yunzhongUrl" type="url" required placeholder="https://你的商城域名" autocomplete="url"></label><p class="hint">填写公网 HTTPS 域名，无需附加后台或接口路径。当前扩展仅支持商城账号 i=1；更换地址须重新填写密钥。</p><label>连接方式<select id="yunzhongMode"><option value="official">现有官方API（能力受限）</option><option value="bridge">独立对接入口（需先安装并预检）</option></select></label><label>应用 APPID<input id="yunzhongAppid" autocomplete="off" inputmode="numeric" placeholder="API 应用页面的数字 APPID"></label><label>APP_Secret<input id="yunzhongSecret" type="password" autocomplete="new-password" placeholder="填写 API 应用密钥；保存后留空保留"></label>
  <label id="yunzhongCategoryModeField">商城实际分类模式<select id="yunzhongCategoryLevel"><option value="">请按照商城分类设置选择</option><option value="2">两级分类（可创建）</option><option value="3">三级分类（仅连接读取）</option></select></label><label>固定运费（元）<input id="yunzhongDispatchPrice" inputmode="decimal" placeholder="请明确填写，免运费填0"></label><div class="actions"><button id="yunzhongTest" type="button" class="secondary">测试连接并读取分类</button><button type="submit" class="primary">保存连接</button></div><p id="yunzhongStatus" class="hint" role="status"></p></form>
  <details><summary>已读取分类</summary><ul id="yunzhongCategories"></ul></details></div></details></article>
  <details class="connection-system"><summary>账号与服务状态</summary><p id="connectionSystemStatus"></p></details>

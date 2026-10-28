@@ -57,6 +57,7 @@ const db=openStore(join(dataDir,'ops.sqlite'));
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
 const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
+const mallProfiles=await connectionStore(db,dataDir,'profiles');
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
@@ -231,10 +232,19 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
     if(path==='/api/team'&&req.method==='POST'){
       if(demo)throw Error('演示模式不创建团队');const b=await body(req);
-      const created=teams.create(actor,b.name,[savedConnections,yunzhongConnections,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
+      const created=teams.create(actor,b.name,[savedConnections,yunzhongConnections,mallProfiles,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
     }
     if(path==='/api/team/members'&&req.method==='POST'){
       if(demo)throw Error('演示模式不修改团队');const b=await body(req);const result=teams.setMember(actor,b.sub,b.role,b.active??1);audit(owner,'team.member_updated',b.sub);return json(res,200,result);
+    }
+    const profileRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong)\/profile$/);
+    if(profileRoute&&req.method==='POST'){
+      if(demo)throw Error('演示模式不保存商城名称');
+      const b=await body(req),name=typeof b.name==='string'?b.name.trim():'';
+      if(!name||[...name].length>50||/[\u0000-\u001f\u007f]/.test(name))throw Error('商城名称须为1–50字，不能包含控制字符');
+      const target=profileRoute[1],profiles=mallProfiles.get(owner)||{};
+      mallProfiles.set(owner,{...profiles,[target]:{name}});audit(owner,'connection.mall_renamed',target);
+      return json(res,200,{ok:true,name,system:targets.find(t=>t.id===target).name});
     }
     const publishConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/publishing(\/test)?$/);
     if(publishConnectionRoute){
@@ -353,7 +363,7 @@ const handleRequest=async(req,res)=>{
       if(['tigshop','yunzhong'].includes(job.target)){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,JSON.parse(snapshot.product),'verify_draft'));}else await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
-    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>({...t,configured:!demo&&connected(t.id,owner)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>({...t,system:t.name,name:mallProfiles.get(owner)?.[t.id]?.name||t.name,configured:!demo&&connected(t.id,owner)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
