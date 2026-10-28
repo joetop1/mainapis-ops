@@ -14,7 +14,8 @@ export function buildYunzhongProduct(lease,{categoryIds,categoryLevel,dispatchPr
  if(product.detail_images!==undefined&&(!Array.isArray(product.detail_images)||product.detail_images.length>100))throw Error('详情图最多100张');
  if(!compatibility&&(String(product.description||'').trim()||normalizeProductAttributes(product.attributes).length))throw Error('现有芸众接口仅接受图片详情；尚不能完整保存文字详情和产品参数，已阻止创建以免丢失内容');
  if(compatibility?((product.brand_ids?.length||0)>1||product.brand_ids?.some(id=>!Number.isSafeInteger(id)||id<=0)):product.brand_ids?.length)throw Error('请选择有效的单个芸众品牌');
- if(product.tag_ids?.length||product.virtual_sales)throw Error('芸众标签和虚拟销量尚未映射，请清空CRMEB标签并将虚拟销量设为0');
+ // Virtual sales are not supported by this target and are intentionally omitted from its payload.
+ if(product.tag_ids?.length)throw Error('芸众标签尚未映射，请清空CRMEB标签后发布；虚拟销量会自动忽略');
  if(typeof dispatchPrice!=='string'||!/^\d{1,7}(\.\d{1,2})?$/.test(dispatchPrice))throw Error('请明确配置芸众固定运费，单位元');
  if(!Array.isArray(product.skus)||product.skus.length<1||product.skus.length>100)throw Error('请使用1–100个SKU');
  const images=product.images.map(image),detail=(product.detail_images||[]).map(image),matrix=specificationMatrix(product);

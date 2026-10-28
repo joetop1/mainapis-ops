@@ -12,7 +12,7 @@ test('芸众规格按SC/SV/SP插入标记映射，保留真实组合和逐SKU价
  assert.ok(payload.options.specs.every(spec=>spec.id.startsWith('SC')));assert.ok(payload.options.option.every(option=>option.id.startsWith('SP')));
 });
 test('文字、参数、三级分类和未核验字段均在写入前阻止，不静默丢失内容',()=>{
- for(const changes of [{description:'必须保留的文字'},{attributes:[{name:'材质',value:'硅胶'}]},{brand_ids:[1]},{tag_ids:[2]},{virtual_sales:5}])assert.throws(()=>buildYunzhongProduct({...lease,product:{...lease.product,...changes}},config));
+ for(const changes of [{description:'必须保留的文字'},{attributes:[{name:'材质',value:'硅胶'}]},{brand_ids:[1]},{tag_ids:[2]}])assert.throws(()=>buildYunzhongProduct({...lease,product:{...lease.product,...changes}},config));
  assert.throws(()=>buildYunzhongProduct(lease,{...config,categoryLevel:3,categoryIds:[1,9,2]}));
  assert.throws(()=>buildYunzhongProduct(lease,{...config,dispatchPrice:undefined}));
 });
@@ -28,4 +28,15 @@ test('官方读回仅覆盖部分字段，即使全部匹配也保持待人工�
  const result=verifyYunzhongOfficialProduct(actual,options,{...lease,candidate_id:'99'},config);
  assert.equal(result.status,'awaiting_review');assert.match(result.message,/基础字段与SKU已核对/);
  options.option[0].stock=999;assert.match(verifyYunzhongOfficialProduct(actual,options,{...lease,candidate_id:'99'},config).message,/不一致/);
+});
+
+test('芸众官方和独立入口均舍弃不支持的虚拟销量，保留原商品及价格库存',()=>{
+ const withSales={...lease,product:{...lease.product,virtual_sales:888}};
+ const before=structuredClone(withSales);
+ for(const compatibility of [false,true]){
+  const settings={...config,compatibility};
+  assert.deepEqual(buildYunzhongProduct(withSales,settings),buildYunzhongProduct(lease,settings));
+ }
+ assert.deepEqual(withSales,before);
+ assert.throws(()=>buildYunzhongProduct({...withSales,product:{...withSales.product,tag_ids:[2]}},config),/标签尚未映射/);
 });
