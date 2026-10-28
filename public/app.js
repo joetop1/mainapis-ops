@@ -177,13 +177,23 @@ $('#applySpecNames').onclick=()=>{
 };
 const imageFields={images:'mainImageGallery',detail_images:'detailImageGallery'};
 function imageLinks(field){return $('#productForm').elements[field].value.split('\n').map(x=>x.trim()).filter(Boolean);}
+let imageDrag=null;
+function moveGalleryImage(field,from,to){
+ const links=imageLinks(field);if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<0||from>=links.length||to>=links.length||from===to)return;
+ links.splice(to,0,links.splice(from,1)[0]);$('#productForm').elements[field].value=links.join('\n');renderImageGallery(field);
+}
 function renderImageGallery(field){
  const gallery=$('#'+imageFields[field]),links=imageLinks(field);gallery.replaceChildren();
  if(!links.length){const hint=document.createElement('p');hint.className='hint';hint.textContent=field==='images'?'尚未添加主图':'尚未添加详情图';gallery.append(hint);return;}
  links.forEach((url,index)=>{
-  const card=document.createElement('div');card.className='image-card';
+  const card=document.createElement('div');card.className='image-card';card.draggable=true;
+  card.ondragstart=e=>{if(e.target.closest('.image-card-actions')){e.preventDefault();return;}imageDrag={field,index};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','mainapis-image');card.classList.add('dragging');};
+  card.ondragover=e=>{if(imageDrag?.field!==field)return;e.preventDefault();e.dataTransfer.dropEffect='move';card.classList.add('drop-target');};
+  card.ondragleave=()=>card.classList.remove('drop-target');
+  card.ondrop=e=>{if(imageDrag?.field!==field)return;e.preventDefault();const from=imageDrag.index;imageDrag=null;moveGalleryImage(field,from,index);};
+  card.ondragend=()=>{imageDrag=null;gallery.querySelectorAll('.image-card').forEach(node=>node.classList.remove('dragging','drop-target'));};
   const preview=document.createElement('button');preview.type='button';preview.className='image-preview';preview.setAttribute('aria-label',`放大${field==='images'?'主图':'详情图'} ${index+1}`);
-  const img=document.createElement('img');img.alt=`图片 ${index+1}`;img.loading='lazy';img.referrerPolicy='no-referrer';
+  const img=document.createElement('img');img.draggable=false;img.alt=`图片 ${index+1}`;img.loading='lazy';img.referrerPolicy='no-referrer';
   // Reject unsafe schemes in editable links before assigning a browser URL.
   let safe=false;try{const parsed=new URL(url);safe=parsed.protocol==='https:'&&!parsed.username&&!parsed.password;}catch{}
   if(safe)img.src=url;
@@ -195,7 +205,9 @@ function renderImageGallery(field){
   const label=document.createElement('span');label.textContent=field==='images'&&index===0?'1 · 主图':String(index+1);
   const remove=document.createElement('button');remove.type='button';remove.className='text';remove.textContent='删除';remove.setAttribute('aria-label',`删除${field==='images'?'主图':'详情图'} ${index+1}`);
   remove.onclick=()=>{const current=imageLinks(field);current.splice(index,1);$('#productForm').elements[field].value=current.join('\n');renderImageGallery(field);};
-  footer.append(label,remove);card.append(preview,footer);gallery.append(card);
+  const moves=document.createElement('div');moves.className='image-reorder';
+  for(const [text,offset] of [['←',-1],['→',1]]){const button=document.createElement('button');button.type='button';button.className='text';button.textContent=text;button.disabled=index+offset<0||index+offset>=links.length;button.setAttribute('aria-label',(offset<0?'前移':'后移')+'图片 '+(index+1));button.onclick=()=>{moveGalleryImage(field,index,index+offset);gallery.children[index+offset]?.querySelector('.image-reorder button:not(:disabled)')?.focus();};moves.append(button);}
+  footer.append(label,moves,remove);card.append(preview,footer);gallery.append(card);
  });
 }
 for(const field of Object.keys(imageFields))$('#productForm').elements[field].addEventListener('input',()=>renderImageGallery(field));
