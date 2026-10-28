@@ -41,3 +41,14 @@ test('真实fetch通过传输器固定已校验DNS地址，私网解析在建立
  const blocked=createMallDispatcher({resolve:async()=>[{address:'169.254.169.254'}],send});
  await assert.rejects(fetch('https://merchant.example.com/',{dispatcher:blocked}));assert.equal(sent,1);
 });
+
+import {createTigshopClient} from '../tigshop-client.mjs';
+import {fetchCrmebToken} from '../crmeb-auth.mjs';
+import {crmebBrandReader} from '../crmeb-brands.mjs';
+test('CRMEB授权/品牌和Tigshop接口均使用自定义商城地址并经过公网传输器',async()=>{
+ const calls=[],fetcher=async(url,options)=>{calls.push({url,options});return {ok:true,status:200,text:async()=>JSON.stringify(url.includes('/adminapi/')?{code:0,data:[]}:{status:200,data:{token:'temporary-token',access_token:'temporary-token'}})};};
+ await fetchCrmebToken('crmeb-store',{url:'https://custom.example.com',appid:'a',appsecret:'secret'},fetcher);
+ await crmebBrandReader('crmeb-store',{url:'https://custom.example.com',appid:'a',appsecret:'secret'},fetcher)();
+ await createTigshopClient('a'.repeat(32),fetcher,'https://custom.example.com')('product/shippingTplList');
+ for(const call of calls){assert.equal(new URL(call.url).origin,'https://custom.example.com');assert.equal(call.options.redirect,'error');assert.equal(call.options.dispatcher,mallDispatcher);}
+});

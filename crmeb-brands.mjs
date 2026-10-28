@@ -1,3 +1,4 @@
+import {mallOrigin,mallDispatcher} from './mall-address.mjs';
 // Read-only credentials; fixed upstreams, no arbitrary URLs and no product writes.
 const sites={'crmeb-pro':{base:'https://xlupw.com',auth:'/outapi/access_token'},'crmeb-store':{base:'https://www.xlyp.cc',auth:'/outapi/get_token'}};
 export function crmebBrandReader(target,credentials,fetcher=fetch){
@@ -7,7 +8,7 @@ export function crmebBrandReader(target,credentials,fetcher=fetch){
  const request=async(path,options)=>{
   const stage=path===site.auth?'获取访问 Token':'读取后台品牌';
   try{
-   const r=await fetcher(site.base+path,{...options,redirect:'error',signal:AbortSignal.timeout(15000)});
+   const r=await fetcher(mallOrigin(credentials?.url||site.base)+path,{...options,redirect:'error',dispatcher:mallDispatcher,signal:AbortSignal.timeout(15000)});
    if(r.status===404)throw Error('商城'+stage+'失败：HTTP 404，请检查对应接口是否存在');
    if(!r.ok)throw Error('商城'+stage+'失败：HTTP '+r.status);
    const text=await r.text();if(text.length>2e6)throw Error('品牌响应过大');

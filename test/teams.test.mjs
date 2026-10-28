@@ -5,7 +5,7 @@ import {teamStore,teamPermission} from '../teams.mjs';
 test('creates shared ownership once, preserves job snapshots and prevents membership capture',()=>{
  const db=openStore(':memory:'),teams=teamStore(db),connections=new Map([['alice',{token:'secret'}]]);
  try{
-  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source','{}','approved',1,'now','now');db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('j','alice','p',1,'crmeb-pro','unknown','token','','','now','now');db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run('j','snapshot');
+  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source','{}','approved',1,'now','now');db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('j','alice','p',1,'crmeb-pro','unknown','token','','','now','now');db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run('j','snapshot');
   const team=teams.create('alice','运营团队',[{get:id=>connections.get(id),set:(id,value)=>connections.set(id,value)}]);
   assert.equal(db.prepare('SELECT owner FROM products').get().owner,team.id);assert.equal(db.prepare('SELECT owner FROM jobs').get().owner,team.id);assert.equal(db.prepare('SELECT claimed FROM job_snapshots').get().claimed,1);assert.equal(db.prepare('SELECT product FROM job_snapshots').get().product,'snapshot');assert.equal(connections.get(team.id).token,'secret');
   teams.setMember('alice','bob','editor');assert.equal(teams.context('bob').id,team.id);assert.throws(()=>teams.setMember('bob','eve','admin'));

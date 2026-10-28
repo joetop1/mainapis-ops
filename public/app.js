@@ -8,6 +8,9 @@ import {matchSkuImages} from './sku-images.js';
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me={},state={products:[],jobs:[],targets:[]},page='products',filter='all',editing=null,publishing=null,catalog=null,catalogRequest=0;
+const selectedMalls={},settingsRequests={};
+const mallRows=()=>state.malls||state.targets.map(t=>({...t,type:t.id,id:t.connection_id||t.id}));
+const mallFor=(id,type)=>mallRows().find(m=>m.id===id)||mallRows().find(m=>m.type===type&&m.legacy)||mallRows().find(m=>m.type===type);
 const labels={draft:'待整理',approved:'审核通过',dispatching:'发送中',accepted:'执行中',unknown:'需核对',succeeded:'发布成功',failed:'执行失败',awaiting_review:'待核对商品ID',verifying:'核对中'};
 const date=v=>new Date(v).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 function clearDialogFeedback(dialog){dialog?.querySelectorAll('[data-dialog-feedback]').forEach(node=>node.remove());}
@@ -23,7 +26,15 @@ function toast(message,{error=false}={}){
  global.textContent=message;global.classList.remove('hidden');toast.timer=setTimeout(()=>global.classList.add('hidden'),4500);
 }
 document.addEventListener('close',event=>{if(event.target.tagName==='DIALOG')clearDialogFeedback(event.target);},true);
-async function api(path,method='GET',body){const r=await fetch(path,{method,headers:method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||'请求失败');return data;}
+async function api(path,method='GET',body){
+ const type=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong)(?:\/|$)/)?.[1];
+ if(type&&selectedMalls[type])path+=(path.includes('?')?'&':'?')+'connection_id='+encodeURIComponent(selectedMalls[type]);
+ const selector=type?document.querySelector('[data-mall-selector="'+type+'"]'):null;
+ if(selector){settingsRequests[type]=(settingsRequests[type]||0)+1;selector.disabled=true;$('#addMall').disabled=true;}
+ try{const r=await fetch(path,{method,headers:method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||'请求失败');return data;}
+ finally{if(selector){settingsRequests[type]--;selector.disabled=settingsRequests[type]>0;$('#addMall').disabled=Object.values(settingsRequests).some(n=>n>0);}}
+}
+
 function empty(columns,title,description){return `<tr><td colspan="${columns}" class="empty"><div class="empty-icon">▦</div><strong>${title}</strong><p>${description}</p></td></tr>`;}
 const channelParts={'crmeb-pro':{},'crmeb-store':{},tigshop:{}};
 function recordConnectionPart(target,key,value){
@@ -47,12 +58,13 @@ function recordConnectionPart(target,key,value){
   if(!value.error&&!value.configured)card.querySelector('.channel-advanced').open=true;
  }
  const all=Object.keys(channelParts).map(t=>channelConfiguration(t,channelParts[t]));
+ if(state.malls){$('#connectionCounts').textContent=state.malls.filter(m=>m.configured).length+' 个已配置 / '+state.malls.length+' 个商城';return;}
  const counts=[['configured','已配置'],['partial','待完善'],['unconfigured','未配置'],['error','读取失败'],['loading','读取中']].map(([key,label])=>{const n=all.filter(s=>s.state===key).length;return n?n+' 个'+label:'';}).filter(Boolean);
  $('#connectionCounts').textContent=counts.join(' · ');
 }
 function publicationBadges(product){
- return '<div class="product-publications">'+state.targets.map(target=>{
-  const record=product.publications?.find(row=>row.target===target.id);
+ return '<div class="product-publications">'+mallRows().map(target=>{
+  const record=product.publications?.find(row=>row.mall_connection_id===target.id||!row.mall_connection_id&&row.target===target.type&&target.legacy);
   const status=record?.status||'none';
   const label=status==='succeeded'?'已发布':status==='failed'?'失败':status==='none'?'未发布':labels[status]||'需核对';
   const old=record&&record.revision!==product.revision?` · v${record.revision}`:'';
@@ -63,11 +75,33 @@ function publicationBadges(product){
 async function load(){state=await api('/api/state');render();renderMallNames();}
 function renderMallNames(){
  for(const target of state.targets){
-  document.querySelectorAll('[data-mall-title="'+target.id+'"]').forEach(node=>node.textContent=target.name);
-  const form=document.querySelector('[data-mall-profile="'+target.id+'"]');if(form&&document.activeElement!==form.elements.mall_name)form.elements.mall_name.value=target.name;
-  const option=$('#catalogTarget').querySelector('option[value="'+target.id+'"]');if(option)option.textContent=target.name+(target.name!==target.system?' · '+target.system:'');
+  const rows=mallRows().filter(m=>m.type===target.id),selector=document.querySelector('[data-mall-selector="'+target.id+'"]');
+  if(!rows.some(m=>m.id===selectedMalls[target.id]))selectedMalls[target.id]=rows.find(m=>m.legacy)?.id||rows[0]?.id;
+  if(selector){selector.replaceChildren(...rows.map(m=>new Option(m.name+(m.configured?'':'（待配置）'),m.id)));selector.value=selectedMalls[target.id];}
+  const mall=mallFor(selectedMalls[target.id],target.id);
+  const domain=document.querySelector('[data-mall-domain="'+target.id+'"]');if(domain)domain.textContent=mall?.url||'尚未填写商城地址';
+  document.querySelectorAll('[data-mall-title="'+target.id+'"]').forEach(node=>node.textContent=mall?.name||target.name);
+  const form=document.querySelector('[data-mall-profile="'+target.id+'"]');if(form&&document.activeElement!==form.elements.mall_name)form.elements.mall_name.value=mall?.name||target.name;
+  const option=$('#catalogTarget').querySelector('option[value="'+target.id+'"]');if(option)option.textContent=target.system;
  }
 }
+function fillCatalogMalls(id){const type=$('#catalogTarget').value,rows=mallRows().filter(m=>m.type===type);$('#catalogMall').replaceChildren(...rows.map(m=>new Option(m.name,m.id)));$('#catalogMall').value=rows.some(m=>m.id===id)?id:rows.find(m=>m.legacy)?.id||rows[0]?.id||'';}
+async function loadMallSettings(type){
+ const details=type==='yunzhong'?$('#yunzhongDetails'):$('#'+type+'-connection-details');details.open=true;
+ if(type==='yunzhong')return loadYunzhongConnection();
+ if(type==='tigshop')return loadTigshopConnection();
+ await loadCrmebAuthConnections([type]);await loadCrmebPublishConnections([type]);
+ const mall=mallFor(selectedMalls[type],type);document.querySelector('[data-crmeb-publishing="'+type+'"]').closest('details').classList.toggle('hidden',!mall?.legacy);
+}
+for(const selector of document.querySelectorAll('[data-mall-selector]'))selector.onchange=async()=>{
+ const type=selector.dataset.mallSelector;selectedMalls[type]=selector.value;
+ const card=selector.closest('article');if(channelParts[type])channelParts[type]={};card.querySelectorAll('input[type="password"]').forEach(input=>input.value='');
+ card.querySelectorAll('[data-profile-status]').forEach(node=>node.textContent='');renderMallNames();
+ try{await loadMallSettings(type);}catch(error){toast(error.message,{error:true});}
+};
+$('#addMall').onclick=()=>{$('#addMallForm').reset();$('#addMallDialog').showModal();};
+$('#closeAddMall').onclick=()=>$('#addMallDialog').close();
+$('#addMallForm').onsubmit=async event=>{event.preventDefault();const form=event.target,button=event.submitter;button.disabled=true;try{const r=await api('/api/malls','POST',{system:form.elements.system.value,name:form.elements.name.value});selectedMalls[r.connection.system]=r.connection.id;await load();$('#addMallDialog').close();await loadMallSettings(r.connection.system);toast('商城已添加，请填写并测试连接');}catch(error){toast(error.message,{error:true});}finally{button.disabled=false;}};
 for(const form of document.querySelectorAll('[data-mall-profile]'))form.onsubmit=async event=>{
  event.preventDefault();const button=form.querySelector('button'),status=form.querySelector('[data-profile-status]');button.disabled=true;
  try{await api('/api/connections/'+form.dataset.mallProfile+'/profile','POST',{name:form.elements.mall_name.value});await load();status.textContent='商城名称已保存';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}
@@ -82,7 +116,7 @@ function render(){
  const search=$('#search').value.toLowerCase(),products=state.products.filter(p=>(filter==='all'||p.status===filter)&&`${p.title} ${p.source_url}`.toLowerCase().includes(search));
  $('#count').textContent=`显示 ${products.length} 件 / 已加载 ${state.products.length} 件商品（最多 1000 件）`;
  $('#productRows').innerHTML=products.map(p=>`<tr><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title">${esc(p.title||'待采集 · '+p.source_url.match(/offer\/(\d+)/)?.[1])}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small></div></div></td><td><a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">1688 ↗</a></td><td>${p.skus.length} 个 SKU${p.spec_names?.length?`<small>${esc(p.spec_names.join(' × '))}</small>`:''}<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td><span class="badge ${p.status}">${labels[p.status]}</span></td><td>${publicationBadges(p)}</td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}">审核</button>`}</td></tr>`).join('')||empty(7,'采集箱已准备好','添加 1688 商品链接，或导入采集器整理好的 JSON 商品资料。');
- $('#jobRows').innerHTML=state.jobs.map(j=>`<tr><td>${esc(state.products.find(p=>p.id===j.product_id)?.title||'商品记录')}<small>${j.id.slice(0,8)} · v${j.revision}</small></td><td>${esc(state.targets.find(t=>t.id===j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&j.target==='yunzhong'&&j.claimed&&j.status==='unknown'&&!j.remote_id&&j.message.includes('兼容扩展返回 HTTP 400')?`<button class="text" data-recover-yunzhong="${j.id}">核对未入库并恢复原任务</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
+ $('#jobRows').innerHTML=state.jobs.map(j=>`<tr><td>${esc(state.products.find(p=>p.id===j.product_id)?.title||'商品记录')}<small>${j.id.slice(0,8)} · v${j.revision}</small></td><td>${esc(mallFor(j.mall_connection_id,j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&j.target==='yunzhong'&&j.claimed&&j.status==='unknown'&&!j.remote_id&&j.message.includes('兼容扩展返回 HTTP 400')?`<button class="text" data-recover-yunzhong="${j.id}">核对未入库并恢复原任务</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
  $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
@@ -165,7 +199,7 @@ $('#addProductAttribute').onclick=()=>attributeRow();
 $('#productAttributesFile').onchange=async event=>{
  try{const file=event.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw Error('采集文件请小于 2 MB');const rows=productAttributesFromJSON($('#productForm').elements.source_url.value,JSON.parse(await file.text()));if($('#attributeRows').children.length&&!confirm('用文件中的产品参数替换当前参数？其他商品资料不变。'))return;$('#attributeRows').replaceChildren();rows.forEach(attributeRow);toast('已补充 '+rows.length+' 项产品参数，请核对后保存');}catch(error){toast(error.message);}finally{event.target.value='';}
 };
-function edit(p=null){editing=p;$('#editorTitle').textContent=p?'编辑商品':'添加商品';const f=$('#productForm');f.reset();$('#attributeRows').replaceChildren();normalizeProductAttributes(p?.attributes).forEach(attributeRow);f.elements.catalog_target.value=p?.catalog_target||'crmeb-pro';f.elements.applicable_type.value=String(p?.applicable_type??0);$('#storeScopeField').classList.toggle('hidden',f.elements.catalog_target.value!=='crmeb-store');$('#batchPriceMode').onchange();for(const key of ['source_url','title','description'])f.elements[key].value=p?.[key]||'';f.elements.tag_ids.value=(p?.tag_ids||[]).join(',');f.elements.virtual_sales.value=p?.virtual_sales??0;f.elements.source_url.readOnly=!!p;f.elements.images.value=p?.images.join('\n')||'';f.elements.detail_images.value=(p?.detail_images||[]).join('\n');for(const field of Object.keys(imageFields))renderImageGallery(field);editingSpecNames=[...(p?.spec_names||[])];$('#specNames').value=editingSpecNames.join(', ');renderSkuHeader();$('#skuRows').innerHTML='';(p?.skus||[]).forEach(skuRow);$('#sourcingHint').textContent=p?.sourcing?`1688 采购参考价：${p.sourcing.purchase_price||'未提供'}；代发价：${p.sourcing.dropship_price||'未提供'}；来源类目：${p.sourcing.category||'未提供'}；来源标签：${p.sourcing.tags||'未提供'}；供应商销量：${p.sourcing.supplier_sales||'未提供'}（不计入商城销量）。请补充完整规格，再确认成本、售价与库存。`:'';$('#editor').showModal();loadCatalogOptions(p).catch(e=>{$('#catalogStatus').textContent=e.message;});}
+function edit(p=null){editing=p;$('#editorTitle').textContent=p?'编辑商品':'添加商品';const f=$('#productForm');f.reset();$('#attributeRows').replaceChildren();normalizeProductAttributes(p?.attributes).forEach(attributeRow);f.elements.catalog_target.value=p?.catalog_target||'crmeb-pro';fillCatalogMalls(p?.catalog_connection_id);f.elements.applicable_type.value=String(p?.applicable_type??0);$('#storeScopeField').classList.toggle('hidden',f.elements.catalog_target.value!=='crmeb-store');$('#batchPriceMode').onchange();for(const key of ['source_url','title','description'])f.elements[key].value=p?.[key]||'';f.elements.tag_ids.value=(p?.tag_ids||[]).join(',');f.elements.virtual_sales.value=p?.virtual_sales??0;f.elements.source_url.readOnly=!!p;f.elements.images.value=p?.images.join('\n')||'';f.elements.detail_images.value=(p?.detail_images||[]).join('\n');for(const field of Object.keys(imageFields))renderImageGallery(field);editingSpecNames=[...(p?.spec_names||[])];$('#specNames').value=editingSpecNames.join(', ');renderSkuHeader();$('#skuRows').innerHTML='';(p?.skus||[]).forEach(skuRow);$('#sourcingHint').textContent=p?.sourcing?`1688 采购参考价：${p.sourcing.purchase_price||'未提供'}；代发价：${p.sourcing.dropship_price||'未提供'}；来源类目：${p.sourcing.category||'未提供'}；来源标签：${p.sourcing.tags||'未提供'}；供应商销量：${p.sourcing.supplier_sales||'未提供'}（不计入商城销量）。请补充完整规格，再确认成本、售价与库存。`:'';$('#editor').showModal();loadCatalogOptions(p).catch(e=>{$('#catalogStatus').textContent=e.message;});}
 async function loadCatalogOptions(p=null,force=false){
  for(const kind of ['category','brand']){$('#'+kind+'Search').value='';$('#'+kind+'Matches').textContent='';$('#'+kind+'Select').size=1;}
  const request=++catalogRequest;catalog=null;const target=p?.catalog_target||$('#catalogTarget').value;
@@ -175,7 +209,7 @@ async function loadCatalogOptions(p=null,force=false){
  $('#categorySelect').disabled=$('#brandSelect').disabled=true;
  $('#catalogStatus').textContent='正在从所选商城读取分类和品牌…';
  try{
-  const data=await api('/api/catalog/'+target+(force?'?refresh=1':''));if(request!==catalogRequest)return;catalog=data;
+  const connectionId=p?.catalog_connection_id||$('#catalogMall').value;const data=await api('/api/catalog/'+target+'?connection_id='+encodeURIComponent(connectionId)+(force?'&refresh=1':''));if(request!==catalogRequest)return;catalog=data;
   if(!data.categoryError){
    const missing=categoryId&&!data.categories.some(x=>x.id===categoryId);
    $('#categorySelect').innerHTML='<option value="0">请从商城分类中选择</option>'+data.categories.map(x=>`<option value="${x.id}">${esc(x.label)}（${x.id}）</option>`).join('')+(missing?`<option value="${categoryId}">原分类已不可用，请重新选择</option>`:'');
@@ -205,7 +239,8 @@ for(const kind of ['category','brand']){
  $('#'+kind+'Search').oninput=()=>filterCatalog(kind);
  $('#'+kind+'Search').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#'+kind+'Select').focus();}};
 }
-$('#catalogTarget').onchange=()=>{$('#storeScopeField').classList.toggle('hidden',$('#catalogTarget').value!=='crmeb-store');$('#productForm').elements.applicable_type.value='0';$('#productForm').elements.tag_ids.value='';loadCatalogOptions({catalog_target:$('#catalogTarget').value,category_id:0,brand_ids:[]});};
+$('#catalogTarget').onchange=()=>{fillCatalogMalls();$('#storeScopeField').classList.toggle('hidden',$('#catalogTarget').value!=='crmeb-store');$('#productForm').elements.applicable_type.value='0';$('#productForm').elements.tag_ids.value='';loadCatalogOptions({catalog_connection_id:$('#catalogMall').value,catalog_target:$('#catalogTarget').value,category_id:0,brand_ids:[]});};
+$('#catalogMall').onchange=()=>{loadCatalogOptions({catalog_target:$('#catalogTarget').value,catalog_connection_id:$('#catalogMall').value,category_id:0,brand_ids:[]});};
 $('#refreshCatalog').onclick=()=>{
  const f=$('#productForm'),brand=catalog?.brands.find(x=>x.id===Number(f.elements.brand_id.value));
  loadCatalogOptions({catalog_target:$('#catalogTarget').value,category_id:Number(f.elements.category_id.value),category:f.elements.category_id.selectedOptions[0]?.textContent,brand_ids:brand?.ids||editing?.brand_ids||[]},true);
@@ -251,15 +286,15 @@ $('#applyBatchPrice').onclick=()=>{
   toast(`已设置 ${prices.length} 个规格的售价，请检查后保存商品`);
  }catch(e){toast(e.message);}
 };
-$('#productRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.edit)edit(state.products.find(p=>p.id===b.dataset.edit));if(b.dataset.approve){const p=state.products.find(p=>p.id===b.dataset.approve);if(!confirm('确认图片、分类、所有规格与售价无误，将当前版本标记为审核通过？'))return;await api('/api/products/'+p.id+'/approve','POST',{revision:p.revision});await load();toast('审核通过，可以创建发布任务');}if(b.dataset.publish){publishing=state.products.find(p=>p.id===b.dataset.publish);$('#publishTitle').textContent=publishing.title;$('#target').innerHTML=state.targets.filter(t=>!publishing.category_id||t.id===(publishing.catalog_target||'crmeb-pro')).map(t=>`<option value="${t.id}" ${t.configured?'':'disabled'}>${esc(t.name+(t.name!==t.system?' · '+t.system:''))}${t.configured?'':'（未配置连接）'}</option>`).join('');$('#publishDialog').showModal();}}catch(e){toast(e.message);}};
-$('#productForm').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const f=e.target,p={};for(const k of ['source_url','title','description'])p[k]=f.elements[k].value;p.attributes=readProductAttributes();const tags=f.elements.tag_ids.value.trim();p.tag_ids=tags?tags.split(/[,，\s]+/).map(Number):[];p.catalog_target=f.elements.catalog_target.value;if(p.catalog_target==='crmeb-store')p.applicable_type=Number(f.elements.applicable_type.value);p.category_id=Number(f.elements.category_id.value);p.category=catalog?.categories.find(x=>x.id===p.category_id)?.label||'';const brandId=Number(f.elements.brand_id.value);const brand=catalog?.brands.find(x=>x.id===brandId);if(brandId&&!brand)throw Error('请刷新后选择有效商城品牌');p.brand_ids=brand?.ids||[];p.virtual_sales=Number(f.elements.virtual_sales.value);p.detail_images=f.elements.detail_images.value.split('\n').map(x=>x.trim()).filter(Boolean);p.images=f.elements.images.value.split('\n').map(x=>x.trim()).filter(Boolean);const pendingNames=$('#specNames').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean);if(JSON.stringify(pendingNames)!==JSON.stringify(editingSpecNames))throw Error('请先点击应用规格列，再保存商品');p.skus=readSkuRows();if(editingSpecNames.length)p.spec_names=[...editingSpecNames];specificationMatrix(p);if(editing){p.revision=editing.revision;if(editing.sourcing)p.sourcing=editing.sourcing;}await api(editing?'/api/products/'+editing.id:'/api/products',editing?'PUT':'POST',p);$('#editor').close();await load();toast('商品已保存为待整理');}catch(e){toast(e.message);}finally{b.disabled=false;}};
+$('#productRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.edit)edit(state.products.find(p=>p.id===b.dataset.edit));if(b.dataset.approve){const p=state.products.find(p=>p.id===b.dataset.approve);if(!confirm('确认图片、分类、所有规格与售价无误，将当前版本标记为审核通过？'))return;await api('/api/products/'+p.id+'/approve','POST',{revision:p.revision});await load();toast('审核通过，可以创建发布任务');}if(b.dataset.publish){publishing=state.products.find(p=>p.id===b.dataset.publish);$('#publishTitle').textContent=publishing.title;$('#target').innerHTML=mallRows().filter(t=>!publishing.category_id||t.id===mallFor(publishing.catalog_connection_id,publishing.catalog_target||'crmeb-pro')?.id).map(t=>`<option value="${t.id}" ${t.configured?'':'disabled'}>${esc(t.name+' · '+t.system)}${t.configured?'':'（未配置连接）'}</option>`).join('');$('#publishDialog').showModal();}}catch(e){toast(e.message);}};
+$('#productForm').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const f=e.target,p={};for(const k of ['source_url','title','description'])p[k]=f.elements[k].value;p.attributes=readProductAttributes();const tags=f.elements.tag_ids.value.trim();p.tag_ids=tags?tags.split(/[,，\s]+/).map(Number):[];p.catalog_target=f.elements.catalog_target.value;p.catalog_connection_id=$('#catalogMall').value;if(p.catalog_target==='crmeb-store')p.applicable_type=Number(f.elements.applicable_type.value);p.category_id=Number(f.elements.category_id.value);p.category=catalog?.categories.find(x=>x.id===p.category_id)?.label||'';const brandId=Number(f.elements.brand_id.value);const brand=catalog?.brands.find(x=>x.id===brandId);if(brandId&&!brand)throw Error('请刷新后选择有效商城品牌');p.brand_ids=brand?.ids||[];p.virtual_sales=Number(f.elements.virtual_sales.value);p.detail_images=f.elements.detail_images.value.split('\n').map(x=>x.trim()).filter(Boolean);p.images=f.elements.images.value.split('\n').map(x=>x.trim()).filter(Boolean);const pendingNames=$('#specNames').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean);if(JSON.stringify(pendingNames)!==JSON.stringify(editingSpecNames))throw Error('请先点击应用规格列，再保存商品');p.skus=readSkuRows();if(editingSpecNames.length)p.spec_names=[...editingSpecNames];specificationMatrix(p);if(editing){p.revision=editing.revision;if(editing.sourcing)p.sourcing=editing.sourcing;}await api(editing?'/api/products/'+editing.id:'/api/products',editing?'PUT':'POST',p);$('#editor').close();await load();toast('商品已保存为待整理');}catch(e){toast(e.message);}finally{b.disabled=false;}};
 $('#importButton').onclick=()=>{$('#importResult').textContent='';$('#importDialog').showModal();};$('#closeImport').onclick=()=>$('#importDialog').close();$('#importFile').onchange=async e=>{const file=e.target.files[0];if(file){if(file.size>2*1024*1024)return toast('文件请小于 2 MB');$('#importText').value=await file.text();}};
 $('#importForm').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const r=await api('/api/import','POST',(/^[\s\uFEFF]*[\[{]/.test($('#importText').value)?JSON.parse($('#importText').value.replace(/^\uFEFF/,'')):{table:$('#importText').value}));$('#importResult').textContent=r.results.map(x=>`第 ${x.index+1} 件：${x.ok?'导入成功':x.error}`).join('\n');await load();toast(`成功导入 ${r.results.filter(x=>x.ok).length} 件商品`);}catch(e){toast(e.message);}finally{b.disabled=false;}};
 $('#closePublish').onclick=()=>$('#publishDialog').close();
 $('#target').onchange=()=>clearDialogFeedback($('#publishDialog'));
 $('#publishForm').onsubmit=async e=>{
  e.preventDefault();const b=e.submitter;b.disabled=true;clearDialogFeedback($('#publishDialog'));
- try{await api('/api/products/'+publishing.id+'/publish','POST',{revision:publishing.revision,target:$('#target').value});$('#publishDialog').close();await load();toast('发布任务已记录，请查看任务列表');}
+ try{await api('/api/products/'+publishing.id+'/publish','POST',{revision:publishing.revision,target:mallFor($('#target').value)?.type,connection_id:$('#target').value});$('#publishDialog').close();await load();toast('发布任务已记录，请查看任务列表');}
  catch(e){toast(e.message,{error:true});}finally{b.disabled=false;}
 };
 $('#refresh').onclick=()=>load().catch(e=>toast(e.message));$('#logout').onclick=async()=>{try{await api('/auth/logout','POST',{});location.reload();}catch(e){toast(e.message);}};
@@ -270,18 +305,18 @@ $('#jobRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
 
 let tigshopConnection=null,tigshopFX=null;
 async function loadTigshopConnection(){
- tigshopConnection=await api('/api/connections/tigshop');
+ tigshopConnection=await api('/api/connections/tigshop');$('#tigshopUrl').value=tigshopConnection.url;
  recordConnectionPart('tigshop','auth',tigshopConnection);
  $('#tigshopToken').placeholder=tigshopConnection.configured?'已保存 Token；留空保留，输入新值可更换':'填写 API Token';
  $('#tigshopConnectionStatus').textContent=tigshopConnection.configured?'已保存 API Token · 最近连接检查 '+date(tigshopConnection.testedAt):'请填写 API Token，然后测试连接。';
  if(tigshopConnection.templateId&&!$('#tigshopTemplate').querySelector('option[value="'+tigshopConnection.templateId+'"]'))$('#tigshopTemplate').innerHTML=`<option value="${tigshopConnection.templateId}">已保存模板 ${tigshopConnection.templateId}（测试连接可读取名称）</option>`;
  if(tigshopConnection.templateId)$('#tigshopTemplate').value=String(tigshopConnection.templateId);
 }
-function tigshopBusy(busy){for(const id of ['testTigshop','saveTigshop','tigshopToken','tigshopTemplate'])$('#'+id).disabled=busy;}
+function tigshopBusy(busy){for(const id of ['testTigshop','saveTigshop','tigshopToken','tigshopTemplate','tigshopUrl'])$('#'+id).disabled=busy;}
 $('#testTigshop').onclick=async()=>{
  tigshopBusy(true);$('#tigshopConnectionStatus').textContent='正在检查 Token、分类、品牌及运费模板…';
  try{
-  const result=await api('/api/connections/tigshop/test','POST',{token:$('#tigshopToken').value.trim()});
+  const result=await api('/api/connections/tigshop/test','POST',{url:$('#tigshopUrl').value.trim(),token:$('#tigshopToken').value.trim()});
   const current=Number($('#tigshopTemplate').value)||tigshopConnection?.templateId||0;
   $('#tigshopTemplate').innerHTML='<option value="0">请选择运费模板</option>'+result.templates.map(t=>`<option value="${t.id}">${esc(t.name)}（${t.id}）${t.isDefault?' · 商城默认':''}</option>`).join('');
   const selected=result.templates.some(t=>t.id===current)?current:result.templates.find(t=>t.isDefault)?.id||0;$('#tigshopTemplate').value=String(selected);
@@ -290,7 +325,7 @@ $('#testTigshop').onclick=async()=>{
 };
 $('#tigshopConnectionForm').onsubmit=async e=>{
  e.preventDefault();tigshopBusy(true);
- try{await api('/api/connections/tigshop','POST',{token:$('#tigshopToken').value.trim(),templateId:Number($('#tigshopTemplate').value)});$('#tigshopToken').value='';await loadTigshopConnection();await load();toast('Tigshop 连接已保存');}
+ try{await api('/api/connections/tigshop','POST',{url:$('#tigshopUrl').value.trim(),token:$('#tigshopToken').value.trim(),templateId:Number($('#tigshopTemplate').value)});$('#tigshopToken').value='';await loadTigshopConnection();await load();toast('Tigshop 连接已保存');}
  catch(e){$('#tigshopConnectionStatus').textContent=e.message;}finally{tigshopBusy(false);}
 };
 function previewTigshopEUR(){const amount=Number($('#tigshopCnyPreview').value);$('#tigshopEurPreview').textContent=tigshopFX&&Number.isFinite(amount)&&amount>=0?`约 €${(Math.round((amount*tigshopFX.eurPerCny+Number.EPSILON)*100)/100).toFixed(2)}`:'';}
@@ -303,7 +338,7 @@ $('#refreshTigshopFX').onclick=async()=>{
 
 async function loadCrmebAuthConnections(targets=['crmeb-pro','crmeb-store']){
  await Promise.all(targets.map(async target=>{
-  try{const c=await api('/api/connections/'+target+'/auth');recordConnectionPart(target,'auth',c);$('#'+target+'-appsecret').placeholder=c.configured?'已保存 AppSecret；留空保留，输入新值可更换':'填写 AppSecret';$('#'+target+'-appid').value=c.appid;$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存'+(c.testedAt?' · '+date(c.testedAt):''):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
+  try{const c=await api('/api/connections/'+target+'/auth');recordConnectionPart(target,'auth',c);$('#'+target+'-appsecret').placeholder=c.configured?'已保存 AppSecret；留空保留，输入新值可更换':'填写 AppSecret';$('#'+target+'-appid').value=c.appid;document.querySelector('[data-mall-url="'+target+'"]').value=c.url;document.querySelector('[data-mall-shipping="'+target+'"]').value=c.shippingTemplateId||'';const mall=mallFor(selectedMalls[target],target);document.querySelector('[data-mall-url="'+target+'"]').readOnly=!!mall?.legacy;document.querySelector('[data-mall-shipping="'+target+'"]').closest('label').classList.toggle('hidden',!!mall?.legacy);$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存'+(c.testedAt?' · '+date(c.testedAt):''):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
   catch(e){$('#'+target+'-brand-status').textContent=e.message;recordConnectionPart(target,'auth',{error:true});}
  }));
 }
@@ -312,8 +347,8 @@ async function saveCrmebAuthConnection(target,testOnly){
  form.querySelectorAll('input,button').forEach(x=>x.disabled=true);
  $('#'+target+'-brand-status').textContent='正在验证商城授权…';
  try{
-  const r=await api('/api/connections/'+target+'/auth'+(testOnly?'/test':''),'POST',{appid:$('#'+target+'-appid').value.trim(),appsecret:$('#'+target+'-appsecret').value});
-  if(!testOnly){$('#'+target+'-appsecret').value='';await loadCrmebAuthConnections([target]);}
+  const r=await api('/api/connections/'+target+'/auth'+(testOnly?'/test':''),'POST',{url:document.querySelector('[data-mall-url="'+target+'"]').value.trim(),shippingTemplateId:Number(document.querySelector('[data-mall-shipping="'+target+'"]').value),appid:$('#'+target+'-appid').value.trim(),appsecret:$('#'+target+'-appsecret').value});
+  if(!testOnly){$('#'+target+'-appsecret').value='';await load();await loadCrmebAuthConnections([target]);await loadCrmebPublishConnections([target]);}
   $('#'+target+'-brand-status').textContent=r.message+(testOnly?'。请点击保存连接。':'');
  }catch(e){$('#'+target+'-brand-status').textContent=e.message;}finally{form.querySelectorAll('input,button').forEach(x=>x.disabled=false);}
 }
@@ -322,6 +357,8 @@ for(const button of document.querySelectorAll('[data-test-auth]'))button.onclick
 
 async function loadCrmebPublishConnections(targets=['crmeb-pro','crmeb-store']){
  await Promise.all(targets.map(async target=>{
+  const mall=mallFor(selectedMalls[target],target),advanced=document.querySelector('[data-crmeb-publishing="'+target+'"]').closest('details');advanced.classList.toggle('hidden',!mall?.legacy);
+  if(mall&&!mall.legacy){recordConnectionPart(target,'publishing',{configured:mall.configured});$('#'+target+'-connection-summary').textContent=mall.configured?'独立商城连接已配置，使用 OPS 直连下架入库':'请填写该商城地址、授权及真实运费模板 ID';return;}
   try{const c=await api('/api/connections/'+target+'/publishing');recordConnectionPart(target,'publishing',c);$('#'+target+'-publish-token').placeholder=c.configured?'已配置密钥；留空保留，输入新值可更换':'填写 Webhook 密钥';$('#'+target+'-publish-url').value=c.url;$('#'+target+'-publish-status').textContent=c.configured?`已配置发布连接（${c.source==='page'?'页面保存':'原服务器配置'}），密钥不回显。可测试入口或填写新密钥后保存。`:'请填写生产 Webhook 地址和密钥。';}
   catch(e){$('#'+target+'-publish-status').textContent=e.message;recordConnectionPart(target,'publishing',{error:true});}
  }));

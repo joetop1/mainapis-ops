@@ -29,7 +29,7 @@ test('前端统一保存两商城授权，任务只取得对应临时Token；团
    assert.equal((await call(route,'POST',{appid:'different',appsecret:''})).status,400);
    bad=true;assert.equal((await call(route,'POST',{appid:'bad',appsecret:'bad'})).status,400);bad=false;assert.equal(store.get('alice').appid,credentials.appid);
    db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p'+i,'alice','source'+i,'{}','approved',1,'now','now');
-   db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('job'+i,'alice','p'+i,1,target,'accepted','callback-'+i,'','','now','now');
+   db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('job'+i,'alice','p'+i,1,target,'accepted','callback-'+i,'','','now','now');
    db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run('job'+i,'{}');
   }
   assert.equal((await call('/api/team','POST',{name:'团队'})).status,201);

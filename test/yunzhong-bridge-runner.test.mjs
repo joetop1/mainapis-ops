@@ -8,7 +8,7 @@ test('芸众直接发布、未知写入禁止重建、后续核对、已有回�
  for(const mode of ['success','unknown','existing']){
   const db=openStore(':memory:'),id='a'.repeat(32),marker='OPS-'+id;
   db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source',JSON.stringify(product),'approved',1,'now','now');
-  db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'yunzhong','dispatching','token','','','now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'yunzhong','dispatching','token','','','now','now');
   db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(product));
   let creates=0,saved=null;
   const asActual=plan=>({id:'99',marker,status:0,price:plan.base.price,cost_price:plan.base.cost_price,stock:plan.base.stock,dispatch_type:1,dispatch_price:plan.base.dispatch_price,title:plan.base.title,brand_id:0,category_paths:[plan.category_ids],images:plan.base.thumb_url,content_html:plan.content_html,spec_names:['颜色'],skus:plan.options.option.map(row=>({sku:row.goods_sn,price:row.product_price,cost:row.cost_price,stock:row.stock,image:row.thumb,spec_values:['红']}))});

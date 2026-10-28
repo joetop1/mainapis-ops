@@ -1,3 +1,4 @@
+import {mallOrigin} from './mall-address.mjs';
 import {randomUUID} from 'node:crypto';
 import {createTigshopClient,tigshopShipping} from './tigshop-client.mjs';
 import {buildTigshopProduct,verifyTigshopProduct} from './tigshop.mjs';
@@ -22,9 +23,10 @@ export function createTigshopRunner({db,getConnection,audit,fetcher=fetch}){
  return async(job,action='publish_draft')=>{
   let writing=false,verifying=action==='verify_draft';
   try{
-   const connection=getConnection(job.owner);if(!connection?.token)throw Error('请先在连接设置填写 Tigshop API Token');
-   const client=createTigshopClient(connection.token,fetcher);
+   const connection=getConnection(job.owner,job);if(!connection?.token)throw Error('请先在连接设置填写 Tigshop API Token');
+   const client=createTigshopClient(connection.token,fetcher,connection.url);
    const {snapshot,lease}=leaseFor(job);
+   if(mallOrigin(lease.product.tigshop?.origin||'https://xiaolango.com')!==mallOrigin(connection.url||'https://xiaolango.com'))throw Error('商城地址与任务快照不一致');
    if(verifying){await verify(job,client,lease,snapshot.verification_nonce);return;}
    if(snapshot.claimed)throw Error('此任务已领取创建操作，请核对商品 ID');
    const templates=await tigshopShipping(client);

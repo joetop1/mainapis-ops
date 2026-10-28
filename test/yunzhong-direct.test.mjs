@@ -8,7 +8,7 @@ test('官方创建分步执行：部分核对不报成功，未知结果不重�
  for(const mode of ['success','unknown','options-failed','existing']){
   const db=openStore(':memory:'),id='a'.repeat(32),marker='OPS-'+id;
   db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source',JSON.stringify(product),'approved',1,'now','now');
-  db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'yunzhong','dispatching','token','','','now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'yunzhong','dispatching','token','','','now','now');
   db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(product));
   let creates=0,optionsWrites=0;const expected=buildYunzhongProduct({product,marker},product.yunzhong);let saved=mode==='existing'?{id:99,...expected.base}:null;
   const runner=createYunzhongRunner({db,getConnection:()=>({appid:'1',appsecret:'secret',mode:'official',publishingReady:true}),audit:()=>{},fetcher:async(url,options)=>{

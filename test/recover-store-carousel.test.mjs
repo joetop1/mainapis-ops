@@ -6,7 +6,7 @@ import {recoverKnownCarouselRejection} from '../recover-store-carousel.mjs';
 function fixture(){
  const db=openStore(':memory:'),p={source_url:'https://detail.1688.com/offer/755369163302.html',catalog_target:'crmeb-store',images:['https://example.com/a.jpg'],skus:[{sku:'A',price:10,stock:8}]};
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice',p.source_url,JSON.stringify(p),'approved',8,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','secret','已确认执行13因 presale_status 缺失在保存事务前失败；商城修复后可重发同一任务','','now','now');
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','secret','已确认执行13因 presale_status 缺失在保存事务前失败；商城修复后可重发同一任务','','now','now');
  db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run(REJECTED_JOB,JSON.stringify(p));
  db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run('prev','alice','job.recover_known_presale_rejection',REJECTED_JOB,'2026-10-24T15:00:00.000Z');
  db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run('claim','alice','job.claim_create',REJECTED_JOB,'2026-10-24T15:01:00.000Z');return db;

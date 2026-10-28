@@ -6,7 +6,7 @@ import {PRESALE_CLAIM_TIME,recoverKnownPresaleRejection} from '../recover-store-
 function fixture(){
  const db=openStore(':memory:'),p={catalog_target:'crmeb-store',source_url:'https://detail.1688.com/offer/755369163302.html',skus:[{sku:'A',price:10,cost:4.73,stock:8}]};
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice',p.source_url,JSON.stringify(p),'approved',8,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','secret','已确认本次请求在多门店鉴权中间件被拒绝；修正请求头后可重发同一任务','','now','now');
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','secret','已确认本次请求在多门店鉴权中间件被拒绝；修正请求头后可重发同一任务','','now','now');
  db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run(REJECTED_JOB,JSON.stringify(p));
  db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run('recovery','alice','job.recover_known_auth_rejection',REJECTED_JOB,'2026-10-24T14:51:11.363Z');
  db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run('claim','alice','job.claim_create',REJECTED_JOB,PRESALE_CLAIM_TIME);return db;

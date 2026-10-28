@@ -1,16 +1,18 @@
+import {mallOrigin,mallDispatcher} from './mall-address.mjs';
 const base='https://xiaolango.com/adminapi/product/';
 export function requireTigshopToken(value){
  const token=String(value||'').trim();
  if(!/^[0-9a-f]{32}$/i.test(token))throw Error('请填写 Tigshop 后台生成的 32 位 API Token');
  return token;
 }
-export function createTigshopClient(token,fetcher=fetch){
+export function createTigshopClient(token,fetcher=fetch,origin='https://xiaolango.com'){
+ const endpoint=mallOrigin(origin)+'/adminapi/product/';
  token=requireTigshopToken(token);
  return async(path,body)=>{
   // Fixed server-side endpoint allowlist. Credentials never follow redirects.
   if(!/^(product\/(shippingTplList|create|detail\?id=[1-9][0-9]{0,14}|list\?page=1&size=100&keyword=OPS-[0-9a-f]{32})|category\/getAllCategory|brand\/search)$/.test(path))throw Error('不支持的商城接口');
   try{
-   const r=await fetcher(base+path,{method:body===undefined?'GET':'POST',headers:{'X-Api-Token':token,'X-ADMIN-TYPE':'admin',Accept:'application/json',...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'error',signal:AbortSignal.timeout(15000)});
+   const r=await fetcher(endpoint+path,{method:body===undefined?'GET':'POST',headers:{'X-Api-Token':token,'X-ADMIN-TYPE':'admin',Accept:'application/json',...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'error',dispatcher:mallDispatcher,signal:AbortSignal.timeout(15000)});
    if(r.status===401||r.status===403)throw Error('Tigshop 鉴权或权限检查失败，请检查 API Token');
    if(!r.ok)throw Error('Tigshop 返回 HTTP '+r.status);
    const text=await r.text();if(text.length>2e6)throw Error('商城响应过大');

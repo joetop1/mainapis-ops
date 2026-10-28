@@ -7,7 +7,7 @@ const p={catalog_target:'tigshop',category_id:1,brand_ids:[],title:'测试',imag
 function setup(mode){
  const db=openStore(':memory:'),id=uid(),requests=[];
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','https://detail.1688.com/offer/1.html','{}','approved',1,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'tigshop','dispatching','private-token','','','now','now');
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'tigshop','dispatching','private-token','','','now','now');
  db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(p));
  const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id),marker='OPS-'+id.replaceAll('-','');let created=false;
  const fetcher=async(url,options)=>{

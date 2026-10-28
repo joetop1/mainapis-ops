@@ -13,8 +13,8 @@ function inspect(){
  if(!p.skus?.length||p.skus.some(x=>x.stock!==0))throw Error('任务快照并非全部零库存');
  return j;
 }
- const job=inspect();if(job.owner!==owner)throw Error('任务不存在');const connection=getConnection(owner);
- const client=createTigshopClient(connection?.token);
+ const job=inspect();if(job.owner!==owner)throw Error('任务不存在');const connection=getConnection(owner,job);
+ const client=createTigshopClient(connection?.token,fetch,connection?.url);
  const r=await client('product/list?page=1&size=100&keyword='+marker);
  if(!Array.isArray(r.data?.records)||Number(r.data.total)!==0||r.data.records.length!==0)throw Error('商城未确认任务货号记录为空，未解除领取锁');
  db.exec('BEGIN IMMEDIATE');

@@ -42,7 +42,7 @@ test('settings authenticate, isolate secrets and migrate an unclaimed n8n task t
   assert.equal((await call('/api/connections/tigshop',{method:'POST',body:{templateId:51}})).status,200);
   const id=uid(),p={catalog_target:'tigshop',category_id:1,brand_ids:[2],title:'测试',images:['https://example.com/a.jpg'],skus:[{sku:'A',spec:'红',price:80,cost:40,stock:2}],tigshop:{fx:{sourceCurrency:'CNY',targetCurrency:'EUR',eurPerCny:0.125,rateDate:'2026-10-23'},shipping:{templateId:51}}};
   db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','https://detail.1688.com/offer/1.html',JSON.stringify(p),'approved',1,'now','now');
-  db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'tigshop','accepted','legacy-callback-token','','','now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'tigshop','accepted','legacy-callback-token','','','now','now');
   db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(p));
   let releaseBody,bodyStarted;
   const started=new Promise(resolve=>bodyStarted=resolve),gate=new Promise(resolve=>releaseBody=resolve);

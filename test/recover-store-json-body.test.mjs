@@ -6,7 +6,7 @@ const flags={merchantEmptyConfirmed:true,execution30Confirmed:true};
 function fixture(){
  const db=openStore(':memory:'),p={catalog_target:'crmeb-store',title:'TENGA LOTION水溶性润滑液',skus:[{stock:1,price:10}]};
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source',JSON.stringify(p),'approved',2,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(JSON_BODY_JOB,'alice','p',2,'crmeb-store','accepted','secret','n8n 已接收，等待执行结果','','now','now');
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(JSON_BODY_JOB,'alice','p',2,'crmeb-store','accepted','secret','n8n 已接收，等待执行结果','','now','now');
  db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run(JSON_BODY_JOB,JSON.stringify(p));
  db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run('claim','alice','job.claim_create',JSON_BODY_JOB,'now');return db;
 }

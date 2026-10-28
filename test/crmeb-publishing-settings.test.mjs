@@ -31,7 +31,7 @@ test('publishing settings override environment per owner and mall, redact secret
   assert.equal((await call(path,'POST',{url,token:''})).status,200);assert.equal(store.get('alice').webhookToken,token);
   const id='12345678-1234-1234-1234-123456789abc';
   db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','source','{}','approved',1,'now','now');
-  db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'crmeb-pro','unknown','callback-secret','','','now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'crmeb-pro','unknown','callback-secret','','','now','now');
   db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,'{}');
   assert.equal((await call('/api/jobs/'+id+'/retry','POST')).status,202);
   const dispatched=requests.at(-1);assert.equal(dispatched.url,url);assert.equal(dispatched.options.headers['X-Ops-Token'],token);assert.equal(JSON.parse(dispatched.options.body).job_id,id);

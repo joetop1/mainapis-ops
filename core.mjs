@@ -1,6 +1,7 @@
 import {normalizeProductAttributes} from './public/product-attributes.js';
 import {specificationMatrix} from './public/specifications.js';
 import { DatabaseSync } from 'node:sqlite';
+import {existsSync,chmodSync} from 'node:fs';
 import { randomUUID, randomBytes, timingSafeEqual, createPublicKey, verify } from 'node:crypto';
 export const uid = () => randomUUID();
 export const secret = () => randomBytes(32).toString('base64url');
@@ -22,6 +23,7 @@ export function validateProduct(input) {
     p.category_id=input.category_id;p.catalog_target=input.catalog_target||'crmeb-pro';
   }
   if(input.catalog_target!==undefined)p.catalog_target=input.catalog_target;
+  if(input.catalog_connection_id!==undefined){if(typeof input.catalog_connection_id!=='string'||input.catalog_connection_id.length>100||!input.catalog_connection_id)throw Error('商城连接 ID 无效');p.catalog_connection_id=input.catalog_connection_id;}
   if(p.catalog_target==='crmeb-store'){p.applicable_type=input.applicable_type??0;if(![0,1].includes(p.applicable_type))throw Error('请选择所有门店或仅平台');}
   if(input.sourcing!==undefined){
     if(!input.sourcing||typeof input.sourcing!=='object'||Array.isArray(input.sourcing))throw Error('采购参考资料格式错误');
@@ -66,15 +68,20 @@ export function verifyIdToken(token,jwks,{issuer,audience,nonce,now=Math.floor(D
   return claims;
 }
 export function openStore(path) {
-  const db=new DatabaseSync(path); db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+  const existed=path!==':memory:'&&existsSync(path),db=new DatabaseSync(path);
+  const jobTable=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get();
+  if(existed&&jobTable&&!db.prepare('PRAGMA table_info(jobs)').all().some(row=>row.name==='mall_connection_id')){const backup=path+'.pre-mall-connections-'+Date.now()+'.sqlite';db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
   CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, owner TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(owner,source));
   CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), revision INTEGER NOT NULL, target TEXT NOT NULL, status TEXT NOT NULL, token TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL);
-  DROP INDEX IF EXISTS jobs_active;
-  CREATE UNIQUE INDEX jobs_active ON jobs(product_id,revision,target) WHERE status IN ('dispatching','accepted','succeeded','unknown','awaiting_review','verifying');
   CREATE TABLE IF NOT EXISTS job_snapshots(job_id TEXT PRIMARY KEY REFERENCES jobs(id), product TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0, candidate_id TEXT NOT NULL DEFAULT '', verification_nonce TEXT NOT NULL DEFAULT '');
   CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL, expires INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, owner TEXT NOT NULL, action TEXT NOT NULL, object_id TEXT NOT NULL, created TEXT NOT NULL);
-  `); return db;
+  `);
+  if(!db.prepare('PRAGMA table_info(jobs)').all().some(row=>row.name==='mall_connection_id'))db.exec("ALTER TABLE jobs ADD COLUMN mall_connection_id TEXT NOT NULL DEFAULT ''");
+  const index=db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='jobs_active'").get();
+  if(!index?.sql.includes('mall_connection_id'))db.exec("DROP INDEX IF EXISTS jobs_active; CREATE UNIQUE INDEX jobs_active ON jobs(product_id,revision,target,mall_connection_id) WHERE status IN ('dispatching','accepted','succeeded','unknown','awaiting_review','verifying')");
+  return db;
 }
 export const now=()=>new Date().toISOString();
 export const decodeProduct=r=>({...JSON.parse(r.data),id:r.id,status:r.status,revision:r.revision,updated:r.updated});

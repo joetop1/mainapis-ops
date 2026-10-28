@@ -7,13 +7,14 @@ export function teamStore(db){
  return {
   member,
   context(sub){const m=member(sub);return m?.active?{id:m.team_id,name:m.name,role:m.role}:null;},
-  create(sub,name,stores){
+  create(sub,name,stores,moveConnections=null){
    name=String(name||'').trim();if(!name||name.length>60)throw Error('团队名称请填写1–60个字符');
    if(member(sub))throw Error('该账号已有团队成员记录');
    const id='team:'+uid();db.exec('BEGIN IMMEDIATE');
    try{
     db.prepare('INSERT INTO teams VALUES(?,?,?,?)').run(id,name,sub,now());
     db.prepare('INSERT INTO team_members VALUES(?,?,?,1)').run(sub,id,'admin');
+    if(moveConnections)moveConnections(sub,id);
     db.prepare('UPDATE products SET owner=? WHERE owner=?').run(id,sub);
     db.prepare('UPDATE jobs SET owner=? WHERE owner=?').run(id,sub);
     for(const store of stores){const connection=store.get(sub);if(connection)store.set(id,connection);}
@@ -37,6 +38,7 @@ export function teamPermission(role,path,method){
  if(!role||role==='admin')return true;
  if(path==='/api/team'&&method==='GET')return true;
  if(path==='/auth/logout')return true;
+ if(path==='/api/malls'&&method!=='GET')return false;
  if(path.startsWith('/api/connections/')||path.startsWith('/api/team'))return false;
  if(['GET','HEAD'].includes(method))return true;
  if(role==='editor')return path==='/api/import'||path==='/api/products'||(/^\/api\/products\/[^/]+$/.test(path)&&method==='PUT');

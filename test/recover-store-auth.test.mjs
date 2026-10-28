@@ -5,7 +5,7 @@ import {REJECTED_JOB,recoverKnownAuthorizationRejection} from '../recover-store-
 function fixture(){
  const db=openStore(':memory:');const p={catalog_target:'crmeb-store',source_url:'https://detail.1688.com/offer/755369163302.html',skus:[{sku:'A',price:10,stock:9}]};
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice',p.source_url,JSON.stringify(p),'approved',8,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','private-token','官方接口未返回明确成功，请先在商城仓库核对，禁止重新创建','','now','now');
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(REJECTED_JOB,'alice','p',8,'crmeb-store','unknown','private-token','官方接口未返回明确成功，请先在商城仓库核对，禁止重新创建','','now','now');
  db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run(REJECTED_JOB,JSON.stringify(p));return db;
 }
 test('仅恢复已确认410003鉴权拒绝的特定任务，保留原快照和所有商品数据',()=>{

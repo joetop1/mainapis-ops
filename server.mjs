@@ -1,4 +1,6 @@
-import {mallOrigin,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
+import {mallConnections,MALL_SYSTEMS} from './mall-connections.mjs';
+import {createCrmebRunner} from './crmeb-direct.mjs';
+import {mallOrigin,mallDispatcher,LEGACY_YUNZHONG_ORIGIN} from './mall-address.mjs';
 import {createYunzhongPackage} from './yunzhong-package.mjs';
 import {recoverYunzhongUncreated} from './yunzhong-recovery.mjs';
 import {createYunzhongBridge,yunzhongCatalog,YUNZHONG_BRIDGE} from './yunzhong-bridge.mjs';
@@ -42,12 +44,20 @@ const allowed=(process.env.ALLOWED_SUBJECTS||'').split(',').map(s=>s.trim()).fil
 const webhook=process.env.N8N_WEBHOOK_URL||'', hookToken=process.env.N8N_WEBHOOK_TOKEN||'';
 const storeWebhook=process.env.N8N_STORE_WEBHOOK_URL||'',storeHookToken=process.env.N8N_STORE_WEBHOOK_TOKEN||'';
 const officialTargets=['crmeb-pro','crmeb-store','tigshop','yunzhong'];
-const connectionFor=(target,owner)=>{
- const saved=owner?brandConnectionStores[target]?.get(owner):null;
+const connectionFor=(target,owner,connectionId)=>{
+ const row=malls.get(owner,connectionId,target),scope=malls.scope(row);
+ const saved=brandConnectionStores[target]?.get(scope);
  if(saved?.webhookUrl&&saved?.webhookToken)return {url:saved.webhookUrl,token:saved.webhookToken};
+ if(!row.legacy)return {url:'',token:''};
  return target==='crmeb-pro'?{url:webhook,token:hookToken}:target==='crmeb-store'?{url:storeWebhook,token:storeHookToken}:{url:'',token:''};
 };
-const connected=(target,owner)=>target==='yunzhong'?(['official','bridge'].includes(yunzhongConnections.get(owner)?.mode)&&!!yunzhongConnections.get(owner)?.publishingReady):target==='tigshop'?!!getTigshopConnection(owner)?.token:!!(connectionFor(target,owner).url&&connectionFor(target,owner).token);
+const credentialsFor=(target,owner,connectionId)=>{const row=malls.get(owner,connectionId,target),scope=malls.scope(row);return (target==='yunzhong'?yunzhongConnections:target==='tigshop'?savedConnections:brandConnectionStores[target]).get(scope);};
+const connected=(target,owner,connectionId)=>{
+ const row=malls.get(owner,connectionId,target),c=credentialsFor(target,owner,row.id);
+ if(target==='yunzhong')return ['official','bridge'].includes(c?.mode)&&!!c?.publishingReady;
+ if(target==='tigshop')return !!c?.token;
+ return row.legacy?!!(connectionFor(target,owner,row.id).url&&connectionFor(target,owner,row.id).token):!!(c?.appid&&c?.appsecret&&c?.url&&c?.shippingTemplateId&&c?.authTestedAt);
+};
 const host=demo?'127.0.0.1':(process.env.HOST||'0.0.0.0');
 if(!demo && new URL(origin).protocol!=='https:') throw Error('生产 APP_ORIGIN 必须是 HTTPS');
 if(!demo && new URL(issuer).protocol!=='https:') throw Error('Casdoor 必须是 HTTPS');
@@ -59,11 +69,22 @@ const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
 const mallProfiles=await connectionStore(db,dataDir,'profiles');
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
+const malls=mallConnections(db,mallProfiles);
+// Idempotent migration of persisted owners before any task can resume.
+for(const row of db.prepare("SELECT owner FROM products UNION SELECT owner FROM jobs UNION SELECT owner FROM connections UNION SELECT owner FROM connections_yunzhong UNION SELECT owner FROM connections_crmeb_pro UNION SELECT owner FROM connections_crmeb_store UNION SELECT owner FROM connection_profiles").all())malls.ensure(row.owner);
 const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
-function getTigshopConnection(owner){return owner?savedConnections.get(owner):null;}
-const yunzhongRunner=createYunzhongRunner({db,getConnection:owner=>yunzhongConnections.get(owner),audit:(...args)=>audit(...args)});
+function requireDistinctMall(owner,row,url){
+ for(const other of malls.list(owner)){
+  if(other.id===row.id||other.system!==row.system)continue;
+  const c=credentialsFor(other.system,owner,other.id);if(!c?.appid&&!c?.token)continue;
+  if(mallOrigin(c.url||MALL_SYSTEMS[other.system].origin)===url)throw Error('该系统的商城地址已配置，请使用已有连接，避免重复发布');
+ }
+}
+function getTigshopConnection(owner,job){return owner?credentialsFor('tigshop',owner,job?.mall_connection_id):null;}
+const yunzhongRunner=createYunzhongRunner({db,getConnection:(owner,job)=>credentialsFor('yunzhong',owner,job?.mall_connection_id),audit:(...args)=>audit(...args)});
 const directRunner=createTigshopRunner({db,getConnection:getTigshopConnection,audit:(...args)=>audit(...args)});
+const crmebRunner=createCrmebRunner({db,getConnection:job=>credentialsFor(job.target,job.owner,job.mall_connection_id),audit:(...args)=>audit(...args)});
 const targets=[{id:'yunzhong',name:'芸众商城',version:'2.3.700',url:'https://asns.cc/admin/shop'},{id:'crmeb-pro',name:'CRMEB 会员商城',version:'4.3',url:'https://www.xlupw.com/admin'},{id:'crmeb-store',name:'CRMEB 多门店',version:'4.2',url:'https://www.xlyp.cc/admin'},{id:'tigshop',name:'Tigshop 跨境 Java',version:'5.8.60',url:'https://xiaolango.com/admin'}];
 function sessionGet(req) {
   const sid=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('ops_session='))?.slice(12);
@@ -92,22 +113,24 @@ async function remoteJSON(url,options={}) {
 }
 const catalogLoaders=Object.fromEntries(['crmeb-pro','crmeb-store'].map(target=>[target,createCatalogLoader(remoteJSON,target)]));
 const tigshopCatalogs=new Map();
-function catalogLoader(target,owner){
- if(target==='yunzhong')return async()=>{const connection=yunzhongConnections.get(owner);if(connection?.mode==='bridge'&&connection?.publishingReady)return yunzhongCatalog(await createYunzhongBridge(connection)('capabilities'));if(connection?.mode!=='official'||!connection?.publishingReady)throw Error('请先测试并保存芸众官方API连接及两级分类设置');return {...await loadYunzhongCategories(createYunzhongClient(connection)),categoryLevel:connection.categoryLevel};};
+function catalogLoader(target,owner,connectionId){
+ const row=malls.get(owner,connectionId,target),c=credentialsFor(target,owner,row.id),key=JSON.stringify([owner,row.id]);
+ if(target==='yunzhong')return async()=>{if(c?.mode==='bridge'&&c?.publishingReady)return {...yunzhongCatalog(await createYunzhongBridge(c)('capabilities')),connectionId:row.id};if(c?.mode!=='official'||!c?.publishingReady)throw Error('请先测试并保存该芸众连接');return {...await loadYunzhongCategories(createYunzhongClient(c)),categoryLevel:c.categoryLevel,connectionId:row.id};};
  if(target!=='tigshop'){
-  const c=brandConnectionStores[target]?.get(owner);if(!c?.appid||!c?.appsecret||!c.testedAt)return catalogLoaders[target];
-  const key=JSON.stringify([owner,target]);
-  if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader(remoteJSON,target,crmebBrandReader(target,c)));
-  return privateBrandCatalogs.get(key);
+  if(!row.legacy&&!c?.url)throw Error('请先保存该商城连接');
+  if(!privateBrandCatalogs.has(key))privateBrandCatalogs.set(key,createCatalogLoader((url)=>remoteJSON(url,{dispatcher:mallDispatcher}),target,c?.appid&&c?.appsecret&&(c?.testedAt||c?.authTestedAt)?crmebBrandReader(target,c):null,c?.url));
+  return async(force)=>({...await privateBrandCatalogs.get(key)(force),connectionId:row.id});
  }
- if(!tigshopCatalogs.has(owner)){
-  const connection=getTigshopConnection(owner);if(!connection?.token)throw Error('请先到连接设置保存 Tigshop API Token');
-  const client=createTigshopClient(connection.token);
-  tigshopCatalogs.set(owner,createTigshopCatalog(url=>client(url.replace('https://xiaolango.com/adminapi/product/','')),connection.token));
+ if(!tigshopCatalogs.has(key)){
+  if(!c?.token)throw Error('请先保存该 Tigshop 连接');const client=createTigshopClient(c.token,fetch,c.url);
+  tigshopCatalogs.set(key,createTigshopCatalog(url=>client(url.replace('https://xiaolango.com/adminapi/product/','')),c.token));
  }
- return tigshopCatalogs.get(owner);
+ return async(force)=>({...await tigshopCatalogs.get(key)(force),connectionId:row.id});
 }
-async function validateCatalog(p,owner){if(p.category_id||p.brand_ids?.length)applyCatalog(p,await catalogLoader(p.catalog_target||'crmeb-pro',owner)());return p;}
+async function validateCatalog(p,owner){
+ const target=p.catalog_target||'crmeb-pro',row=malls.get(owner,p.catalog_connection_id,target);p.catalog_connection_id=row.id;
+ if(p.category_id||p.brand_ids?.length)applyCatalog(p,await catalogLoader(target,owner,row.id)());return p;
+}
 async function discovery() {
   const meta=await remoteJSON(issuer+'/.well-known/openid-configuration');
   if(meta.issuer!==issuer)throw Error('Casdoor discovery issuer 与配置不一致');
@@ -122,6 +145,11 @@ function putProduct(owner,input) {
 }
 // Only configured server endpoints are called. Product URLs are stored, never fetched here.
 async function dispatch(job,p,action='publish_draft',verification={}) {
+ try {
+  job=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id)||job;
+  const mall=malls.forJob(job);job={...job,mall_connection_id:mall.id};
+  if(p.catalog_connection_id&&p.catalog_connection_id!==mall.id)throw Error('任务快照与目标商城连接不匹配');
+  if(['crmeb-pro','crmeb-store'].includes(job.target)&&!mall.legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await crmebRunner(job,action);return;}
   if(job.target==='yunzhong'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await yunzhongRunner(job,action);return;}
   if(job.target==='tigshop'){
     db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);
@@ -129,13 +157,14 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
   }
   const payload={job_id:job.id,idempotency_key:job.id,action,target:job.target,product_revision:job.revision,product:p,...verification,callback:{url:origin+'/api/callback/'+job.id,token:job.token}};
   try {
-    const connection=connectionFor(job.target,job.owner);if(!connection.url||!connection.token)throw Error('目标商城未配置');
+    const connection=connectionFor(job.target,job.owner,job.mall_connection_id);if(!connection.url||!connection.token)throw Error('目标商城未配置');
     const r=await fetch(connection.url,{method:'POST',headers:{'Content-Type':'application/json','X-Ops-Token':connection.token,'Idempotency-Key':job.id},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(15000)});
     if(r.ok)db.prepare("UPDATE jobs SET status='accepted',message='n8n 已接收，等待执行结果',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
     else db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('发布入口返回 HTTP '+r.status+'；请到连接与配置测试该商城发布入口，核对后重发原未领取任务',now(),job.id);
   } catch {db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
+ }catch{db.prepare("UPDATE jobs SET status='unknown',message='商城连接或任务归属发生变化，请核对原商城记录；未自动重发',updated=? WHERE id=? AND status NOT IN ('succeeded','failed')").run(now(),job.id);}
 }
-db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE status='dispatching' OR (target IN ('tigshop','yunzhong') AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))").run(now());
+db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE status='dispatching' OR (target IN ('tigshop','yunzhong','crmeb-pro','crmeb-store') AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))").run(now());
 setInterval(()=>db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()),60000).unref();
 const handleRequest=async(req,res)=>{
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
@@ -175,7 +204,7 @@ const handleRequest=async(req,res)=>{
       const snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
       if(route[2]==='/merchant-token'){
         if(demo||!['crmeb-pro','crmeb-store'].includes(job.target)||!snapshot||!['dispatching','accepted','unknown','awaiting_review','verifying'].includes(job.status))return json(res,409,{error:'此任务不可获取商城授权'});
-        const token=await fetchCrmebToken(job.target,brandConnectionStores[job.target].get(job.owner));
+        const token=await fetchCrmebToken(job.target,credentialsFor(job.target,job.owner,job.mall_connection_id));
         // The task may have completed while the merchant auth request was in flight.
         const latest=db.prepare('SELECT status,owner FROM jobs WHERE id=?').get(id);
         if(!latest||latest.owner!==job.owner||!['dispatching','accepted','unknown','awaiting_review','verifying'].includes(latest.status))return json(res,409,{error:'任务状态已变化'});
@@ -228,78 +257,97 @@ const handleRequest=async(req,res)=>{
       return json(res,200,{name:release.name,version:release.version,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/1688-collector/download'});
     }
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
+    malls.ensure(owner);
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
     if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
     if(path==='/api/team'&&req.method==='POST'){
       if(demo)throw Error('演示模式不创建团队');const b=await body(req);
-      const created=teams.create(actor,b.name,[savedConnections,yunzhongConnections,mallProfiles,...Object.values(brandConnectionStores)]);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
+      const created=teams.create(actor,b.name,[savedConnections,yunzhongConnections,mallProfiles,...Object.values(brandConnectionStores)],malls.moveOwner);audit(created.id,'team.created',created.id);return json(res,201,{team:created});
     }
     if(path==='/api/team/members'&&req.method==='POST'){
       if(demo)throw Error('演示模式不修改团队');const b=await body(req);const result=teams.setMember(actor,b.sub,b.role,b.active??1);audit(owner,'team.member_updated',b.sub);return json(res,200,result);
     }
+    if(path==='/api/malls'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不添加商城');const b=await body(req),row=malls.create(owner,b.system,b.name);audit(owner,'connection.mall_created',row.id);return json(res,201,{connection:row});
+    }
+    const settingsSystem=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong)(?:\/|$)/)?.[1];
+    const settingsMall=settingsSystem?malls.get(owner,new URL(req.url,origin).searchParams.get('connection_id'),settingsSystem):null;
+    const settingsScope=settingsMall?malls.scope(settingsMall):owner;
     const profileRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong)\/profile$/);
     if(profileRoute&&req.method==='POST'){
       if(demo)throw Error('演示模式不保存商城名称');
       const b=await body(req),name=typeof b.name==='string'?b.name.trim():'';
       if(!name||[...name].length>50||/[\u0000-\u001f\u007f]/.test(name))throw Error('商城名称须为1–50字，不能包含控制字符');
-      const target=profileRoute[1],profiles=mallProfiles.get(owner)||{};
-      mallProfiles.set(owner,{...profiles,[target]:{name}});audit(owner,'connection.mall_renamed',target);
+      const target=profileRoute[1],profiles=mallProfiles.get(owner)||{};malls.rename(owner,settingsMall.id,name);
+      if(settingsMall.legacy)mallProfiles.set(owner,{...profiles,[target]:{name}});audit(owner,'connection.mall_renamed',target);
       return json(res,200,{ok:true,name,system:targets.find(t=>t.id===target).name});
     }
     const publishConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/publishing(\/test)?$/);
     if(publishConnectionRoute){
-      const target=publishConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner),current=connectionFor(target,owner);
+      const target=publishConnectionRoute[1],store=brandConnectionStores[target],old=store.get(settingsScope),current=connectionFor(target,owner,settingsMall.id);
       if(req.method==='GET'&&!publishConnectionRoute[2])return json(res,200,{configured:!!(current.url&&current.token),url:current.url||('https://n8n.mainapis.com/webhook/'+(target==='crmeb-pro'?'ops-crmeb-official':'ops-crmeb-store')),hasToken:!!current.token,source:old?.webhookToken?'page':'environment'});
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不保存或测试发布连接');
         const b=await body(req),connection=validateCrmebWebhook(target,b.url||current.url,b.token||current.token);
         if(publishConnectionRoute[2])return json(res,200,await testCrmebWebhook(connection));
-        store.set(owner,{...old,webhookUrl:connection.url,webhookToken:connection.token});
+        store.set(settingsScope,{...old,webhookUrl:connection.url,webhookToken:connection.token});
         audit(owner,'connection.'+target+'_publishing_saved',target);
         return json(res,200,{ok:true,message:'发布连接已保存，后续发布和未领取任务重发将使用此配置'});
       }
     }
     const merchantAuthRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)\/auth(\/test)?$/);
     if(merchantAuthRoute){
-      const target=merchantAuthRoute[1],store=brandConnectionStores[target],old=store.get(owner);
-      if(req.method==='GET'&&!merchantAuthRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',testedAt:old?.authTestedAt||old?.testedAt||''});
+      const target=merchantAuthRoute[1],store=brandConnectionStores[target],old=store.get(settingsScope);
+      if(req.method==='GET'&&!merchantAuthRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',url:old?.url||(settingsMall.legacy?MALL_SYSTEMS[target].origin:''),shippingTemplateId:old?.shippingTemplateId||0,testedAt:old?.authTestedAt||old?.testedAt||''});
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不保存或测试商城凭据');
         const b=await body(req),appid=String(b.appid||old?.appid||'').trim();
         if(!b.appsecret&&old&&appid!==old.appid)throw Error('更换 AppID 时请填写对应 AppSecret');
+        const url=mallOrigin(b.url||old?.url||(settingsMall.legacy?MALL_SYSTEMS[target].origin:''));
+        if(old?.url&&url!==old.url&&!b.appsecret)throw Error('更换商城地址时必须重新填写密钥');
+        if(old?.url&&url!==old.url&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND mall_connection_id=? LIMIT 1").get(owner,settingsMall.id))throw Error('该连接已有发布历史，请添加新商城连接，保留原商城归属');
+        if(settingsMall.legacy&&url!==MALL_SYSTEMS[target].origin)throw Error('原工作流绑定历史商城地址，请添加新的商城连接，不要改动旧连接地址');
+        requireDistinctMall(owner,settingsMall,url);
+        const shippingTemplateId=Number(b.shippingTemplateId??old?.shippingTemplateId??0);if(!settingsMall.legacy&&(!Number.isSafeInteger(shippingTemplateId)||shippingTemplateId<=0))throw Error('请填写该商城真实运费模板 ID');
         const appsecret=b.appsecret||old?.appsecret;
-        await fetchCrmebToken(target,{appid,appsecret});
+        await fetchCrmebToken(target,{appid,appsecret,url});
         if(merchantAuthRoute[2])return json(res,200,{ok:true,message:'商城鉴权成功，可保存供商品发布使用'});
-        const same=old?.appid===appid&&old?.appsecret===appsecret;
-        store.set(owner,{...old,appid,appsecret,authTestedAt:now(),testedAt:same?old?.testedAt||'':''});
-        privateBrandCatalogs.delete(JSON.stringify([owner,target]));
+        const same=old?.appid===appid&&old?.appsecret===appsecret&&(!old?.url||old.url===url);
+        store.set(settingsScope,{...old,appid,appsecret,url,shippingTemplateId,authTestedAt:now(),testedAt:same?old?.testedAt||'':''});
+        privateBrandCatalogs.delete(JSON.stringify([owner,settingsMall.id]));
         audit(owner,'connection.'+target+'_auth_saved',target);
         return json(res,200,{ok:true,message:'商城凭证已加密保存，商品发布使用此配置'});
       }
     }
     const brandConnectionRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store)(\/test)?$/);
     if(brandConnectionRoute){
-      const target=brandConnectionRoute[1],store=brandConnectionStores[target],old=store.get(owner);
-      if(req.method==='GET'&&!brandConnectionRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',testedAt:old?.testedAt||''});
+      const target=brandConnectionRoute[1],store=brandConnectionStores[target],old=store.get(settingsScope);
+      if(req.method==='GET'&&!brandConnectionRoute[2])return json(res,200,{configured:!!(old?.appid&&old?.appsecret),appid:old?.appid||'',url:old?.url||(settingsMall.legacy?MALL_SYSTEMS[target].origin:''),shippingTemplateId:old?.shippingTemplateId||0,testedAt:old?.testedAt||''});
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不保存商城凭据');
         const b=await body(req),appid=String(b.appid||old?.appid||'').trim();
         if(!b.appsecret&&old&&appid!==old.appid)throw Error('更换 AppID 时请填写对应 AppSecret');
+        const url=mallOrigin(b.url||old?.url||(settingsMall.legacy?MALL_SYSTEMS[target].origin:''));
+        if(old?.url&&url!==old.url&&!b.appsecret)throw Error('更换商城地址时必须重新填写密钥');
+        if(old?.url&&url!==old.url&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND mall_connection_id=? LIMIT 1").get(owner,settingsMall.id))throw Error('该连接已有发布历史，请添加新商城连接，保留原商城归属');
+        if(settingsMall.legacy&&url!==MALL_SYSTEMS[target].origin)throw Error('原工作流绑定历史商城地址，请添加新的商城连接，不要改动旧连接地址');
+        requireDistinctMall(owner,settingsMall,url);
+        const shippingTemplateId=Number(b.shippingTemplateId??old?.shippingTemplateId??0);if(!settingsMall.legacy&&(!Number.isSafeInteger(shippingTemplateId)||shippingTemplateId<=0))throw Error('请填写该商城真实运费模板 ID');
         const appsecret=b.appsecret||old?.appsecret;
-        const reader=crmebBrandReader(target,{appid,appsecret});
+        const reader=crmebBrandReader(target,{appid,appsecret,url});
         const brands=parseCatalogOptions(await reader(),'brand');
         if(brandConnectionRoute[2])return json(res,200,{ok:true,count:brands.length,message:'后台品牌读取成功'});
-        store.set(owner,{...old,appid,appsecret,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,target]));
+        store.set(settingsScope,{...old,appid,appsecret,url,shippingTemplateId,testedAt:now()});privateBrandCatalogs.delete(JSON.stringify([owner,settingsMall.id]));
         audit(owner,'connection.'+target+'_brands_saved',target);return json(res,200,{ok:true,count:brands.length});
       }
     }
     if(path==='/api/connections/yunzhong'&&req.method==='GET'){
-      const c=yunzhongConnections.get(owner);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.url||LEGACY_YUNZHONG_ORIGIN,version:'2.3.700',bridgeVersion:c?.bridgeVersion||'',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
+      const c=yunzhongConnections.get(settingsScope);return json(res,200,{configured:!!c?.appsecret,appid:c?.appid||'',testedAt:c?.testedAt||'',url:c?.url||(settingsMall.legacy?LEGACY_YUNZHONG_ORIGIN:''),version:'2.3.700',bridgeVersion:c?.bridgeVersion||'',mode:c?.mode||'',publishingReady:['official','bridge'].includes(c?.mode)&&!!c?.publishingReady,categoryLevel:c?.categoryLevel||'',dispatchPrice:c?.dispatchPrice||''});
     }
     if(['/api/connections/yunzhong','/api/connections/yunzhong/test'].includes(path)&&req.method==='POST'){
       if(demo)throw Error('演示模式不保存凭据或连接商城');
-      const b=await body(req),old=yunzhongConnections.get(owner),credentials=requireYunzhongCredentials(b,old);
-      if(old&&credentials.url!==mallOrigin(old.url||LEGACY_YUNZHONG_ORIGIN)&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND target='yunzhong' AND status NOT IN ('succeeded','failed') LIMIT 1").get(owner))throw Error('仍有芸众任务未完成，请先核对原商城任务后再更换地址');
+      const b=await body(req),old=yunzhongConnections.get(settingsScope),credentials=requireYunzhongCredentials(b,old);if(!settingsMall.legacy&&!b.url&&!old?.url)throw Error('请填写商城地址');requireDistinctMall(owner,settingsMall,credentials.url);
+      if(old&&credentials.url!==mallOrigin(old.url||LEGACY_YUNZHONG_ORIGIN)&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND target='yunzhong' AND mall_connection_id=? LIMIT 1").get(owner,settingsMall.id))throw Error('该芸众连接已有发布历史，请添加新商城连接');
       const dispatchPrice=String(b.dispatchPrice??old?.dispatchPrice??'').trim();if(!/^\d{1,7}(\.\d{1,2})?$/.test(dispatchPrice))throw Error('请填写固定运费，单位元，免运费请明确填写0');
       const mode=b.mode??old?.mode??'official';if(!['official','bridge'].includes(mode))throw Error('连接方式无效');
       let catalog,categoryLevel,publishingReady,message,bridgeVersion='';
@@ -314,32 +362,36 @@ const handleRequest=async(req,res)=>{
         message=publishingReady?'官方API连接与分类读取成功，仅支持两级分类、单维规格和图片详情；创建后仍需人工核对。':'官方API连接成功；三级分类暂不支持发布，连接仅供读取。';
       }
       if(path.endsWith('/test'))return json(res,200,{ok:true,categories:catalog.categories,message:message+'测试不会保存，请保存连接。'});
-      yunzhongConnections.set(owner,{...credentials,testedAt:now(),dispatchPrice,categoryLevel,mode,publishingReady,bridgeVersion});audit(owner,'connection.yunzhong_saved','yunzhong');
+      yunzhongConnections.set(settingsScope,{...credentials,testedAt:now(),dispatchPrice,categoryLevel,mode,publishingReady,bridgeVersion});audit(owner,'connection.yunzhong_saved','yunzhong');
       return json(res,200,{ok:true,categories:catalog.categories,message:'已保存。'+message});
     }
     if(path==='/api/connections/tigshop'&&req.method==='GET'){
-      const c=getTigshopConnection(owner);return json(res,200,{configured:!!c?.token,templateId:c?.templateId||0,testedAt:c?.testedAt||'',url:'https://xiaolango.com',currency:'EUR'});
+      const c=credentialsFor('tigshop',owner,settingsMall.id);return json(res,200,{configured:!!c?.token,templateId:c?.templateId||0,testedAt:c?.testedAt||'',url:c?.url||(settingsMall.legacy?'https://xiaolango.com':''),currency:'EUR'});
     }
     if(path==='/api/connections/tigshop/fx'&&req.method==='GET')return json(res,200,await fetchTigshopFX());
     if(['/api/connections/tigshop/test','/api/connections/tigshop'].includes(path)&&req.method==='POST'){
       if(demo)return json(res,403,{error:'演示模式不保存商城凭据或连接商城'});
-      const b=await body(req),old=getTigshopConnection(owner);
+      const b=await body(req),old=credentialsFor('tigshop',owner,settingsMall.id);
+      const url=mallOrigin(b.url||old?.url||(settingsMall.legacy?'https://xiaolango.com':''));
+      if(old&&url!==(old.url||'https://xiaolango.com')&&!b.token)throw Error('更换商城地址时必须重新填写 Token');
+      if(old&&url!==(old.url||'https://xiaolango.com')&&db.prepare("SELECT 1 FROM jobs WHERE owner=? AND mall_connection_id=? LIMIT 1").get(owner,settingsMall.id))throw Error('该连接已有发布历史，请添加新商城连接');
+      requireDistinctMall(owner,settingsMall,url);
       const token=requireTigshopToken(b.token||old?.token);
-      const client=createTigshopClient(token),templates=await tigshopShipping(client);
+      const client=createTigshopClient(token,fetch,url),templates=await tigshopShipping(client);
       // Check the same read capabilities used to create and verify products.
       const catalog=await createTigshopCatalog(url=>client(url.replace('https://xiaolango.com/adminapi/product/','')),token)();
       if(path.endsWith('/test'))return json(res,200,{ok:true,templates,categories:catalog.categories.length,brands:catalog.brands.length,message:'连接成功，请选择运费模板后保存'});
       const templateId=Number(b.templateId);if(!templates.some(t=>t.id===templateId))throw Error('请选择商城返回的有效自营运费模板');
-      const testedAt=now();savedConnections.set(owner,{token,templateId,testedAt});tigshopCatalogs.delete(owner);
+      const testedAt=now();savedConnections.set(settingsScope,{token,url,templateId,testedAt});tigshopCatalogs.delete(JSON.stringify([owner,settingsMall.id]));
       audit(owner,'connection.tigshop_saved','tigshop');return json(res,200,{ok:true,configured:true,templateId,testedAt});
     }
     const catalogRoute=path.match(/^\/api\/catalog\/(crmeb-pro|crmeb-store|tigshop|yunzhong)$/);
-    if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoader(catalogRoute[1],owner)(new URL(req.url,origin).searchParams.get('refresh')==='1'));
+    if(catalogRoute&&req.method==='GET')return json(res,200,await catalogLoader(catalogRoute[1],owner,new URL(req.url,origin).searchParams.get('connection_id'))(new URL(req.url,origin).searchParams.get('refresh')==='1'));
     if(path==='/api/jobs/650b74d9-6d5e-4174-9245-4d45163e3699/recover-zero-stock'&&req.method==='POST'){if(demo)throw Error('演示模式不执行商城操作');return json(res,200,await recoverTigshopZeroStock(db,owner,getTigshopConnection));}
     const yunzhongRecoveryRoute=path.match(/^\/api\/jobs\/([^/]+)\/recover-uncreated$/);
     if(yunzhongRecoveryRoute&&req.method==='POST'){
       if(demo)throw Error('演示模式不执行恢复');
-      const result=await recoverYunzhongUncreated({db,owner,id:yunzhongRecoveryRoute[1],getConnection:key=>yunzhongConnections.get(key)});
+      const result=await recoverYunzhongUncreated({db,owner,id:yunzhongRecoveryRoute[1],getConnection:(key,job)=>credentialsFor('yunzhong',key,job?.mall_connection_id)});
       audit(owner,'job.recover_yunzhong_uncreated',result.id);return json(res,200,result);
     }
     const retryRoute=path.match(/^\/api\/jobs\/([^/]+)\/retry$/);
@@ -347,23 +399,23 @@ const handleRequest=async(req,res)=>{
       if(demo)return json(res,503,{error:'演示模式不执行发布'});
       const job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(retryRoute[1],owner),snap=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(retryRoute[1]);
       if(!job||!officialTargets.includes(job.target)||!snap||snap.claimed||!['accepted','unknown'].includes(job.status))return json(res,409,{error:'任务可能已开始创建，禁止重新发送'});
-      if(!connected(job.target,owner))return json(res,503,{error:'请先配置该目标商城连接'});
-      db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(['tigshop','yunzhong'].includes(job.target)){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
+      if(!connected(job.target,owner,job.mall_connection_id))return json(res,503,{error:'请先配置该目标商城连接'});
+      db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(['tigshop','yunzhong'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
     }
     const verificationRoute=path.match(/^\/api\/jobs\/([^/]+)\/verify$/);
     if(verificationRoute && req.method==='POST'){
       if(demo)return json(res,503,{error:'演示模式不执行发布'});
       const id=verificationRoute[1],b=await body(req),job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(id,owner),snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
       if(!job||!officialTargets.includes(job.target)||!snapshot?.claimed||!['awaiting_review','verifying','unknown','accepted'].includes(job.status))return json(res,409,{error:'该任务暂不可核对'});
-      if(!connected(job.target,owner))return json(res,503,{error:'请先配置该目标商城连接'});
+      if(!connected(job.target,owner,job.mall_connection_id))return json(res,503,{error:'请先配置该目标商城连接'});
       const candidate=String(b.remote_id||'');if(!/^[1-9][0-9]{0,14}$/.test(candidate))throw Error('请填写商城中的数字商品 ID');
       const nonce=secret();db.prepare('UPDATE job_snapshots SET candidate_id=?,verification_nonce=? WHERE job_id=?').run(candidate,nonce,id);
       db.prepare("UPDATE jobs SET status='verifying',message='正在读取官方商品详情核对',updated=? WHERE id=?").run(now(),id);
       audit(owner,'job.verify_requested',id);
-      if(['tigshop','yunzhong'].includes(job.target)){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,JSON.parse(snapshot.product),'verify_draft'));}else await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
+      if(['tigshop','yunzhong'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,JSON.parse(snapshot.product),'verify_draft'));}else await dispatch(job,JSON.parse(snapshot.product),'verify_draft',{remote_id:candidate,verification_nonce:nonce});return json(res,202,{id});
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
-    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>({...t,system:t.name,name:mallProfiles.get(owner)?.[t.id]?.name||t.name,configured:!demo&&connected(t.id,owner)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
@@ -383,16 +435,20 @@ const handleRequest=async(req,res)=>{
         if(demo)return json(res,503,{error:'尚未配置 n8n 发布连接，未发送任务'});
         const b=await body(req);const current=productFor(owner,r.id);if(current.status!=='approved'||b.revision!==current.revision)throw Error('请先审核当前版本商品');const publishingProduct=decodeProduct(current);assertPublishable(publishingProduct);
         if(!targets.some(t=>t.id===b.target))throw Error('目标商城无效');
-        if(!connected(b.target,owner))return json(res,503,{error:'请先在连接与配置中完成目标商城连接，未发送任务'});
+        const destination=malls.get(owner,b.connection_id,b.target),destinationId=destination.id;
+        if(publishingProduct.category_id&&malls.get(owner,publishingProduct.catalog_connection_id,publishingProduct.catalog_target||'crmeb-pro').id!==destinationId)throw Error('分类品牌属于另一个商城连接，请在编辑页切换到目标商城重新选择并审核');
+        publishingProduct.catalog_connection_id=destinationId;
+        if(!connected(b.target,owner,destinationId))return json(res,503,{error:'请先在连接与配置中完成目标商城连接，未发送任务'});
         if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct,owner);
         if(b.target!=='yunzhong')publishingProduct.description=descriptionWithAttributes(publishingProduct.description,publishingProduct.attributes);
-        if(b.target==='yunzhong'){const connection=yunzhongConnections.get(owner);const catalog=await catalogLoader('yunzhong',owner)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode,origin:connection.url||LEGACY_YUNZHONG_ORIGIN};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
-        if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={fx:await fetchTigshopFX(),shipping:{templateId:getTigshopConnection(owner).templateId}};}
-        if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND s.claimed=1 LIMIT 1').get(r.id,b.target))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
-        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
-        audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(['tigshop','yunzhong'].includes(job.target)){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else await dispatch(job,publishingProduct);return json(res,202,{id});
+        if(b.target==='yunzhong'){const connection=credentialsFor('yunzhong',owner,destinationId);const catalog=await catalogLoader('yunzhong',owner,destinationId)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode,origin:connection.url||LEGACY_YUNZHONG_ORIGIN};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
+        if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={origin:credentialsFor('tigshop',owner,destinationId).url||'https://xiaolango.com',fx:await fetchTigshopFX(),shipping:{templateId:credentialsFor('tigshop',owner,destinationId).templateId}};}
+        if(['crmeb-pro','crmeb-store'].includes(b.target)&&!destination.legacy){const c=credentialsFor(b.target,owner,destinationId);publishingProduct.crmeb={origin:c.url,shippingTemplateId:c.shippingTemplateId};}
+        if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND j.mall_connection_id=? AND s.claimed=1 LIMIT 1').get(r.id,b.target,destinationId))return json(res,409,{error:'此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'});
+        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated,mall_connection_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t,destinationId);db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))return json(res,409,{error:'该版本已有发布任务，请在任务列表查看结果'});throw e;}
+        audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(['tigshop','yunzhong'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else await dispatch(job,publishingProduct);return json(res,202,{id});
       }
     }
     return json(res,404,{error:'接口不存在'});

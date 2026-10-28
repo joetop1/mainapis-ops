@@ -11,7 +11,7 @@ test('官方任务：一次性领取、不可假成功、核对nonce防过期回
  const {handler,closeStore}=await import('../server.mjs');const db=openStore(join(dir,'ops.sqlite'));
  const p={title:'商品',category:'测试',source_url:'https://detail.1688.com/offer/123.html',images:['https://xlupw.com/test.jpg'],skus:[{sku:'A',spec:'默认',price:1,cost:0,stock:1}]};
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice',p.source_url,JSON.stringify(p),'approved',1,'now','now');
- db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('job','alice','p',1,'crmeb-pro','accepted','callback-secret','','','now','now');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run('job',JSON.stringify(p));
+ db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('job','alice','p',1,'crmeb-pro','accepted','callback-secret','','','now','now');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run('job',JSON.stringify(p));
  for(const owner of ['alice','bob'])db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(owner,JSON.stringify({user:{sub:owner},csrf:'csrf'}),Date.now()+60000);
  async function call(url,body,owner='alice'){
   const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url,method:'POST',headers:{'content-type':'application/json',authorization:'Bearer callback-secret',cookie:'ops_session='+owner,origin:'https://ops.mainapis.com','x-csrf-token':'csrf'}});

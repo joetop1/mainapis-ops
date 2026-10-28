@@ -1,3 +1,4 @@
+import {mallOrigin} from './mall-address.mjs';
 // Read-only, fixed upstreams. Credentials and user-supplied URLs are never accepted.
 const sources={'crmeb-pro':'https://xlupw.com','crmeb-store':'https://www.xlyp.cc'};
 function options(response,kind){
@@ -16,8 +17,8 @@ function options(response,kind){
   }
  };walk(rows);return result;
 }
-export function createCatalogLoader(fetchJSON,target='crmeb-pro',fetchBrands=null){
- const base=sources[target];if(!base)throw Error('不支持的商城');
+export function createCatalogLoader(fetchJSON,target='crmeb-pro',fetchBrands=null,origin=null){
+ const base=origin?mallOrigin(origin):sources[target];if(!base)throw Error('不支持的商城');
  let cache=null,pending=null;
  return async(force=false)=>{
   if(!force&&cache&&Date.now()-cache.time<300000)return cache.value;

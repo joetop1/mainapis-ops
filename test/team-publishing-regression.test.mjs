@@ -15,7 +15,7 @@ test('个人迁移团队后，两商城凭证、发布入口、任务快照、�
   const product={catalog_target:'crmeb-store',category_id:154,title:'TENGA LOTION测试',source_url:'https://detail.1688.com/offer/1084174064750.html',images:['https://example.com/main.jpg'],detail_images:Array.from({length:20},(_,i)=>`https://example.com/detail${i}.jpg`),applicable_type:0,skus:[{sku:'ALI-1',spec:'红',image:'https://example.com/sku.jpg',price:74.9,cost:45,stock:90}]};
   const id='968140ec-5c8d-4672-a039-27cdcad7fa51';
   db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice',product.source_url,JSON.stringify(product),'approved',2,'now','now');
-  db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',2,'crmeb-store','accepted','callback-secret','n8n 已接收，等待执行结果','','now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',2,'crmeb-store','accepted','callback-secret','n8n 已接收，等待执行结果','','now','now');
   db.prepare('INSERT INTO job_snapshots(job_id,product,claimed) VALUES(?,?,1)').run(id,JSON.stringify(product));
   const read=()=>{
    const j=db.prepare('SELECT * FROM jobs WHERE id=?').get(id),s=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);
