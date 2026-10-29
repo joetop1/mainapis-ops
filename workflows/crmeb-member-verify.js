@@ -89,7 +89,7 @@ function buildOfficialProduct(lease,config){
   const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   if(p.detail_images!==undefined&&(!Array.isArray(p.detail_images)||p.detail_images.length>100))throw Error('详情图数量不正确');
   const detailImages=(p.detail_images||[]).map(u=>{if(typeof u!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(u)||/[\u0000-\u0020\\]/.test(u))throw Error('详情图必须使用无账号密码的 HTTPS 地址');return u;});
-  const nativeSpecs=p.crmeb_native_specs===true&&p.catalog_target!=='crmeb-store';
+  const nativeSpecs=p.crmeb_native_specs===true&&(p.catalog_target!=='crmeb-store'||config.storeNativeSpecs===true);
   const productSpecs=nativeSpecs?(p.attributes||[]).map((row,index)=>{if(!row||typeof row.name!=='string'||!row.name.trim()||typeof row.value!=='string')throw Error('商品参数格式无效');return {id:0,temp_id:0,name:row.name,value:row.value,sort:(p.attributes.length-index)};}):[];
   const description=escape(p.description||'').replaceAll('\n','<br>')+detailImages.map(u=>'<p><img src="'+escape(u)+'" alt=""></p>').join('');
   return {...JSON.parse(JSON.stringify(CR_DEFAULTS)),specs:productSpecs,specs_id:0,store_name:p.title,store_info:String(p.description||'').slice(0,100),cate_id:ids,slider_image:images,description,

@@ -56,3 +56,10 @@ test('完整准备节点在没有 URL 全局对象的 n8n 沙箱中处理详情�
   }
  }
 });
+test('多门店新任务将产品属性写入原生参数并核对，旧任务保持兼容',()=>{
+ const l=structuredClone(lease);l.product.crmeb_native_specs=true;l.product.attributes=[{name:'材质',value:'棉'},{name:'长度',value:'20cm'}];
+ const p=buildStoreProduct(l,config);assert.deepEqual(p.specs,[{id:0,temp_id:0,name:'材质',value:'棉',sort:2},{id:0,temp_id:0,name:'长度',value:'20cm',sort:1}]);assert.equal(p.specs_id,0);
+ const d={...p,id:8};assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');d.specs=JSON.stringify(p.specs);assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');d.specs=[];assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'awaiting_review');
+ delete l.product.crmeb_native_specs;assert.deepEqual(buildStoreProduct(l,config).specs,[]);assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');
+ l.product.crmeb_native_specs=true;for(const value of ['', ' ', '0']){l.product.attributes=[{name:'参数',value}];assert.throws(()=>buildStoreProduct(l,config),/参数值/);}
+});

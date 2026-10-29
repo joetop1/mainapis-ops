@@ -50,7 +50,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
     const inspected=await call(claimPath,'POST',{action:'inspect_publish'},'',token);assert.equal(inspected.status,200);
     const auth=await call('/api/callback/'+id+'/merchant-token','POST',{},'',token);assert.equal(auth.status,200);
     const prepared=vm.runInNewContext(`(function(){${source}})()`,{$:()=>({first:()=>({json:inspected.data})}),$json:auth.data})[0].json;
-    assert.equal(prepared.payload.description,'产品基本信息<br>容量：30ml<p><img src="https://example.com/detail.jpg" alt=""></p>');assert.equal(JSON.parse(db.prepare('SELECT data FROM products WHERE id=?').get(pid).data).description,product.description);assert.equal(prepared.payload.applicable_type,0);
+    assert.equal(prepared.payload.description,'<p><img src="https://example.com/detail.jpg" alt=""></p>');assert.equal(JSON.stringify(prepared.payload.specs),JSON.stringify([{id:0,temp_id:0,name:'容量',value:'30ml',sort:1}]));assert.equal(JSON.parse(db.prepare('SELECT data FROM products WHERE id=?').get(pid).data).description,product.description);assert.equal(prepared.payload.applicable_type,0);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,200);
     assert.equal((await call(claimPath,'POST',{action:'publish_draft'},'',token)).status,409);
     if(result==='502'){

@@ -9,11 +9,12 @@ export function requireStoreToken(response){
 export function storeLease(lease){
  const p=lease?.product;
  if(p?.catalog_target!=='crmeb-store'||!Number.isSafeInteger(p.category_id)||p.category_id<=0)throw Error('请从多门店的分类列表选择分类，不能使用会员商城分类');
+ if(p.crmeb_native_specs===true&&(p.attributes||[]).some(row=>typeof row?.value!=='string'||!row.value.trim()||row.value==='0'))throw Error('多门店商品参数值不能为空或为单独的0（商城校验限制），请核实后修改');
  if(!Array.isArray(p.skus))throw Error('缺少 SKU');
  return {...lease,product:{...p,skus:p.skus.map(s=>({...s,spec:p.skus.length===1&&!String(s.spec||'').trim()?'默认':s.spec}))}};
 }
 export function buildStoreProduct(lease,config){
- const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true});payload.type=0;
+ const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true,storeNativeSpecs:true});payload.type=0;
  const scope=lease.product.applicable_type??0;if(![0,1].includes(scope))throw Error('请选择所有门店或仅平台');
  payload.applicable_type=scope;payload.applicable_store_id=[];
  // Keep the full source gallery in description; the database carousel is a short list.
@@ -31,5 +32,5 @@ export function verifyStoreProduct(response,lease,config){
  const d=response?.data?.productInfo||response?.data;
  if(d&&(Number(d.applicable_type)!==(lease.product.applicable_type??0)||(Array.isArray(d.applicable_store_id)?d.applicable_store_id.length>0:!!String(d.applicable_store_id??'').trim())))return {status:'awaiting_review',message:'门店适用范围未确认一致，请检查商城对外接口是否接收 applicable_type 和 applicable_store_id'};
  if(d&&d.product_type!==undefined&&Number(d.product_type)!==0)return {status:'awaiting_review',message:'多门店商品类型不是普通实物，未确认成功'};
- return verifyOfficialProduct(response,storeLease(lease),{...config,forceMulti:true});
+ return verifyOfficialProduct(response,storeLease(lease),{...config,forceMulti:true,storeNativeSpecs:true});
 }
