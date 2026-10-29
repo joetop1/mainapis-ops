@@ -40,3 +40,4 @@
 #productRows .product-cell>div{min-width:0}#productRows .title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;white-space:normal;line-height:1.6;max-height:3.2em;overflow-wrap:anywhere;overflow:hidden}
 
 .image-card[draggable="true"]{cursor:grab}.image-card.dragging{opacity:.45}.image-card.drop-target{outline:2px solid #357058;outline-offset:2px}.image-reorder{display:flex}.image-card-actions .image-reorder button{padding:4px;min-width:26px;color:#357058}.image-preview{cursor:grab}
+#products .panel-toolbar{flex-wrap:wrap}#collectionScope{min-width:110px;margin-left:auto}#products .panel-toolbar #search{max-width:100%}

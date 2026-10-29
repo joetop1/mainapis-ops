@@ -1,3 +1,4 @@
+import {productCollectors} from './product-collectors.mjs';
 import {createShopxoClient,requireShopxoConnection,shopxoCatalog} from './shopxo-client.mjs';
 import {buildShopxoProduct} from './shopxo-product.mjs';
 import {createShopxoRunner} from './shopxo-direct.mjs';
@@ -71,6 +72,7 @@ if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(sto
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
+const collectors=productCollectors(db);
 const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
 const shopxoConnections=await connectionStore(db,dataDir,'shopxo');
@@ -150,6 +152,7 @@ function productFor(owner,id) {const r=db.prepare('SELECT * FROM products WHERE 
 function putProduct(owner,input) {
   const p=validateProduct(input), t=now(); const id=uid();
   try{db.prepare('INSERT INTO products(id,owner,source,data,created,updated) VALUES(?,?,?,?,?,?)').run(id,owner,p.source_url,JSON.stringify(p),t,t);}catch(e){if(String(e).includes('UNIQUE'))throw Error('该来源商品已在采集箱中，请编辑原商品');throw e;}
+  collectors.record(id,actorContext.getStore()?.actor||owner,actorContext.getStore()?.name||'');
   audit(owner,'product.create',id);return id;
 }
 // Only configured server endpoints are called. Product URLs are stored, never fetched here.
@@ -183,7 +186,7 @@ const handleRequest=async(req,res)=>{
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
     if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
-    let s=sessionGet(req);if(s?.user)actorContext.getStore().actor=s.user.sub;
+    let s=sessionGet(req);if(s?.user){actorContext.getStore().actor=s.user.sub;actorContext.getStore().name=s.user.name||'';}
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}
       if(!client||!clientSecret||!allowed.length) return json(res,503,{error:'请先配置 Casdoor Client ID、Secret 和 ALLOWED_SUBJECTS'});
@@ -443,7 +446,7 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size')));}
-    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:db.prepare('SELECT * FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000').all(owner).map(row=>({...decodeProduct(row),publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:collectors.rows(owner,actor,new URL(req.url,origin).searchParams.get('collection_scope')||'all').map(row=>({...decodeProduct(row),collected_by:row.collected_by||'',collector_name:row.collector_name||'',publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
