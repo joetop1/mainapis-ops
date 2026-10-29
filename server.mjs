@@ -1,3 +1,4 @@
+import {mallNotifications} from './mall-notifications.mjs';
 import {jobInitiators} from './job-initiators.mjs';
 import {productCollectors} from './product-collectors.mjs';
 import {createShopxoClient,requireShopxoConnection,shopxoCatalog} from './shopxo-client.mjs';
@@ -79,6 +80,10 @@ const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
 const shopxoConnections=await connectionStore(db,dataDir,'shopxo');
 const mallProfiles=await connectionStore(db,dataDir,'profiles');
+const notificationSecrets=await connectionStore(db,dataDir,'notifications');
+const findNotificationMall=id=>db.prepare('SELECT * FROM mall_connections WHERE id=?').get(id);
+const notifications=mallNotifications({db,store:notificationSecrets,findMall:findNotificationMall});
+let notificationTimer;
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const malls=mallConnections(db,mallProfiles);
 // Idempotent migration of persisted owners before any task can resume.
@@ -113,9 +118,9 @@ function expire(res,id) {if(id)db.prepare('DELETE FROM sessions WHERE id=?').run
 const audit=(owner,action,id)=>{db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run(uid(),owner,action,id,now());if(owner.startsWith('team:'))db.prepare('INSERT INTO team_events VALUES(?,?,?,?,?,?)').run(uid(),owner,actorContext.getStore()?.actor||'system',action,id,now());};
 function json(res,status,data) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
 function redirect(res,url) {res.writeHead(302,{Location:url});res.end();}
-async function body(req) {
+async function body(req,maxBytes=2*1024*1024) {
   if(!(req.headers['content-type']||'').startsWith('application/json'))throw Error('请使用 application/json');
-  let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>2*1024*1024)throw Error('请求超过 2 MB');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString()||'{}');
+  let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBytes)throw Error('请求内容过大');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString()||'{}');
 }
 async function remoteJSON(url,options={}) {
   const u=new URL(url);if(u.protocol!=='https:')throw Error('远程接口必须使用 HTTPS');
@@ -188,6 +193,16 @@ const handleRequest=async(req,res)=>{
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
     if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    const notificationPush=path.match(/^\/api\/notification-push\/([a-zA-Z0-9-]{8,80})\/(token|paid|refund|ignore)$/);
+    if(notificationPush){
+      const [,id,kind]=notificationPush;
+      if(demo||!(req.method==='POST'||kind==='token'&&req.method==='GET'))return json(res,403,{code:1});
+      try{
+        if(!findNotificationMall(id))throw Error('invalid_mall');
+        const input=req.method==='GET'?Object.fromEntries(new URL(req.url,origin).searchParams):await body(req,512*1024);
+        return json(res,200,kind==='token'?notifications.issueToken(id,input):notifications.receive(id,kind,new URL(req.url,origin).searchParams.get('pushToken'),input));
+      }catch{return json(res,400,{code:1,msg:'推送未接收，请核对配置与事件数据'});}
+    }
     let s=sessionGet(req);if(s?.user){actorContext.getStore().actor=s.user.sub;actorContext.getStore().name=s.user.name||'';}
     if(path==='/auth/login' && req.method==='GET') {
       if(demo){if(s)expire(res,s.id);sessionSet(res,{user:{sub:'demo',name:'本地演示'},csrf:secret()});return redirect(res,'/');}
@@ -294,6 +309,18 @@ const handleRequest=async(req,res)=>{
     const settingsSystem=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong|shopxo)(?:\/|$)/)?.[1];
     const settingsMall=settingsSystem?malls.get(owner,new URL(req.url,origin).searchParams.get('connection_id'),settingsSystem):null;
     const settingsScope=settingsMall?malls.scope(settingsMall):owner;
+    const notificationRoute=path.match(/^\/api\/connections\/crmeb-pro\/notifications(?:\/(test|retry))?$/);
+    if(notificationRoute){
+      const meta=()=>({...notifications.publicConfig(settingsMall),tokenUrl:origin+'/api/notification-push/'+settingsMall.id+'/token',paidUrl:origin+'/api/notification-push/'+settingsMall.id+'/paid',refundUrl:origin+'/api/notification-push/'+settingsMall.id+'/refund',ignoreUrl:origin+'/api/notification-push/'+settingsMall.id+'/ignore'});
+      if(req.method==='GET'&&!notificationRoute[1])return json(res,200,meta());
+      if(req.method==='POST'){
+        if(demo)throw Error('演示模式不发送或保存通知');const input=await body(req);
+        if(notificationRoute[1]==='test'){notifications.test(settingsMall);audit(owner,'notification.test_queued',settingsMall.id);}
+        else if(notificationRoute[1]==='retry'){notifications.retry(settingsMall,String(input.id||''));audit(owner,'notification.retry',settingsMall.id);}
+        else{notifications.save(settingsMall,input);audit(owner,'notification.settings_saved',settingsMall.id);}
+        return json(res,200,meta());
+      }
+    }
     const profileRoute=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong|shopxo)\/profile$/);
     if(profileRoute&&req.method==='POST'){
       if(demo)throw Error('演示模式不保存商城名称');
@@ -490,7 +517,8 @@ const handleRequest=async(req,res)=>{
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
 export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
-export const closeStore=()=>db.close();
+export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();db.close();};
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>notifications.tick().catch(()=>console.error('notification_worker_failed')),4000);notificationTimer.unref();}
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Goods Ops listening on ${host}:${process.env.PORT||3080}${demo?' [LOCAL DEMO]':''}`));

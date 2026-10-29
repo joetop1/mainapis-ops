@@ -100,6 +100,7 @@ async function loadMallSettings(type){
  if(type==='shopxo')return loadShopxoConnection();
  if(type==='yunzhong')return loadYunzhongConnection();
  if(type==='tigshop')return loadTigshopConnection();
+ if(type==='crmeb-pro')await loadNotifications();
  await loadCrmebAuthConnections([type]);await loadCrmebPublishConnections([type]);
  const mall=mallFor(selectedMalls[type],type);document.querySelector('[data-crmeb-publishing="'+type+'"]').closest('details').classList.toggle('hidden',!mall?.legacy);
 }
@@ -136,7 +137,7 @@ function render(){
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
  $('#connectionSystemStatus').textContent=(me.demo?'本地演示登录':'统一账号已登录')+' · 商品工作流状态请在发布任务中查看。';
 }
-document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadYunzhongConnection();loadShopxoConnection();loadCrmebAuthConnections();loadCrmebPublishConnections();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===b));for(const p of ['products','jobs','connections','team'])$('#'+p).classList.toggle('hidden',p!==page);const titles={products:'商品采集箱',jobs:'发布任务',connections:'连接与配置',team:'团队管理'};$('#heading').textContent=$('#breadcrumb').textContent=titles[page];$('#subtitle').textContent={products:'让每一份货源资料，成为准备好上架的商品。',jobs:'从任务接收到商城入库，每一步都有记录。',connections:'连接你的账号、工作流与商城。',team:'共同维护商品，按角色完成整理、审核和发布。'}[page];$('#productActions').classList.toggle('hidden',page!=='products');if(page==='team')loadTeam().catch(e=>toast(e.message));if(page==='connections'){loadCollectorDownload();if((state.team?.role||'admin')==='admin'){loadYunzhongConnection();loadShopxoConnection();loadCrmebAuthConnections();loadCrmebPublishConnections();loadNotifications();loadTigshopConnection().catch(e=>{$('#tigshopConnectionStatus').textContent=e.message;recordConnectionPart('tigshop','auth',{error:true});});}}});
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;productPage=1;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));render();});$('#search').oninput=()=>{productPage=1;render();};
 let editingSpecNames=[];
 function readSkuRows(){
@@ -523,3 +524,18 @@ async function saveShopxoConnection(testOnly){
 }
 $('#shopxoTest').onclick=()=>saveShopxoConnection(true);
 $('#shopxoForm').onsubmit=event=>{event.preventDefault();saveShopxoConnection(false);};
+
+function renderNotifications(data){
+ $('#notificationEnabled').checked=data.enabled;$('#notificationPaid').checked=data.paid;$('#notificationRefund').checked=data.refund;
+ $('#notificationWebhook').placeholder=data.hasWebhook?'已加密保存，留空保留当前接收群':'粘贴企业微信消息推送Webhook';
+ for(const [id,key] of Object.entries({notificationTokenUrl:'tokenUrl',notificationPushAccount:'pushAccount',notificationPushPassword:'pushPassword',notificationPaidUrl:'paidUrl',notificationRefundUrl:'refundUrl',notificationIgnoreUrl:'ignoreUrl'}))$('#'+id).value=data[key]||'';
+ $('#notificationTest').disabled=!data.enabled;
+ const statuses={paused:'已暂停',pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'需核对群消息'},kinds={paid:'付款成功',refund:'申请退款',test:'连接测试'};
+ $('#notificationRecords').innerHTML='<h3>最近通知记录</h3>'+(data.records.length?data.records.map(row=>'<div class="notification-record"><span>'+esc(kinds[row.kind]||row.kind)+' · '+esc(statuses[row.status]||row.status)+' · '+date(row.created)+'</span><small>'+esc(row.error)+'</small>'+(['failed','uncertain'].includes(row.status)?'<button type="button" class="text" data-notification-retry="'+esc(row.id)+'">核对后重新发送</button>':'')+'</div>').join(''):'<p class="hint">暂无记录。点击发送测试通知，随后刷新记录。</p>');
+}
+async function loadNotifications(){try{renderNotifications(await api('/api/connections/crmeb-pro/notifications'));$('#notificationStatus').textContent='通知设置已读取。';}catch(e){$('#notificationStatus').textContent=e.message;}}
+$('#notificationForm').onsubmit=async event=>{event.preventDefault();const button=event.submitter;button.disabled=true;try{const data=await api('/api/connections/crmeb-pro/notifications','POST',{webhook:$('#notificationWebhook').value.trim(),enabled:$('#notificationEnabled').checked,paid:$('#notificationPaid').checked,refund:$('#notificationRefund').checked});$('#notificationWebhook').value='';renderNotifications(data);$('#notificationStatus').textContent='已保存。先发送测试通知，再将下方推送配置填写到商城。';}catch(e){$('#notificationStatus').textContent=e.message;}finally{button.disabled=false;}};
+$('#notificationTest').onclick=async()=>{const button=$('#notificationTest');button.disabled=true;try{renderNotifications(await api('/api/connections/crmeb-pro/notifications/test','POST',{}));$('#notificationStatus').textContent='测试通知已排队，请查看企业微信群，稍后刷新通知记录。';}catch(e){$('#notificationStatus').textContent=e.message;}finally{button.disabled=!$('#notificationEnabled').checked;}};
+$('#notificationRefresh').onclick=loadNotifications;
+for(const button of document.querySelectorAll('[data-notification-copy]'))button.onclick=async()=>{try{const value=$('#'+button.dataset.notificationCopy).value;if(!value)throw Error('请先保存通知设置');await navigator.clipboard.writeText(value);$('#notificationStatus').textContent='已复制，请直接粘贴到商城，不要发到聊天或截图中。';}catch(e){$('#notificationStatus').textContent=e.message;}};
+$('#notificationRecords').onclick=async event=>{const button=event.target.closest('[data-notification-retry]');if(!button)return;if(!confirm('请先检查群里是否已收到该事件。重新发送可能产生重复消息，确认继续？'))return;button.disabled=true;try{renderNotifications(await api('/api/connections/crmeb-pro/notifications/retry','POST',{id:button.dataset.notificationRetry}));$('#notificationStatus').textContent='已重新排队。';}catch(e){$('#notificationStatus').textContent=e.message;button.disabled=false;}};
