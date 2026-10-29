@@ -41,3 +41,4 @@
 
 .image-card[draggable="true"]{cursor:grab}.image-card.dragging{opacity:.45}.image-card.drop-target{outline:2px solid #357058;outline-offset:2px}.image-reorder{display:flex}.image-card-actions .image-reorder button{padding:4px;min-width:26px;color:#357058}.image-preview{cursor:grab}
 #products .panel-toolbar{flex-wrap:wrap}#collectionScope{min-width:110px;margin-left:auto}#products .panel-toolbar #search{max-width:100%}
+.job-filters{display:flex;flex-wrap:wrap;gap:12px;padding:0 24px 16px;border-bottom:1px solid #edf0ed}.job-filters label{margin:0;min-width:125px}.job-filters select{margin-top:5px}

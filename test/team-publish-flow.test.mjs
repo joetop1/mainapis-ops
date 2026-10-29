@@ -44,6 +44,7 @@ test('个人及团队完整发布模拟：相同入口凭证、领取、准备�
     const pid=mode+'-'+result,p={...product,attributes:[{name:'容量',value:'30ml'},{name:'下游平台',value:'ebay'}],source_url:product.source_url+'?case='+pid};
     db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run(pid,owner,p.source_url,JSON.stringify(p),'approved',2,'now','now');
     const published=await call('/api/products/'+pid+'/publish','POST',{revision:2,target:'crmeb-store'},actor);assert.equal(published.status,202,JSON.stringify(published.data));
+    const scoped=await call('/api/jobs?task_scope=mine','GET',{},actor);assert.ok(scoped.data.rows.some(j=>j.id===published.data.id&&j.initiated_by===actor));
     const id=published.data.id,request=outbound.at(-1),token=request.body.callback.token;
     assert.equal(request.url,hookUrl);assert.equal(request.options.headers['X-Ops-Token'],hookToken);assert.equal(request.body.product.skus[0].stock,90);
     const claimPath='/api/callback/'+id+'/claim';
