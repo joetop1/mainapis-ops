@@ -9,7 +9,7 @@ const webhook='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcde12345-a
 test('会员通知配置加密且受CSRF和管理员保护，原生GET测试和POST推送协议兼容，不依赖登录Cookie',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ops-notification-flow-'));Object.assign(process.env,{DATA_DIR:dir,APP_ORIGIN:'https://ops.mainapis.com',DEMO_MODE:'false'});
  const originalFetch=globalThis.fetch;
- globalThis.fetch=async(url,options)=>{let value;if(String(url).endsWith('/outapi/access_token'))value={status:200,data:{access_token:'read-token'}};else if(String(url).includes('/outapi/refund/list?'))value={status:200,data:{list:[{id:7,order_id:'RE7',store_order_id:3,refund_type:0,is_cancel:0,is_del:0,add_time:Math.floor(Date.now()/1000),pay_price:'10.00'}],count:1}};else if(String(url).endsWith('/outapi/refund/RE7'))value={status:200,data:{id:7,order_id:'RE7',store_order_id:3,store_order_sn:'WX3',refund_type:0,is_cancel:0,is_del:0,add_time:Math.floor(Date.now()/1000),refund_price:'10.00',items:[{store_name:'测试商品',suk:'型号',cart_num:1}]}};else throw Error('unexpected request');return {ok:true,text:async()=>JSON.stringify(value)};};
+ globalThis.fetch=async(url,options)=>{let value;if(String(url).endsWith('/outapi/access_token')||String(url).endsWith('/outapi/get_token'))value={status:200,data:{access_token:'read-token'}};else if(String(url).includes('/outapi/refund/list?'))value={status:200,data:{list:[{id:7,order_id:'RE7',store_order_id:3,refund_type:0,is_cancel:0,is_del:0,add_time:Math.floor(Date.now()/1000),pay_price:'10.00'}],count:1}};else if(String(url).endsWith('/outapi/refund/RE7'))value={status:200,data:{id:7,order_id:'RE7',store_order_id:3,store_order_sn:'WX3',refund_type:0,is_cancel:0,is_del:0,add_time:Math.floor(Date.now()/1000),refund_price:'10.00',items:[{store_name:'测试商品',suk:'型号',cart_num:1}]}};else throw Error('unexpected request');return {ok:true,text:async()=>JSON.stringify(value)};};
  const {handler,closeStore}=await import('../server.mjs'),db=openStore(join(dir,'ops.sqlite'));
  const call=async(path,method='GET',body={},actor='alice',csrf='csrf')=>{const req=Readable.from(method==='GET'?[]:[Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:path,method,headers:{...(actor?{cookie:'ops_session='+actor}:{}),'content-type':'application/json',origin:'https://ops.mainapis.com','x-csrf-token':csrf}});const res={status:200,setHeader(){},writeHead(s){this.status=s;},end(b){this.body=b;}};await handler(req,res);return {status:res.status,data:JSON.parse(res.body)};};
  try{
@@ -30,5 +30,10 @@ test('会员通知配置加密且受CSRF和管理员保护，原生GET测试和P
   const scan=await call(path+'/refund-check','POST');assert.equal(scan.status,200,JSON.stringify(scan.data));
   await new Promise(resolve=>setTimeout(resolve,20));
   const checked=await call(path);assert.ok(checked.data.refundPoll.last_success);assert.equal(checked.data.refundPoll.error,'');assert.equal(checked.data.records.filter(r=>r.kind==='refund').length,1);
+  const storePath='/api/connections/crmeb-store/notifications';assert.equal((await call(storePath)).data.configured,false);
+  const store=await call(storePath,'POST',{webhook,enabled:true,paid:true,refund:true});assert.equal(store.status,200);assert.notEqual(store.data.pushPassword,saved.data.pushPassword);assert.notEqual(store.data.paidUrl,saved.data.paidUrl);
+  assert.equal((await call('/api/connections/crmeb-store/auth','POST',{appid:'store-reader',appsecret:'test-reader-secret'})).status,200);
+  const multiScan=await call(storePath+'/refund-check','POST');assert.equal(multiScan.status,200,JSON.stringify(multiScan.data));await new Promise(resolve=>setTimeout(resolve,20));assert.equal((await call(storePath)).data.records.filter(r=>r.kind==='refund').length,1);
+  assert.equal((await call(path)).data.records.filter(r=>r.kind==='refund').length,1);
  }finally{globalThis.fetch=originalFetch;closeStore();db.close();await rm(dir,{recursive:true,force:true});}
 });

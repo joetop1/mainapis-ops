@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {openStore} from '../core.mjs';
 import {crmebRefundPoll} from '../crmeb-refund-poll.mjs';
 import {mallNotifications} from '../mall-notifications.mjs';
-function setup(){
- const db=openStore(':memory:'),mall={id:'mall1',system:'crmeb-pro'},sent=new Map(),calls=[];let time=1720000000000,deny=false,broken=false,complete=false;
+function setup(system='crmeb-pro'){
+ const db=openStore(':memory:'),mall={id:'mall1',system},sent=new Map(),calls=[];let time=1720000000000,deny=false,broken=false,complete=false;
  const config={enabled:true,refund:true},refund={id:7,order_id:'RE7',store_order_id:10,store_order_sn:'WX10',refund_type:0,is_cancel:0,is_del:0,add_time:Math.floor(time/1000)-10,refund_price:'10.00',items:[{store_name:'商品',suk:'蓝色',cart_num:1}]};
- const fetcher=async(url,o)=>{calls.push({url,o});if(url.endsWith('access_token'))return {ok:true,text:async()=>JSON.stringify({status:200,data:{access_token:'fake-token'}})};assert.equal(o.method,'GET');assert.ok(url.includes('/outapi/refund/'));assert.equal(o.headers.Authorization,'Bearer fake-token');let data;if(deny)data={status:403,msg:'SECRET'};else if(url.includes('/refund/list?'))data={status:200,data:{list:[{...refund,refund_type:complete?6:0,refund_price:undefined,pay_price:'10.00'}],count:1}};else data={status:200,data:{...refund,store_order_sn:broken?'':refund.store_order_sn,refund_type:complete?6:0}};return {ok:true,text:async()=>JSON.stringify(data)};};
+ const fetcher=async(url,o)=>{calls.push({url,o});if(url.endsWith('access_token')||url.endsWith('get_token'))return {ok:true,text:async()=>JSON.stringify({status:200,data:{access_token:'fake-token'}})};assert.equal(o.method,'GET');assert.ok(url.includes('/outapi/refund/'));assert.equal(o.headers.Authorization,'Bearer fake-token');let data;if(deny)data={status:403,msg:'SECRET'};else if(url.includes('/refund/list?'))data={status:200,data:{list:[{...refund,refund_type:complete?6:0,refund_price:undefined,pay_price:'10.00'}],count:1}};else data={status:200,data:{...refund,store_order_sn:broken?'':refund.store_order_sn,refund_type:complete?6:0}};return {ok:true,text:async()=>JSON.stringify(data)};};
  const outbox=mallNotifications({db,store:{get:()=>config},findMall:()=>mall,clock:()=>time});
  const poll=crmebRefundPoll({db,getCredentials:()=>({appid:'app',appsecret:'secret',url:'https://shop.example.com'}),getNotificationConfig:()=>config,findMall:()=>mall,enqueue:outbox.enqueueRefund,fetcher,clock:()=>time});
  return {db,poll,calls,mall,config,refund,advance:n=>time+=n,deny:()=>deny=true,break:()=>broken=true,complete:()=>complete=true};
@@ -28,3 +28,5 @@ test('缺少关联订单或关闭通知时不会错误入队',async()=>{
 test('周期检查复用已保存进度，已入队申请不会重复通知',async()=>{
  const t=setup();try{await t.poll.enable(t.mall);await t.poll.run('mall1',true);const before=t.poll.state('mall1').last_success;t.advance(61000);await t.poll.tick();assert.ok(t.poll.state('mall1').last_success>before);assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);}finally{t.db.close();}
 });
+
+test('多门店使用独立get_token授权，售后读取仍严格核对后入队',async()=>{const t=setup('crmeb-store');try{await t.poll.enable(t.mall);await t.poll.run('mall1',true);assert.ok(t.calls[0].url.endsWith('/outapi/get_token'));assert.ok(!t.calls.some(c=>c.url.endsWith('/outapi/access_token')));assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);assert.equal(t.poll.state('mall1').error,'');}finally{t.db.close();}});

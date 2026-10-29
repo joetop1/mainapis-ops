@@ -30,7 +30,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
  const config=id=>store.get('notification:'+id);
  const publicConfig=mall=>{const c=config(mall.id);return {configured:!!c,enabled:!!c?.enabled,hasWebhook:!!c?.webhook,paid:c?.paid??true,refund:c?.refund??true,pushAccount:c?.pushAccount||'',pushPassword:c?.pushPassword||'',records:db.prepare('SELECT id,kind,status,attempts,created,sent_at,error FROM notification_outbox WHERE mall_id=? ORDER BY created DESC LIMIT 30').all(mall.id)};};
  const save=(mall,input)=>{
-  if(mall.system!=='crmeb-pro')throw Error('当前阶段仅支持CRMEB会员商城4.3通知');
+  if(!['crmeb-pro','crmeb-store'].includes(mall.system))throw Error('当前通知仅支持CRMEB会员商城和多门店');
   for(const key of ['enabled','paid','refund'])if(typeof input[key]!=='boolean')throw Error('通知开关格式无效');
   const old=config(mall.id),webhook=input.webhook?wecomWebhook(input.webhook):old?.webhook;if(!webhook)throw Error('请填写企业微信群Webhook地址');
   if(old?.webhook&&webhook!==old.webhook&&db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND status IN ('pending','paused','sending','uncertain') LIMIT 1").get(mall.id))throw Error('仍有未完成通知，请先处理通知记录后再更换接收群');
@@ -41,7 +41,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
  const issueToken=(id,input)=>{const c=config(id);if(!c?.enabled||!findMall(id)||!equal(c.pushAccount,input.push_account)||!equal(c.pushPassword,input.push_password))throw Error('推送鉴权失败');const expiry=clock()+3600000,payload=String(expiry),sig=createHmac('sha256',c.signingKey).update(id+':'+payload).digest('hex');return {code:0,status:200,token:payload+'.'+sig,time:3500,data:{token:payload+'.'+sig,time:3500}};};
  const receive=(id,kind,token,data)=>{
   const c=config(id),mall=findMall(id),parts=String(token||'').split('.');
-  if(!c?.enabled||!mall||mall.system!=='crmeb-pro'||parts.length!==2||!/^\d{13}$/.test(parts[0])||Number(parts[0])<clock()||Number(parts[0])>clock()+3600000||!equal(parts[1],createHmac('sha256',c.signingKey).update(id+':'+parts[0]).digest('hex')))throw Error('推送鉴权失败');
+  if(!c?.enabled||!mall||!['crmeb-pro','crmeb-store'].includes(mall.system)||parts.length!==2||!/^\d{13}$/.test(parts[0])||Number(parts[0])<clock()||Number(parts[0])>clock()+3600000||!equal(parts[1],createHmac('sha256',c.signingKey).update(id+':'+parts[0]).digest('hex')))throw Error('推送鉴权失败');
   if(kind==='ignore')return {code:0};
   if(!['paid','refund'].includes(kind))throw Error('不支持的推送事件');
   if(!c[kind])return {code:0};
@@ -50,7 +50,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
   const fact=notificationFact(kind,data),key=fact.id;
   db.prepare('INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,?,?,?,?,?)').run(randomBytes(12).toString('hex'),id,kind,key,JSON.stringify(fact),clock(),clock());return {code:0};
  };
- const enqueueRefund=(id,data)=>{const c=config(id);if(!c?.enabled||!c.refund||findMall(id)?.system!=='crmeb-pro')return;const fact=notificationFact('refund',data);db.prepare("INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'refund',?,?,?,?)").run(randomBytes(12).toString('hex'),id,fact.id,JSON.stringify(fact),clock(),clock());};
+ const enqueueRefund=(id,data)=>{const c=config(id);if(!c?.enabled||!c.refund||!['crmeb-pro','crmeb-store'].includes(findMall(id)?.system))return;const fact=notificationFact('refund',data);db.prepare("INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'refund',?,?,?,?)").run(randomBytes(12).toString('hex'),id,fact.id,JSON.stringify(fact),clock(),clock());};
  const test=mall=>{const c=config(mall.id);if(!c?.enabled)throw Error('请先保存并启用通知');if(db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND kind='test' AND created>? LIMIT 1").get(mall.id,clock()-60000))throw Error('请等待一分钟后再发测试通知');const id=randomBytes(12).toString('hex');db.prepare("INSERT INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'test',?,'{}',?,?)").run(id,mall.id,id,clock(),clock());return {ok:true};};
  const retry=(mall,id)=>{const row=db.prepare("SELECT * FROM notification_outbox WHERE id=? AND mall_id=? AND status IN ('failed','uncertain')").get(id,mall.id);if(!row)throw Error('通知不可重试');db.prepare("UPDATE notification_outbox SET status='pending',attempts=0,next_at=?,error='' WHERE id=?").run(clock(),id);};
  const tick=async()=>{
