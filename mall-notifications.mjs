@@ -45,9 +45,12 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
   if(kind==='ignore')return {code:0};
   if(!['paid','refund'].includes(kind))throw Error('不支持的推送事件');
   if(!c[kind])return {code:0};
+  // This release's refund_create_push fires from refund completion, not application.
+  if(kind==='refund')return {code:0};
   const fact=notificationFact(kind,data),key=fact.id;
   db.prepare('INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,?,?,?,?,?)').run(randomBytes(12).toString('hex'),id,kind,key,JSON.stringify(fact),clock(),clock());return {code:0};
  };
+ const enqueueRefund=(id,data)=>{const c=config(id);if(!c?.enabled||!c.refund||findMall(id)?.system!=='crmeb-pro')return;const fact=notificationFact('refund',data);db.prepare("INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'refund',?,?,?,?)").run(randomBytes(12).toString('hex'),id,fact.id,JSON.stringify(fact),clock(),clock());};
  const test=mall=>{const c=config(mall.id);if(!c?.enabled)throw Error('请先保存并启用通知');if(db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND kind='test' AND created>? LIMIT 1").get(mall.id,clock()-60000))throw Error('请等待一分钟后再发测试通知');const id=randomBytes(12).toString('hex');db.prepare("INSERT INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'test',?,'{}',?,?)").run(id,mall.id,id,clock(),clock());return {ok:true};};
  const retry=(mall,id)=>{const row=db.prepare("SELECT * FROM notification_outbox WHERE id=? AND mall_id=? AND status IN ('failed','uncertain')").get(id,mall.id);if(!row)throw Error('通知不可重试');db.prepare("UPDATE notification_outbox SET status='pending',attempts=0,next_at=?,error='' WHERE id=?").run(clock(),id);};
  const tick=async()=>{
@@ -68,5 +71,5 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
    }
   }finally{busy=false;}
  };
- return {publicConfig,save,issueToken,receive,test,retry,tick,stop(){stopped=true;}};
+ return {publicConfig,save,issueToken,receive,enqueueRefund,test,retry,tick,stop(){stopped=true;}};
 }

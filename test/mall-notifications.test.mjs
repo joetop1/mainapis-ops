@@ -19,7 +19,7 @@ test('推送按商城鉴权、Token过期拒绝，事件去重且只保留通知
 });
 test('申请退款与付款独立去重，不把申请标成退款到账，支持忽略非订阅事件',async()=>{
  const sent=[],t=setup(async(url,options)=>{sent.push(options.body);return {ok:true,text:async()=>'{"errcode":0}'};});try{
- t.service.receive('mall1','paid',t.token,order);const refund={...order,refund_price:'5.00',store_order_id:12,order:{order_id:'WX123'},refund_reason:'买错规格'};t.service.receive('mall1','refund',t.token,refund);assert.equal(t.service.receive('mall1','ignore',t.token,{}).code,0);await t.service.tick();assert.ok(sent[0].includes('申请退款'));assert.ok(!sent[0].includes('已退款'));assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,2);
+ t.service.receive('mall1','paid',t.token,order);const refund={...order,refund_price:'5.00',store_order_id:12,order:{order_id:'WX123'},refund_reason:'买错规格'};assert.equal(t.service.receive('mall1','refund',t.token,refund).code,0);assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);t.service.enqueueRefund('mall1',refund);assert.equal(t.service.receive('mall1','ignore',t.token,{}).code,0);await t.service.tick();assert.ok(sent[0].includes('申请退款'));assert.ok(!sent[0].includes('已退款'));assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,2);
  }finally{t.db.close();}
 });
 test('明确拒绝按退避重试，超时保留不确定，人工核对后可重新排队',async()=>{

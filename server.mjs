@@ -1,3 +1,4 @@
+import {crmebRefundPoll} from './crmeb-refund-poll.mjs';
 import {mallNotifications} from './mall-notifications.mjs';
 import {jobInitiators} from './job-initiators.mjs';
 import {productCollectors} from './product-collectors.mjs';
@@ -88,6 +89,7 @@ const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','c
 const malls=mallConnections(db,mallProfiles);
 // Idempotent migration of persisted owners before any task can resume.
 for(const row of db.prepare("SELECT owner FROM products UNION SELECT owner FROM jobs UNION SELECT owner FROM connections UNION SELECT owner FROM connections_yunzhong UNION SELECT owner FROM connections_crmeb_pro UNION SELECT owner FROM connections_crmeb_store UNION SELECT owner FROM connections_shopxo UNION SELECT owner FROM connection_profiles").all())malls.ensure(row.owner);
+const refundPoll=crmebRefundPoll({db,getCredentials:mall=>credentialsFor('crmeb-pro',mall.owner,mall.id),getNotificationConfig:id=>notificationSecrets.get('notification:'+id),findMall:findNotificationMall,enqueue:notifications.enqueueRefund});
 const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
 function requireDistinctMall(owner,row,url){
@@ -309,13 +311,14 @@ const handleRequest=async(req,res)=>{
     const settingsSystem=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong|shopxo)(?:\/|$)/)?.[1];
     const settingsMall=settingsSystem?malls.get(owner,new URL(req.url,origin).searchParams.get('connection_id'),settingsSystem):null;
     const settingsScope=settingsMall?malls.scope(settingsMall):owner;
-    const notificationRoute=path.match(/^\/api\/connections\/crmeb-pro\/notifications(?:\/(test|retry))?$/);
+    const notificationRoute=path.match(/^\/api\/connections\/crmeb-pro\/notifications(?:\/(test|retry|refund-check))?$/);
     if(notificationRoute){
-      const meta=()=>({...notifications.publicConfig(settingsMall),tokenUrl:origin+'/api/notification-push/'+settingsMall.id+'/token',paidUrl:origin+'/api/notification-push/'+settingsMall.id+'/paid',refundUrl:origin+'/api/notification-push/'+settingsMall.id+'/refund',ignoreUrl:origin+'/api/notification-push/'+settingsMall.id+'/ignore'});
+      const meta=()=>({...notifications.publicConfig(settingsMall),refundPoll:refundPoll.state(settingsMall.id),tokenUrl:origin+'/api/notification-push/'+settingsMall.id+'/token',paidUrl:origin+'/api/notification-push/'+settingsMall.id+'/paid',refundUrl:origin+'/api/notification-push/'+settingsMall.id+'/refund',ignoreUrl:origin+'/api/notification-push/'+settingsMall.id+'/ignore'});
       if(req.method==='GET'&&!notificationRoute[1])return json(res,200,meta());
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不发送或保存通知');const input=await body(req);
-        if(notificationRoute[1]==='test'){notifications.test(settingsMall);audit(owner,'notification.test_queued',settingsMall.id);}
+        if(notificationRoute[1]==='refund-check'){await refundPoll.enable(settingsMall);audit(owner,'notification.refund_poll_enabled',settingsMall.id);setImmediate(()=>refundPoll.run(settingsMall.id,true).catch(()=>console.error('refund_poll_failed')));}
+        else if(notificationRoute[1]==='test'){notifications.test(settingsMall);audit(owner,'notification.test_queued',settingsMall.id);}
         else if(notificationRoute[1]==='retry'){notifications.retry(settingsMall,String(input.id||''));audit(owner,'notification.retry',settingsMall.id);}
         else{notifications.save(settingsMall,input);audit(owner,'notification.settings_saved',settingsMall.id);}
         return json(res,200,meta());
@@ -517,8 +520,8 @@ const handleRequest=async(req,res)=>{
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
 export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
-export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();db.close();};
+export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();refundPoll.stop();db.close();};
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
-if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>notifications.tick().catch(()=>console.error('notification_worker_failed')),4000);notificationTimer.unref();}
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>{notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));},4000);notificationTimer.unref();}
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Goods Ops listening on ${host}:${process.env.PORT||3080}${demo?' [LOCAL DEMO]':''}`));
