@@ -50,3 +50,11 @@ Token 只发送到 OPS 同源后端，使用 AES-256-GCM 加密保存于 SQLite�
 图库 `imgList`，规格图 `attrList.spe[].attrList[].attrPic`，SKU `productList[].attrs[{attrName,attrValue}]`；保存侧 attrs 转为 skuData。新增请求不携带旧 productId、skuId、attributesId、picId。
 
 `workflows/publish-tigshop.json` 为早期 n8n 方案存档，不用于当前直连。
+
+## 原生普通属性（OPS 0.6.8）
+
+参考本地 Java 5.8.32 源码的 ProductSaveParam、ProductAttrsDTO、ProductAttributeDTO、ProductServiceImpl.saveProductAttr 和 ProductAttributesServiceImpl：普通属性 attrList.normal 为按 attrName 分组的 attrList，每项 attrType=0、attrName/attrValue。保存服务合并 extra/spe/normal 后重设 sortOrder，详情按 sortOrder 读回再按名称分组。原规格 attrList.spe 和 productList 不改。
+
+新任务快照设置 tigshop_native_attributes=true，清洗后的产品属性进入 normal，不再拼接至详情。已知 pure.sql 的 attr_value 为 varchar(120)、utf8mb3，保守限制参数值120字，拒绝四字节字符，不截断数据。参数同名不同值合并分组，读回检查名称、值、分组顺序、普通属性类型及数量。旧任务无标记，不要求新增普通属性字段。
+
+只需更新 OPS，无需商城源码或 n8n 变更。历史 n8n JSON 同步生成但仍为存档。165项测试通过，包括直连模拟；本地参考源码版本5.8.32，实际已配置商城版本5.8.60，新字段真实写入仍须单件验收，不据模拟宣称线上成功。已有商品不自动补写，已有任务不重复创建。

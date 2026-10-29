@@ -37,13 +37,24 @@ export function buildTigshopProduct(lease,fx,shipping={}){
  const stock=skus.reduce((n,s)=>n+s.stock,0);
  if(stock<=0)throw Error('Tigshop 商品总库存必须大于 0，请先填写实际库存');
  if(stock>2147483647)throw Error('总库存超出范围');
+ const normal=[];
+ if(p.tigshop_native_attributes===true){
+  if(!Array.isArray(p.attributes)||p.attributes.length>100)throw Error('Tigshop 产品参数格式无效');
+  const groups=new Map();
+  for(const row of p.attributes){
+   if(typeof row?.name!=='string'||!row.name.trim()||row.name.length>60||typeof row.value!=='string'||!row.value.trim()||[...row.value].length>120||/[\u{10000}-\u{10FFFF}]/u.test(row.name+row.value))throw Error('Tigshop 参数名称最多60字、内容最多120字，且不能含表情等四字节字符；请编辑后重新发布');
+   if(!groups.has(row.name)){const group={attrName:row.name,attrList:[]};groups.set(row.name,group);normal.push(group);}
+   const group=groups.get(row.name);if(group.attrList.some(x=>x.attrValue===row.value))continue;
+   group.attrList.push({attrType:0,attrName:row.name,attrValue:row.value,attrPrice:0,attrColor:'',attrPic:'',attrPicThumb:'',sortOrder:0});
+  }
+ }
  const sales=p.virtual_sales??0;if(!Number.isSafeInteger(sales)||sales<0||sales>2147483647)throw Error('虚拟销量无效');
  return {productType:1,shopId:0,productStatus:0,checkStatus:1,saleMode:0,deliveryMode:1,
   productName:p.title,productSn:lease.marker,categoryId:p.category_id,brandId:p.brand_ids?.[0]||0,
   productStock:stock,productPrice:Math.min(...skus.map(s=>s.price)),costPrice:Math.min(...skus.map(s=>s.cost)),marketPrice:0,
   productBrief:'',productDesc:'<p>'+html(p.description||'').replace(/\n/g,'<br>')+'</p>'+detailImages.map(src=>'<p><img src="'+html(src)+'"></p>').join(''),
   imgList:images.map((picUrl,sortOrder)=>({picUrl,picOriginal:picUrl,picThumb:picUrl,picLarge:picUrl,sortOrder})),picUrl:images[0],picOriginal:images[0],picThumb:images[0],
-  attrList:{normal:[],extra:[],spe},skuType:2,
+  attrList:{normal,extra:[],spe},skuType:2,
   productList:skus.map((s,i)=>({skuSn:s.sku,skuValue:matrix.names.map((name,j)=>name+':'+values[i][j]).join(';'),attrs:matrix.names.map((name,j)=>({attrName:name,attrValue:values[i][j]})),skuPrice:s.price.toFixed(2),costPrice:s.cost,marketPrice:0,skuStock:s.stock,isEnabled:1})),
   virtualSales:sales,remark:lease.marker,freeShipping:0,shippingTplId:shipping.templateId,noShipping:0,isLogistics:1,isShopDelivery:0,isShopPickup:0,
   productWeight:0,productVolume:0,productServiceIds:[],productArticleList:[],productRelated:[],productVideoInfo:[],isPromote:false,isPromoteActivity:false,isDelete:0,isBest:0,isNew:0,isHot:0,
@@ -67,6 +78,14 @@ export function verifyTigshopProduct(response,lease,fx,shipping){
   const actual=(d.attrList?.spe||[]).filter(g=>g.attrName===group.attrName);
   if(actual.length!==1||actual[0].attrList?.length!==group.attrList.length)return fail('Tigshop 规格维度或选项数量不一致');
   for(const s of group.attrList){const matches=actual[0].attrList.filter(a=>a.attrValue===s.attrValue);if(matches.length!==1||String(matches[0].attrPic||'')!==s.attrPic)return fail('Tigshop SKU 配图不一致');}
+ }
+ if(lease.product.tigshop_native_attributes===true){
+  const actual=d.attrList?.normal;
+  if(!Array.isArray(actual)||actual.length!==e.attrList.normal.length)return fail('Tigshop 商品参数数量不一致');
+  for(const [index,group] of e.attrList.normal.entries()){
+   const found=actual[index];
+   if(found?.attrName!==group.attrName||!Array.isArray(found.attrList)||found.attrList.length!==group.attrList.length||group.attrList.some((row,i)=>found.attrList[i]?.attrName!==row.attrName||found.attrList[i]?.attrValue!==row.attrValue||Number(found.attrList[i]?.attrType)!==0))return fail('Tigshop 商品参数名称、内容或顺序不一致');
+  }
  }
  return {status:'succeeded',remote_id:String(d.productId),message:'Tigshop 自营下架商品已核对：货号、分类品牌、SKU、欧元价格成本、库存与配图地址一致；图片内容仍需人工检查'};
 }

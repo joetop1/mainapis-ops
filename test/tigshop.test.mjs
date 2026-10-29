@@ -27,3 +27,13 @@ test('supplies gallery and SKU thumbnail fields used by the Tigshop admin',()=>{
  for(const [i,a] of e.attrList.spe[0].attrList.entries())assert.equal(a.attrPicThumb,lease.product.skus[i].image);
 });
 test('Tigshop detail only contains the explicit detail gallery',()=>{const l=structuredClone(lease);l.product.detail_images=['https://example.com/real-detail.jpg'];const payload=buildTigshopProduct(l,fx,shipping);assert.ok(payload.productDesc.includes('real-detail.jpg'));assert.equal(payload.productDesc.includes(l.product.images[0]),false);});
+test('Tigshop普通属性独立于SKU，分组写入并核对，历史任务不增加要求',()=>{
+ const l=structuredClone(lease);l.product.tigshop_native_attributes=true;l.product.attributes=[{name:'材质',value:'硅胶'},{name:'容量',value:'30ml'},{name:'材质',value:'塑料'}];
+ const before=JSON.stringify(l),e=buildTigshopProduct(l,fx,shipping);assert.equal(JSON.stringify(l),before);assert.deepEqual(e.attrList.normal.map(g=>[g.attrName,g.attrList.map(x=>x.attrValue)]),[['材质',['硅胶','塑料']],['容量',['30ml']]]);assert.ok(e.attrList.normal.every(g=>g.attrList.every(x=>x.attrType===0&&x.attributesId===undefined)));assert.deepEqual(e.attrList.spe,buildTigshopProduct(lease,fx,shipping).attrList.spe);
+ const response=()=>({code:0,data:{...structuredClone(e),productId:10,productList:e.productList.map(s=>({...s,skuData:s.attrs.map(a=>({name:a.attrName,value:a.attrValue}))}))}});
+ assert.equal(verifyTigshopProduct(response(),l,fx,shipping).status,'succeeded');
+ for(const change of [d=>d.attrList.normal=[],d=>d.attrList.normal[0].attrList[0].attrValue='错误',d=>d.attrList.normal.reverse(),d=>d.attrList.normal[0].attrList[0].attrType=1]){const r=response();change(r.data);assert.equal(verifyTigshopProduct(r,l,fx,shipping).status,'awaiting_review');}
+ delete l.product.tigshop_native_attributes;assert.deepEqual(buildTigshopProduct(l,fx,shipping).attrList.normal,[]);const r=response();delete r.data.attrList.normal;assert.equal(verifyTigshopProduct(r,l,fx,shipping).status,'succeeded');
+});
+
+test('普通属性超出已审阅库字段长度或字符集时创建前拦截',()=>{for(const value of ['a'.repeat(121),'材质😀']){const l=structuredClone(lease);l.product.tigshop_native_attributes=true;l.product.attributes=[{name:'参数',value}];assert.throws(()=>buildTigshopProduct(l,fx,shipping),/120字/);}});

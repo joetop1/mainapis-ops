@@ -4,7 +4,8 @@ import {openStore,uid} from '../core.mjs';
 import {createTigshopRunner} from '../tigshop-direct.mjs';
 import {buildTigshopProduct} from '../tigshop.mjs';
 const p={catalog_target:'tigshop',category_id:1,brand_ids:[],title:'测试',images:['https://example.com/a.jpg'],skus:[{sku:'red',spec:'红',stock:4,price:80,cost:40,image:'https://example.com/red.jpg'}],tigshop:{fx:{sourceCurrency:'CNY',targetCurrency:'EUR',eurPerCny:0.125,rateDate:'2026-10-23'},shipping:{templateId:51}}};
-function setup(mode){
+function setup(mode,product=p){
+ const p=product;
  const db=openStore(':memory:'),id=uid(),requests=[];
  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','https://detail.1688.com/offer/1.html','{}','approved',1,'now','now');
  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,'alice','p',1,'tigshop','dispatching','private-token','','','now','now');
@@ -40,3 +41,5 @@ test('auth failure is visible and leaves creation unclaimed',async()=>{
 test('uncertain POST never releases the claim or retries creation',async()=>{
  const t=setup('timeout');try{await t.run(t.job);assert.equal(t.db.prepare('SELECT claimed FROM job_snapshots').get().claimed,1);assert.equal(t.db.prepare('SELECT status FROM jobs').get().status,'unknown');await t.run(t.job);assert.equal(t.requests.filter(r=>r.url.endsWith('/create')).length,1);}finally{t.db.close();}
 });
+
+test('直连创建请求包含原生普通属性并成功读回核对',async()=>{const product=structuredClone(p);product.tigshop_native_attributes=true;product.attributes=[{name:'材质',value:'硅胶'}];const t=setup('success',product);try{await t.run(t.job);const payload=JSON.parse(t.requests.find(r=>r.url.endsWith('/create')).options.body);assert.equal(payload.attrList.normal[0].attrList[0].attrValue,'硅胶');assert.equal(t.db.prepare('SELECT status FROM jobs').get().status,'succeeded');}finally{t.db.close();}});
