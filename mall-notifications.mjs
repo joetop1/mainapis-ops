@@ -35,6 +35,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
   for(const key of ['enabled','paid','refund'])if(typeof input[key]!=='boolean')throw Error('通知开关格式无效');
   const old=config(mall.id),webhook=input.webhook?wecomWebhook(input.webhook):old?.webhook;if(!webhook)throw Error('请填写企业微信群Webhook地址');
   if(old?.webhook&&webhook!==old.webhook&&db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND status IN ('pending','paused','sending','uncertain') LIMIT 1").get(mall.id))throw Error('仍有未完成通知，请先处理通知记录后再更换接收群');
+  if(old?.webhook&&webhook!==old.webhook&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='notification_native_inbox'").get()&&db.prepare("SELECT 1 FROM notification_native_inbox WHERE mall_id=? AND status IN ('pending','working','failed') LIMIT 1").get(mall.id))throw Error('仍有原生通知未处理，请先核对接收记录后再更换接收群');
   const settings=mall.system==='tigshop'?tigshopNotificationSettings({currency:input.currency??old?.currency,timeZone:input.timeZone??old?.timeZone}):{};
   if(old&&mall.system==='tigshop'&&(old.currency!==settings.currency||old.timeZone!==settings.timeZone)&&db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND status IN ('pending','paused','sending','uncertain') LIMIT 1").get(mall.id))throw Error('仍有未完成通知，请先核对记录后更改币种或时区');
   store.set('notification:'+mall.id,{...old,...settings,webhook,enabled:input.enabled,paid:input.paid,refund:input.refund,pushAccount:old?.pushAccount||'ops_'+randomBytes(12).toString('hex'),pushPassword:old?.pushPassword||randomBytes(32).toString('hex'),signingKey:old?.signingKey||randomBytes(32).toString('hex')});
@@ -53,6 +54,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
   const fact=notificationFact(kind,data),key=fact.id;
   db.prepare('INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,?,?,?,?,?)').run(randomBytes(12).toString('hex'),id,kind,key,JSON.stringify(fact),clock(),clock());return {code:0};
  };
+ const enqueueCrmeb=(id,kind,data)=>{const c=config(id);if(!c?.enabled||!['paid','refund'].includes(kind)||!c[kind]||findMall(id)?.system!=='crmeb-store')throw Error('原生通知配置已变化');const fact=notificationFact(kind,data);db.prepare('INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,?,?,?,?,?)').run(randomBytes(12).toString('hex'),id,kind,fact.id,JSON.stringify(fact),clock(),clock());};
  const enqueueRefund=(id,data)=>{const c=config(id);if(!c?.enabled||!c.refund||!['crmeb-pro','crmeb-store'].includes(findMall(id)?.system))return;const fact=notificationFact('refund',data);db.prepare("INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'refund',?,?,?,?)").run(randomBytes(12).toString('hex'),id,fact.id,JSON.stringify(fact),clock(),clock());};
  const enqueueTigshop=(id,kind,data,currency)=>{const c=config(id);if(!c?.enabled||!['paid','refund'].includes(kind)||!c[kind]||findMall(id)?.system!=='tigshop')return;if(currency!==c.currency)throw Error('通知基准币种已变化，请重新检查接口');const fact={...notificationFact(kind,data),currency};db.prepare('INSERT OR IGNORE INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,?,?,?,?,?)').run(randomBytes(12).toString('hex'),id,kind,fact.id,JSON.stringify(fact),clock(),clock());};
  const test=mall=>{const c=config(mall.id);if(!c?.enabled)throw Error('请先保存并启用通知');if(db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND kind='test' AND created>? LIMIT 1").get(mall.id,clock()-60000))throw Error('请等待一分钟后再发测试通知');const id=randomBytes(12).toString('hex');db.prepare("INSERT INTO notification_outbox(id,mall_id,kind,event_key,fact,next_at,created) VALUES(?,?,'test',?,'{}',?,?)").run(id,mall.id,id,clock(),clock());return {ok:true};};
@@ -75,5 +77,5 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
    }
   }finally{busy=false;}
  };
- return {publicConfig,save,issueToken,receive,enqueueRefund,enqueueTigshop,test,retry,tick,stop(){stopped=true;}};
+ return {publicConfig,save,issueToken,receive,enqueueCrmeb,enqueueRefund,enqueueTigshop,test,retry,tick,stop(){stopped=true;}};
 }

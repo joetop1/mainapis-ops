@@ -1,3 +1,4 @@
+import {crmebNativeRelay} from './crmeb-native-relay.mjs';
 import {tigshopNotificationPoll} from './tigshop-notification-poll.mjs';
 import {crmebRefundPoll} from './crmeb-refund-poll.mjs';
 import {mallNotifications} from './mall-notifications.mjs';
@@ -92,6 +93,7 @@ const malls=mallConnections(db,mallProfiles);
 for(const row of db.prepare("SELECT owner FROM products UNION SELECT owner FROM jobs UNION SELECT owner FROM connections UNION SELECT owner FROM connections_yunzhong UNION SELECT owner FROM connections_crmeb_pro UNION SELECT owner FROM connections_crmeb_store UNION SELECT owner FROM connections_shopxo UNION SELECT owner FROM connection_profiles").all())malls.ensure(row.owner);
 const refundPoll=crmebRefundPoll({db,getCredentials:mall=>credentialsFor(mall.system,mall.owner,mall.id),getNotificationConfig:id=>notificationSecrets.get('notification:'+id),findMall:findNotificationMall,enqueue:notifications.enqueueRefund});
 const tigshopNoticePoll=tigshopNotificationPoll({db,getCredentials:mall=>credentialsFor('tigshop',mall.owner,mall.id),getNotificationConfig:id=>notificationSecrets.get('notification:'+id),findMall:findNotificationMall,enqueue:notifications.enqueueTigshop});
+const nativeRelay=crmebNativeRelay({db,findMall:findNotificationMall,getConfig:id=>notificationSecrets.get('notification:'+id),getCredentials:mall=>credentialsFor('crmeb-store',mall.owner,mall.id),enqueue:notifications.enqueueCrmeb});
 const privateBrandCatalogs=new Map();
 db.exec("CREATE TABLE IF NOT EXISTS job_transports(job_id TEXT PRIMARY KEY REFERENCES jobs(id), mode TEXT NOT NULL)");
 function requireDistinctMall(owner,row,url){
@@ -122,8 +124,8 @@ function expire(res,id) {if(id)db.prepare('DELETE FROM sessions WHERE id=?').run
 const audit=(owner,action,id)=>{db.prepare('INSERT INTO audit VALUES(?,?,?,?,?)').run(uid(),owner,action,id,now());if(owner.startsWith('team:'))db.prepare('INSERT INTO team_events VALUES(?,?,?,?,?,?)').run(uid(),owner,actorContext.getStore()?.actor||'system',action,id,now());};
 function json(res,status,data) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
 function redirect(res,url) {res.writeHead(302,{Location:url});res.end();}
-async function body(req,maxBytes=2*1024*1024) {
-  if(!(req.headers['content-type']||'').startsWith('application/json'))throw Error('请使用 application/json');
+async function body(req,maxBytes=2*1024*1024,rawJson=false) {
+  if(!rawJson&&!(req.headers['content-type']||'').startsWith('application/json'))throw Error('请使用 application/json');
   let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBytes)throw Error('请求内容过大');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString()||'{}');
 }
 async function remoteJSON(url,options={}) {
@@ -197,6 +199,12 @@ const handleRequest=async(req,res)=>{
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
     if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
+    if(nativeNotice){
+      if(demo||req.method!=='POST')return json(res,403,{errcode:1});
+      try{return json(res,200,nativeRelay.receive(nativeNotice[1],nativeNotice[2],new URL(req.url,origin).searchParams.get('key'),await body(req,8192,true)));}
+      catch{return json(res,400,{errcode:1,errmsg:'通知未接收，请核对专用地址、模板及开关'});}
+    }
     const notificationPush=path.match(/^\/api\/notification-push\/([a-zA-Z0-9-]{8,80})\/(token|paid|refund|ignore)$/);
     if(notificationPush){
       const [,id,kind]=notificationPush;
@@ -313,13 +321,15 @@ const handleRequest=async(req,res)=>{
     const settingsSystem=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong|shopxo)(?:\/|$)/)?.[1];
     const settingsMall=settingsSystem?malls.get(owner,new URL(req.url,origin).searchParams.get('connection_id'),settingsSystem):null;
     const settingsScope=settingsMall?malls.scope(settingsMall):owner;
-    const notificationRoute=path.match(/^\/api\/connections\/(?:crmeb-pro|crmeb-store|tigshop)\/notifications(?:\/(test|retry|refund-check|source-check))?$/);
+    const notificationRoute=path.match(/^\/api\/connections\/(?:crmeb-pro|crmeb-store|tigshop)\/notifications(?:\/(test|retry|relay-retry|relay-check|refund-check|source-check))?$/);
     if(notificationRoute){
-      const meta=()=>({...notifications.publicConfig(settingsMall),tigshopPoll:settingsMall.system==='tigshop'?tigshopNoticePoll.state(settingsMall.id):undefined,refundPoll:refundPoll.state(settingsMall.id),tokenUrl:origin+'/api/notification-push/'+settingsMall.id+'/token',paidUrl:origin+'/api/notification-push/'+settingsMall.id+'/paid',refundUrl:origin+'/api/notification-push/'+settingsMall.id+'/refund',ignoreUrl:origin+'/api/notification-push/'+settingsMall.id+'/ignore'});
+      const meta=()=>({...notifications.publicConfig(settingsMall),...nativeRelay.meta(settingsMall,origin),tigshopPoll:settingsMall.system==='tigshop'?tigshopNoticePoll.state(settingsMall.id):undefined,refundPoll:refundPoll.state(settingsMall.id),tokenUrl:origin+'/api/notification-push/'+settingsMall.id+'/token',paidUrl:origin+'/api/notification-push/'+settingsMall.id+'/paid',refundUrl:origin+'/api/notification-push/'+settingsMall.id+'/refund',ignoreUrl:origin+'/api/notification-push/'+settingsMall.id+'/ignore'});
       if(req.method==='GET'&&!notificationRoute[1])return json(res,200,meta());
       if(req.method==='POST'){
         if(demo)throw Error('演示模式不发送或保存通知');const input=await body(req);
         if(notificationRoute[1]==='source-check'){if(settingsMall.system!=='tigshop')throw Error('通知系统不匹配');await tigshopNoticePoll.enable(settingsMall);audit(owner,'notification.tigshop_poll_enabled',settingsMall.id);setImmediate(()=>tigshopNoticePoll.checkNow(settingsMall.id).catch(()=>console.error('tigshop_notification_poll_failed')));}
+        else if(notificationRoute[1]==='relay-retry'){nativeRelay.retry(settingsMall,String(input.id||''));audit(owner,'notification.relay_retry',settingsMall.id);}
+        else if(notificationRoute[1]==='relay-check'){await nativeRelay.check(settingsMall);audit(owner,'notification.relay_checked',settingsMall.id);}
         else if(notificationRoute[1]==='refund-check'){if(settingsMall.system==='tigshop')throw Error('请使用Tigshop通知接口检查');await refundPoll.enable(settingsMall);audit(owner,'notification.refund_poll_enabled',settingsMall.id);setImmediate(()=>refundPoll.run(settingsMall.id,true).catch(()=>console.error('refund_poll_failed')));}
         else if(notificationRoute[1]==='test'){notifications.test(settingsMall);audit(owner,'notification.test_queued',settingsMall.id);}
         else if(notificationRoute[1]==='retry'){notifications.retry(settingsMall,String(input.id||''));audit(owner,'notification.retry',settingsMall.id);}
@@ -523,8 +533,8 @@ const handleRequest=async(req,res)=>{
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
 export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
-export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
+export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();nativeRelay.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
-if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>{notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));tigshopNoticePoll.tick().catch(()=>console.error('tigshop_notification_poll_failed'));},4000);notificationTimer.unref();}
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>{nativeRelay.tick().catch(()=>console.error('native_notification_read_failed'));notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));tigshopNoticePoll.tick().catch(()=>console.error('tigshop_notification_poll_failed'));},4000);notificationTimer.unref();}
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Goods Ops listening on ${host}:${process.env.PORT||3080}${demo?' [LOCAL DEMO]':''}`));

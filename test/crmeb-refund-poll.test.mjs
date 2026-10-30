@@ -29,4 +29,4 @@ test('周期检查复用已保存进度，已入队申请不会重复通知',asy
  const t=setup();try{await t.poll.enable(t.mall);await t.poll.run('mall1',true);const before=t.poll.state('mall1').last_success;t.advance(61000);await t.poll.tick();assert.ok(t.poll.state('mall1').last_success>before);assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);}finally{t.db.close();}
 });
 
-test('多门店使用独立get_token授权，售后读取仍严格核对后入队',async()=>{const t=setup('crmeb-store');try{await t.poll.enable(t.mall);await t.poll.run('mall1',true);assert.ok(t.calls[0].url.endsWith('/outapi/get_token'));assert.ok(!t.calls.some(c=>c.url.endsWith('/outapi/access_token')));assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);assert.equal(t.poll.state('mall1').error,'');}finally{t.db.close();}});
+test('多门店停用旧退款详情补拉，改用原生通知转接',async()=>{const t=setup('crmeb-store');try{await assert.rejects(t.poll.enable(t.mall),/原生企业微信通知转接/);assert.equal(t.calls.length,0);}finally{t.db.close();}});

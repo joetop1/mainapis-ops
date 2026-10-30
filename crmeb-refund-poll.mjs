@@ -15,7 +15,7 @@ export function crmebRefundPoll({db,getCredentials,getNotificationConfig,findMal
  };
  const run=async(id,manual=false)=>{
   if(stopped||running.has(id))return;const saved=db.prepare('SELECT * FROM notification_refund_poll WHERE mall_id=?').get(id),c=getNotificationConfig(id),mall=findMall(id);
-  if(!saved?.enabled||!c?.enabled||!c.refund||!mall)return;
+  if(!saved?.enabled||!c?.enabled||!c.refund||!mall||mall.system==='crmeb-store')return;
   running.add(id);const started=clock(),floor=manual?started-86400000:Math.max(saved.since_ms,(saved.last_success||saved.since_ms)-300000);
   db.prepare("UPDATE notification_refund_poll SET checked=?,error='' WHERE mall_id=?").run(started,id);
   try{
@@ -38,6 +38,7 @@ export function crmebRefundPoll({db,getCredentials,getNotificationConfig,findMal
   finally{running.delete(id);}
  };
  const enable=async mall=>{
+  if(mall.system==='crmeb-store')throw Error('多门店已改为原生企业微信通知转接，请配置专用地址和模板');
   const c=getNotificationConfig(mall.id);if(!c?.enabled||!c.refund)throw Error('请先保存并启用通知与申请退款开关');
   if(running.has(mall.id))throw Error('正在检查，请稍后刷新');
   const api=await client(mall),data=await api.list(1);if(data.list.length)await api.detail(data.list[0]);
