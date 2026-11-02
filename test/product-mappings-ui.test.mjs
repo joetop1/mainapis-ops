@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
+import {productMallMappings} from '../public/mall-mappings.js';
+const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+const malls=[{id:'a',type:'crmeb-pro',name:'会员',system:'会员系统',configured:true},{id:'b',type:'crmeb-store',name:'多门店',system:'多门店系统',configured:true}];
+const node=()=>({value:'',disabled:false,innerHTML:'',textContent:'',classList:{toggle(){}},addEventListener(){},replaceChildren(){}});
+test('编辑时未保存的分类品牌标签按商城记住，来回切换不清空其他映射',()=>{
+ const nodes=new Map(['catalogTarget','catalogMall','categorySelect','brandSelect','storeScopeField','mallMappingSummary'].map(id=>[id,node()]));
+ const elements={category_id:nodes.get('categorySelect'),brand_id:nodes.get('brandSelect'),tag_ids:{value:'101'},applicable_type:{value:'0'}};nodes.set('productForm',{elements});
+ const context=vm.createContext({$:s=>nodes.get(s.slice(1)),esc:String,mallRows:()=>malls,mallFor:id=>malls.find(m=>m.id===id),fillCatalogMalls:id=>nodes.get('catalogMall').value=id});
+ vm.runInContext(`let editingMappings=new Map(),activeMappingId='a',catalog={categories:[{id:11,label:'会员分类'}],brands:[{id:21,ids:[21]}]};function loadCatalogOptions(m){catalog={categories:[{id:m.category_id,label:m.category}],brands:m.brand_ids.map(id=>({id,ids:[id]}))};$('#categorySelect').value=String(m.category_id);$('#brandSelect').value=String(m.brand_ids.at(-1)||0);}`,context);
+ vm.runInContext(source.slice(source.indexOf('function currentMapping()'),source.indexOf("$('#refreshCatalog').onclick=")),context);
+ nodes.get('categorySelect').value='11';nodes.get('brandSelect').value='21';context.switchMapping('b');
+ nodes.get('categorySelect').value='12';nodes.get('brandSelect').value='22';elements.tag_ids.value='202';elements.applicable_type.value='1';vm.runInContext("catalog={categories:[{id:12,label:'多门店分类'}],brands:[{id:22,ids:[22]}]}",context);
+ context.switchMapping('a');assert.equal(nodes.get('categorySelect').value,'11');assert.equal(nodes.get('brandSelect').value,'21');assert.equal(elements.tag_ids.value,'101');context.switchMapping('b');assert.equal(nodes.get('categorySelect').value,'12');assert.equal(nodes.get('brandSelect').value,'22');assert.equal(elements.tag_ids.value,'202');assert.equal(elements.applicable_type.value,'1');
+});
+test('编辑页回到顶部仅滚动弹窗内部，尊重减少动态效果设置',()=>{
+ const events={},body={scrollTop:500,addEventListener:(name,fn)=>events[name]=fn,scrollTo:options=>{body.last=options;}},button=node();let hidden;
+ button.classList.toggle=(_,value)=>hidden=value;
+ const context=vm.createContext({$:s=>s==='#editor .form-body'?body:button,window:{matchMedia:()=>({matches:true}),scrollTo:()=>{throw Error('不应滚动背景页面');}}});
+ vm.runInContext(source.slice(source.indexOf("const editorBody=$('#editor .form-body')"),source.indexOf("const backToTop=$('#backToTop')")),context);
+ events.scroll();assert.equal(hidden,false);button.onclick();assert.equal(body.last.top,0);assert.equal(body.last.behavior,'auto');body.scrollTop=0;events.scroll();assert.equal(hidden,true);
+});
+test('多商城部分提交后，只重试未创建任务的商城，已有任务与缺分类商城不可勾选',async()=>{
+ const nodes=new Map(['publishTitle','publishResults','publishSubmit','publishTargets','publishDialog','publishForm'].map(id=>[id,node()]));let inputs=[];Object.defineProperty(nodes.get('publishTargets'),'innerHTML',{set(value){inputs=[...value.matchAll(/<input type="checkbox" value="([^"]+)" ([^>]*)>/g)].map(m=>({value:m[1],checked:m[2].includes('checked'),disabled:m[2].includes('disabled')}));},get(){return '';}});nodes.get('publishTargets').querySelectorAll=query=>query==='input'?inputs:inputs.filter(i=>i.checked&&!i.disabled);nodes.get('publishDialog').showModal=()=>{};
+ const calls=[],context=vm.createContext({$:s=>nodes.get(s.slice(1)),productMallMappings,mallRows:()=>malls,mallFor:id=>malls.find(m=>m.id===id),labels:{succeeded:'发布成功'},esc:String,clearDialogFeedback(){},toast(message){throw Error(message);},load:async()=>{},api:async(path,method,body)=>{calls.push(body);return {results:body.destinations.map(d=>({...d,ok:d.connection_id==='a'||calls.length===2,id:'job-'+d.connection_id,error:'连接未准备好'}))};}});
+ vm.runInContext('let publishing,publishResults=new Map(),publishUncertain=false;',context);vm.runInContext(source.slice(source.indexOf('function openPublish('),source.indexOf("$('#refresh').onclick=")),context);
+ const product={id:'p',revision:4,title:'标题',mall_mappings:malls.map((m,i)=>({catalog_connection_id:m.id,catalog_target:m.type,category_id:11+i,category:'分类',brand_ids:[],tag_ids:[]}))};context.openPublish(product);assert.equal(inputs.filter(i=>i.checked).length,2);
+ await nodes.get('publishForm').onsubmit({preventDefault(){},submitter:nodes.get('publishSubmit')});assert.equal(inputs[0].disabled,true);assert.equal(inputs[1].disabled,false);assert.equal(nodes.get('publishSubmit').textContent,'重试未提交商城');
+ await nodes.get('publishForm').onsubmit({preventDefault(){},submitter:nodes.get('publishSubmit')});assert.equal(calls[1].destinations.length,1);assert.equal(calls[1].destinations[0].connection_id,'b');
+ context.openPublish({...product,publications:[{mall_connection_id:'a',status:'succeeded',revision:1}]});assert.equal(inputs[0].disabled,true);assert.equal(inputs[0].checked,false);
+ context.openPublish({...product,mall_mappings:product.mall_mappings.slice(0,1)});assert.equal(inputs[1].disabled,true);
+});
