@@ -1,3 +1,4 @@
+import {systemSettings,systemAdministrator,renderSystemBranding,DEFAULT_ICON} from './system-settings.mjs';
 import {productMerge} from './product-merge.mjs';
 import {productForMall} from './public/mall-mappings.js';
 import {buildOfficialProduct} from './crmeb-official.mjs';
@@ -56,6 +57,7 @@ const origin=process.env.APP_ORIGIN||'http://127.0.0.1:3080';
 const issuer=(process.env.CASDOOR_ISSUER||'https://auth.mainapis.com').replace(/\/$/,'');
 const client=process.env.CASDOOR_CLIENT_ID||'', clientSecret=process.env.CASDOOR_CLIENT_SECRET||'';
 const allowed=(process.env.ALLOWED_SUBJECTS||'').split(',').map(s=>s.trim()).filter(Boolean);
+const isSystemAdmin=sub=>systemAdministrator(sub,allowed,process.env.SYSTEM_ADMIN_SUBJECTS);
 const webhook=process.env.N8N_WEBHOOK_URL||'', hookToken=process.env.N8N_WEBHOOK_TOKEN||'';
 const storeWebhook=process.env.N8N_STORE_WEBHOOK_URL||'',storeHookToken=process.env.N8N_STORE_WEBHOOK_TOKEN||'';
 const officialTargets=['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'];
@@ -81,6 +83,7 @@ if((webhook && new URL(webhook).protocol!=='https:')||(storeWebhook&&new URL(sto
 const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recursive:true});
 const db=openStore(join(dataDir,'ops.sqlite'));
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
+const branding=systemSettings(db);
 const collectors=productCollectors(db);
 const mergeProducts=productMerge({db,collectors,audit:(...args)=>audit(...args),actor:()=>({sub:actorContext.getStore()?.actor||'',name:actorContext.getStore()?.name||''})});
 const initiators=jobInitiators(db);
@@ -204,11 +207,13 @@ db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核�
 setInterval(()=>db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()),60000).unref();
 const handleRequest=async(req,res)=>{
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try {
     const path=new URL(req.url,'http://localhost').pathname;
+    if(req.method==='GET'&&path==='/api/system-info')return json(res,200,branding.read());
+    if(req.method==='GET'&&(path==='/favicon.ico'||path==='/default-icon.svg'||/^\/api\/system-assets\/(icon|logo)$/.test(path))){const slot=path.endsWith('logo')?'logo':'icon',saved=path==='/default-icon.svg'?null:branding.asset(slot);if(!saved&&slot==='logo')return json(res,404,{error:'未设置Logo'});res.writeHead(200,{'Content-Type':saved?.mime||'image/svg+xml','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"});return res.end(saved?Buffer.from(saved.bytes):DEFAULT_ICON);}
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString(),branding.read()):data);}
     const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
     if(nativeNotice){
       if(demo||req.method!=='POST')return json(res,403,{errcode:1});
@@ -290,10 +295,15 @@ const handleRequest=async(req,res)=>{
       db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);return json(res,200,{ok:true});
     }
     if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
-    if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,system:systemRelease,authReady:demo||!!(client&&clientSecret&&allowed.length)});
+    if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,system:systemRelease,systemAdmin:!demo&&isSystemAdmin(s?.user?.sub),branding:branding.read(),authReady:demo||!!(client&&clientSecret&&allowed.length)});
     if(!s?.user)return json(res,401,{error:'请先登录'});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
+    }
+    if(path==='/api/system-settings'){
+      if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅指定的系统管理员可管理全站基本信息'});
+      if(req.method==='GET')return json(res,200,branding.read());
+      if(req.method==='POST'){if(demo)return json(res,403,{error:'演示模式不修改全站设置'});try{return json(res,200,branding.save(await body(req,3*1024*1024),s.user.sub));}catch(e){return json(res,e.httpStatus||400,{error:e.message});}}
     }
     if(req.method==='GET'&&['/api/extensions/shopxo-bridge','/api/extensions/shopxo-bridge/download','/api/extensions/shopxo-bridge/guide'].includes(path)){
       if(path.endsWith('/guide')){const text=await readFile(join(root,'integrations/shopxo/bridge/INSTALL.md'));res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="shopxo-install.md"'});return res.end(text);}
