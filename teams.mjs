@@ -17,6 +17,7 @@ export function teamStore(db){
     if(moveConnections)moveConnections(sub,id);
     db.prepare('UPDATE products SET owner=? WHERE owner=?').run(id,sub);
     db.prepare('UPDATE jobs SET owner=? WHERE owner=?').run(id,sub);
+    if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_merge_requests'").get())db.prepare('UPDATE product_merge_requests SET owner=? WHERE owner=?').run(id,sub);
     for(const store of stores){const connection=store.get(sub);if(connection)store.set(id,connection);}
     db.exec('COMMIT');return {id,name,role:'admin'};
    }catch(e){db.exec('ROLLBACK');throw e;}
@@ -41,6 +42,6 @@ export function teamPermission(role,path,method){
  if(path==='/api/malls'&&method!=='GET')return false;
  if(path.startsWith('/api/connections/')||path.startsWith('/api/team'))return false;
  if(['GET','HEAD'].includes(method))return true;
- if(role==='editor')return path==='/api/import'||path==='/api/products'||(/^\/api\/products\/[^/]+$/.test(path)&&method==='PUT');
+ if(role==='editor')return ['/api/products/merge-preview','/api/products/merge'].includes(path)||path==='/api/import'||path==='/api/products'||(/^\/api\/products\/[^/]+$/.test(path)&&method==='PUT');
  return role==='reviewer';
 }

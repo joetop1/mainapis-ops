@@ -12,12 +12,17 @@ export function sourceURL(value) {
   if(u.protocol!=='https:' || u.hostname!=='detail.1688.com' || !/^\/offer\/\d+\.html$/.test(u.pathname)) throw Error('请使用 https://detail.1688.com/offer/数字.html 商品链接');
   return u.origin+u.pathname;
 }
+function skuSource(value){
+ if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.product_id!=='string'||!value.product_id||value.product_id.length>100||!Number.isSafeInteger(value.revision)||value.revision<1||typeof value.sku!=='string'||!value.sku||value.sku.length>100)throw Error('SKU来源记录格式无效');
+ return {url:sourceURL(value.url),sku:value.sku,product_id:value.product_id,revision:value.revision,spec:String(value.spec||'').slice(0,300)};
+}
 export function validateProduct(input) {
   if(!input || typeof input!=='object' || Array.isArray(input)) throw Error('商品必须是对象');
   if(input.images!==undefined && !Array.isArray(input.images)) throw Error('images 必须是数组');
   if(input.skus!==undefined && !Array.isArray(input.skus)) throw Error('skus 必须是数组');
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
   const p={attributes:normalizeProductAttributes(input.attributes),source_url:sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
+  if(input.merge_sources!==undefined){if(!Array.isArray(input.merge_sources)||input.merge_sources.length<2||input.merge_sources.length>20)throw Error('合并来源记录格式无效');p.merge_sources=input.merge_sources.map(r=>{if(!r||typeof r.product_id!=='string'||!r.product_id||r.product_id.length>100||!Number.isSafeInteger(r.revision)||r.revision<1)throw Error('合并来源记录格式无效');return {product_id:r.product_id,revision:r.revision,url:sourceURL(r.url)};});}
   if(input.mall_mappings!==undefined)p.mall_mappings=normalizeMallMappings(input.mall_mappings);
   if(input.catalog_target!==undefined&&!['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'].includes(input.catalog_target))throw Error('商品资料所属商城无效');
   if(input.category_id!==undefined){
@@ -43,6 +48,7 @@ export function validateProduct(input) {
   p.detail_images=(input.detail_images||[]).map(v=>{const u=new URL(v);if(u.protocol!=='https:'||u.username||u.password)throw Error('详情图必须使用无账号密码的 HTTPS 地址');return u.href;});
   p.skus=(Array.isArray(input.skus)?input.skus:[]).slice(0,500).map(s=>{
     const v={sku:String(s.sku||'').trim().slice(0,100),spec:String(s.spec||'').slice(0,300),cost:Number(s.cost),price:Number(s.price),stock:Number(s.stock)};
+    if(s.source!==undefined)v.source=skuSource(s.source);
     if(s.spec_values!==undefined)v.spec_values=s.spec_values;
     if(s.image){const u=new URL(s.image);if(u.protocol!=='https:'||u.username||u.password)throw Error('SKU 图片必须是无账号密码的 HTTPS 地址');v.image=u.href;}
     if(!v.sku || !Number.isFinite(v.cost) || !Number.isFinite(v.price) || v.cost<0 || v.price<0 || !Number.isSafeInteger(v.stock) || v.stock<0) throw Error('SKU 编码、成本、售价或库存格式错误');

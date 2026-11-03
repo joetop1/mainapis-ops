@@ -1,3 +1,4 @@
+import {productMerge} from './product-merge.mjs';
 import {productForMall} from './public/mall-mappings.js';
 import {buildOfficialProduct} from './crmeb-official.mjs';
 import {buildStoreProduct} from './crmeb-store.mjs';
@@ -81,6 +82,7 @@ const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recu
 const db=openStore(join(dataDir,'ops.sqlite'));
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
 const collectors=productCollectors(db);
+const mergeProducts=productMerge({db,collectors,audit:(...args)=>audit(...args),actor:()=>({sub:actorContext.getStore()?.actor||'',name:actorContext.getStore()?.name||''})});
 const initiators=jobInitiators(db);
 const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
@@ -206,7 +208,7 @@ const handleRequest=async(req,res)=>{
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(data);}
     const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
     if(nativeNotice){
       if(demo||req.method!=='POST')return json(res,403,{errcode:1});
@@ -500,6 +502,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size'),{scope:query.get('task_scope')||'all',actor,mall:query.get('mall')||'',status:query.get('status')||''}));}
     if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:collectors.rows(owner,actor,new URL(req.url,origin).searchParams.get('collection_scope')||'all').map(row=>({...decodeProduct(row),collected_by:row.collected_by||'',collector_name:row.collector_name||'',publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(['/api/products/merge-preview','/api/products/merge'].includes(path)&&req.method==='POST'){const input=await body(req);return path.endsWith('merge-preview')?json(res,200,mergeProducts.preview(owner,input)):json(res,201,mergeProducts.create(owner,input));}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
@@ -509,12 +512,13 @@ const handleRequest=async(req,res)=>{
     if(match){const r=productFor(owner,match[1]),p=decodeProduct(r);
       if(!match[2] && req.method==='PUT') {
         const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'商品已被更新，请刷新后重试'});
-        const candidate=validateProduct(b);
+        if(p.merge_sources&&Array.isArray(b.skus)){const original=new Map(p.skus.filter(s=>s.source).map(s=>[s.sku,s.source]));b.skus=b.skus.map(s=>({...s,...(original.has(s.sku)?{source:original.get(s.sku)}:{})}));}
+        const candidate=validateProduct({...b,...(p.merge_sources?{merge_sources:p.merge_sources}:{})});
         if(b.mall_mappings===undefined&&p.mall_mappings!==undefined){
           const active=malls.get(owner,candidate.catalog_connection_id,candidate.catalog_target||'crmeb-pro');candidate.catalog_connection_id=active.id;
           candidate.mall_mappings=p.mall_mappings.filter(m=>m.catalog_connection_id!==active.id).map(m=>({...m}));candidate.mall_mappings.push({catalog_connection_id:active.id,catalog_target:active.system,category_id:candidate.category_id||0,category:candidate.category||'',brand_ids:candidate.brand_ids,tag_ids:candidate.tag_ids,...(active.system==='crmeb-store'?{applicable_type:candidate.applicable_type??0}:{})});
         }
-        const v=await validateCatalog(candidate,owner);if(v.source_url!==r.source)throw Error('来源链接不能修改');
+        const v=await validateCatalog(candidate,owner);if(v.source_url!==p.source_url)throw Error('来源链接不能修改');
         const result=db.prepare("UPDATE products SET data=?,status='draft',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
         if(!result.changes)return json(res,409,{error:'商品已被更新，请刷新后重试'});
         audit(owner,'product.edit',r.id);return json(res,200,{ok:true});
