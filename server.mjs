@@ -1,3 +1,4 @@
+import {localImageUploader} from './local-image-upload.mjs';
 import {bulkProductSettings} from './bulk-settings.mjs';
 import {supplierImports} from './supplier-import.mjs';
 import {imageStorage} from './image-storage.mjs';
@@ -103,6 +104,7 @@ const notifications=mallNotifications({db,store:notificationSecrets,findMall:fin
 let notificationTimer;
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const malls=mallConnections(db,mallProfiles);
+const uploadLocalImage=localImageUploader({getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}})});
 const supplierImport=supplierImports({db,dataDir,root,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
 const supplierPruneTimer=setInterval(()=>supplierImport.prune().catch(()=>{}),3600000);supplierPruneTimer.unref();
 // Idempotent migration of persisted owners before any task can resume.
@@ -541,6 +543,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size'),{scope:query.get('task_scope')||'all',actor,mall:query.get('mall')||'',status:query.get('status')||''}));}
     if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:collectors.rows(owner,actor,new URL(req.url,origin).searchParams.get('collection_scope')||'all').map(row=>({...decodeProduct(row),collected_by:row.collected_by||'',collector_name:row.collector_name||'',publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(path==='/api/images/upload'&&req.method==='POST'){if(demo)throw Error('演示模式不上传图片');const result=await uploadLocalImage(owner,await body(req,15*1024*1024));audit(owner,'image.upload','local');return json(res,201,result);}
     if(path==='/api/products/bulk-settings'&&req.method==='POST'){if(demo)throw Error('演示模式不修改商品');return json(res,200,await bulkProductSettings({db,owner,input:await body(req),validateMapping:m=>checkedBulkMapping(owner,m),audit}));}
     if(path==='/api/supplier-imports'&&req.method==='POST'){if(demo)throw Error('演示模式不导入货盘');return json(res,201,await supplierImport.preview(owner,await body(req,48*1024*1024)));}
     const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|assets\/[a-f0-9]{64}))?$/);
