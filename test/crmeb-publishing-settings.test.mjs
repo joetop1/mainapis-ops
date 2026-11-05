@@ -36,5 +36,10 @@ test('publishing settings override environment per owner and mall, redact secret
   assert.equal((await call('/api/jobs/'+id+'/retry','POST')).status,202);
   const dispatched=requests.at(-1);assert.equal(dispatched.url,url);assert.equal(dispatched.options.headers['X-Ops-Token'],token);assert.equal(JSON.parse(dispatched.options.body).job_id,id);
   assert.equal((await call('/api/connections/crmeb-store/publishing','POST',{url,token})).status,400);
+  const storeJob='22345678-1234-1234-1234-123456789abc',original={catalog_target:'crmeb-store',category_id:91,crmeb_native_specs:true,attributes:[{name:'无效',value:'0'},{name:'空白',value:'  '},{name:'材质',value:'硅胶'}],skus:[{sku:'x',spec:'红'}]};
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,message,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(storeJob,'alice','p',1,'crmeb-store','accepted','callback-store','','','now','now');
+  db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(storeJob,JSON.stringify(original));
+  assert.equal((await call('/api/jobs/'+storeJob+'/retry','POST')).status,202);
+  const repaired=JSON.parse(db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(storeJob).product);assert.deepEqual(repaired.attributes,[{name:'材质',value:'硅胶'}]);assert.deepEqual(JSON.parse(requests.at(-1).options.body).product.attributes,repaired.attributes);assert.equal(db.prepare('SELECT data FROM products WHERE id=?').get('p').data,'{}');assert.equal(db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(storeJob).claimed,0);
  }finally{globalThis.fetch=old;db.close();closeStore();await rm(dir,{recursive:true,force:true});}
 });

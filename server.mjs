@@ -3,7 +3,7 @@ import {systemSettings,systemAdministrator,renderSystemBranding,DEFAULT_ICON} fr
 import {productMerge} from './product-merge.mjs';
 import {productForMall} from './public/mall-mappings.js';
 import {buildOfficialProduct} from './crmeb-official.mjs';
-import {buildStoreProduct} from './crmeb-store.mjs';
+import {buildStoreProduct,storeLease} from './crmeb-store.mjs';
 import {crmebNativeRelay} from './crmeb-native-relay.mjs';
 import {tigshopNotificationPoll} from './tigshop-notification-poll.mjs';
 import {crmebRefundPoll} from './crmeb-refund-poll.mjs';
@@ -192,6 +192,11 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
   const mall=malls.forJob(job);job={...job,mall_connection_id:mall.id};
   if(p.catalog_connection_id&&p.catalog_connection_id!==mall.id)throw Error('任务快照与目标商城连接不匹配');
   if(action==='publish_draft'){try{const plan=db.prepare('SELECT mall_origin FROM image_transfer_jobs WHERE job_id=?').get(job.id);if(plan&&mallOrigin(mallImageOrigin(mall))!==plan.mall_origin)throw Error('商城域名已变化，请恢复原连接后重试');if(plan){p=await images.transfer(job)||p;if(mallOrigin(mallImageOrigin(mall))!==plan.mall_origin)throw Error('商城域名已变化，请恢复原连接后重试');}}catch(e){db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('图片转存未完成，未调用商城创建；请重试原未领取任务。'+e.message,now(),job.id);return;}}
+  // Repair only unclaimed store snapshots, including legacy n8n retries. Source products remain unchanged.
+  if(action==='publish_draft'&&job.target==='crmeb-store'&&p.crmeb_native_specs===true){
+   const snapshot=db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(job.id);
+   if(snapshot?.claimed===0){const attributes=storeLease({product:p}).product.attributes;if(JSON.stringify(attributes)!==JSON.stringify(p.attributes)){p={...p,attributes};const result=db.prepare('UPDATE job_snapshots SET product=? WHERE job_id=? AND claimed=0').run(JSON.stringify(p),job.id);if(!result.changes)throw Error('任务已领取，不能修改参数');}}
+  }
   if(['crmeb-pro','crmeb-store'].includes(job.target)&&!mall.legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await crmebRunner(job,action);return;}
   if(job.target==='shopxo'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await shopxoRunner(job,action);return;}
   if(job.target==='yunzhong'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await yunzhongRunner(job,action);return;}
@@ -561,6 +566,7 @@ const handleRequest=async(req,res)=>{
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
         await validateCatalog(publishingProduct,owner);
         if(['crmeb-pro','crmeb-store'].includes(b.target)){publishingProduct.crmeb_native_specs=true;publishingProduct.attributes=normalizeProductAttributes(publishingProduct.attributes);}
+        if(b.target==='crmeb-store')publishingProduct.attributes=storeLease({product:publishingProduct}).product.attributes;
         if(b.target==='tigshop'){publishingProduct.tigshop_native_attributes=true;publishingProduct.attributes=normalizeProductAttributes(publishingProduct.attributes);}
         if(b.target==='yunzhong'){const connection=credentialsFor('yunzhong',owner,destinationId);const catalog=await catalogLoader('yunzhong',owner,destinationId)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode,origin:connection.url||LEGACY_YUNZHONG_ORIGIN};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
         if(b.target==='shopxo'){const c=credentialsFor('shopxo',owner,destinationId);publishingProduct.shopxo={origin:c.url,warehouseId:c.warehouseId};buildShopxoProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},c.warehouseId);}

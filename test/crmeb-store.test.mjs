@@ -61,5 +61,11 @@ test('多门店新任务将产品属性写入原生参数并核对，旧任务�
  const p=buildStoreProduct(l,config);assert.deepEqual(p.specs,[{id:0,temp_id:0,name:'材质',value:'棉',sort:2},{id:0,temp_id:0,name:'长度',value:'20cm',sort:1}]);assert.equal(p.specs_id,0);
  const d={...p,id:8};assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');d.specs=JSON.stringify(p.specs);assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');d.specs=[];assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'awaiting_review');
  delete l.product.crmeb_native_specs;assert.deepEqual(buildStoreProduct(l,config).specs,[]);assert.equal(verifyStoreProduct({status:200,data:{productInfo:d}},l,config).status,'succeeded');
- l.product.crmeb_native_specs=true;for(const value of ['', ' ', '0']){l.product.attributes=[{name:'参数',value}];assert.throws(()=>buildStoreProduct(l,config),/参数值/);}
+ l.product.crmeb_native_specs=true;for(const value of ['', ' ', '0']){l.product.attributes=[{name:'参数',value}];assert.deepEqual(buildStoreProduct(l,config).specs,[]);}
+});
+
+test('多门店仅在发布副本剔除空值及单独0，保留有效零值、顺序、来源及原属性',()=>{
+ const l=structuredClone(lease);l.product.crmeb_native_specs=true;l.product.attributes=[{name:'空项',value:''},{name:'未知',value:' 0 '},{name:'空格',value:'  '},{name:'重量',value:'0g'},{name:'数值',value:'0.0'},{name:'材质',value:'硅胶'}];
+ const before=JSON.stringify(l),p=buildStoreProduct(l,config);assert.deepEqual(p.specs.map(x=>[x.name,x.value,x.sort]),[['重量','0g',3],['数值','0.0',2],['材质','硅胶',1]]);assert.equal(JSON.stringify(l),before);assert.equal(verifyStoreProduct({status:200,data:{productInfo:{...p,id:8}}},l,config).status,'succeeded');
+ l.product.attributes=[{name:'参数',value:0}];assert.throws(()=>buildStoreProduct(l,config),/参数格式/);
 });

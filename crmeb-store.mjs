@@ -9,9 +9,10 @@ export function requireStoreToken(response){
 export function storeLease(lease){
  const p=lease?.product;
  if(p?.catalog_target!=='crmeb-store'||!Number.isSafeInteger(p.category_id)||p.category_id<=0)throw Error('请从多门店的分类列表选择分类，不能使用会员商城分类');
- if(p.crmeb_native_specs===true&&(p.attributes||[]).some(row=>typeof row?.value!=='string'||!row.value.trim()||row.value==='0'))throw Error('多门店商品参数值不能为空或为单独的0（商城校验限制），请核实后修改');
+ // PHP treats empty strings and the exact string '0' as false. Drop only these unsupported facts, never SKU values.
+ const attributes=p.crmeb_native_specs===true?(p.attributes||[]).filter(row=>typeof row?.value!=='string'||(row.value.trim()!==''&&row.value.trim()!=='0')):p.attributes;
  if(!Array.isArray(p.skus))throw Error('缺少 SKU');
- return {...lease,product:{...p,skus:p.skus.map(s=>({...s,spec:p.skus.length===1&&!String(s.spec||'').trim()?'默认':s.spec}))}};
+ return {...lease,product:{...p,...(p.crmeb_native_specs===true?{attributes}:{}),skus:p.skus.map(s=>({...s,spec:p.skus.length===1&&!String(s.spec||'').trim()?'默认':s.spec}))}};
 }
 export function buildStoreProduct(lease,config){
  const payload=buildOfficialProduct(storeLease(lease),{...config,forceMulti:true,storeNativeSpecs:true});payload.type=0;
