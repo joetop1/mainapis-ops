@@ -1,4 +1,4 @@
-import {localImageUploader} from './local-image-upload.mjs';
+import {localImageUploader,repairSavedImageUrls} from './local-image-upload.mjs';
 import {bulkProductSettings} from './bulk-settings.mjs';
 import {supplierImports} from './supplier-import.mjs';
 import {imageStorage} from './image-storage.mjs';
@@ -549,7 +549,7 @@ const handleRequest=async(req,res)=>{
     const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|assets\/[a-f0-9]{64}))?$/);
     if(supplierRoute){const id=supplierRoute[1],action=supplierRoute[2];if(req.method==='GET'&&action?.startsWith('assets/')){const image=await supplierImport.asset(owner,id,action.slice(7));res.writeHead(200,{'Content-Type':image.mime,'Content-Length':image.bytes.length,'Cache-Control':'private, no-store'});return res.end(image.bytes);}if(req.method==='GET'&&!action)return json(res,200,supplierImport.get(owner,id));if(req.method==='DELETE'&&!action)return json(res,200,await supplierImport.remove(owner,id));if(req.method==='POST'&&action==='commit'){if(demo)throw Error('演示模式不导入货盘');const input=await body(req);if(Array.isArray(input.items)){for(const item of input.items){if(item.mall_mappings!==undefined){if(!Array.isArray(item.mall_mappings)||item.mall_mappings.length>50)throw Error('商城映射格式无效');for(const mapping of item.mall_mappings){malls.get(owner,mapping.catalog_connection_id,mapping.catalog_target);if(mapping.category_id||mapping.brand_ids?.length){const checked=await checkedBulkMapping(owner,mapping);Object.assign(mapping,checked,{tag_ids:mapping.tag_ids||[]});}}}}}return json(res,202,supplierImport.start(owner,id,input));}}
     if(['/api/products/merge-preview','/api/products/merge'].includes(path)&&req.method==='POST'){const input=await body(req);return path.endsWith('merge-preview')?json(res,200,mergeProducts.preview(owner,input)):json(res,201,mergeProducts.create(owner,input));}
-    if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
+    if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);const repaired=await repairSavedImageUrls(p,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});return json(res,201,{id:putProduct(owner,repaired)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
       const results=[];for(const [i,input]of b.products.entries()){try{const p=await validateCatalog(validateProduct(input),owner);results.push({index:i,id:putProduct(owner,p),ok:true});}catch(e){results.push({index:i,ok:false,error:e.message});}}return json(res,200,{results});
@@ -564,7 +564,7 @@ const handleRequest=async(req,res)=>{
           const active=malls.get(owner,candidate.catalog_connection_id,candidate.catalog_target||'crmeb-pro');candidate.catalog_connection_id=active.id;
           candidate.mall_mappings=p.mall_mappings.filter(m=>m.catalog_connection_id!==active.id).map(m=>({...m}));candidate.mall_mappings.push({catalog_connection_id:active.id,catalog_target:active.system,category_id:candidate.category_id||0,category:candidate.category||'',brand_ids:candidate.brand_ids,tag_ids:candidate.tag_ids,...(active.system==='crmeb-store'?{applicable_type:candidate.applicable_type??0}:{})});
         }
-        const v=await validateCatalog(candidate,owner);if(v.source_url!==p.source_url)throw Error('来源链接不能修改');
+        const validated=await validateCatalog(candidate,owner);const v=await repairSavedImageUrls(validated,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});if(v.source_url!==p.source_url)throw Error('来源链接不能修改');
         const result=db.prepare("UPDATE products SET data=?,status='draft',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
         if(!result.changes)return json(res,409,{error:'商品已被更新，请刷新后重试'});
         audit(owner,'product.edit',r.id);return json(res,200,{ok:true});

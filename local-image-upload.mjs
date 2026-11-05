@@ -15,3 +15,17 @@ export function localImageUploader({getStorage,allowedStorage,fetchImpl=fetch}){
   }finally{active--;}
  };
 }
+
+// Repair only this workspace's existing OPS objects; external links stay opt-in.
+export async function repairSavedImageUrls(product,owner,{getStorage,upload}){
+ const c=getStorage(),prefixes=[24,16].map(n=>'/ops/'+hash(owner).slice(0,n)+'/');
+ const urls=[...(product.images||[]),...(product.detail_images||[]),...(product.skus||[]).map(s=>s.image).filter(Boolean)];
+ const replacements=new Map();
+ for(const url of new Set(urls)){
+  if(typeof url!=='string'||url.length<=128)continue;
+  let u;try{u=new URL(url);}catch{continue;}
+  if(!c?.publicOrigin||u.origin!==c.publicOrigin||u.search||u.hash||!prefixes.some(prefix=>u.pathname.startsWith(prefix)))continue;
+  try{const result=await upload(owner,{sourceUrl:url});replacements.set(url,result.url);}catch(e){throw Error('图片地址自动修复失败，商品未保存：'+e.message);}
+ }
+ return {...product,images:(product.images||[]).map(u=>replacements.get(u)||u),detail_images:(product.detail_images||[]).map(u=>replacements.get(u)||u),skus:(product.skus||[]).map(s=>({...s,...(s.image?{image:replacements.get(s.image)||s.image}:{})}))};
+}
