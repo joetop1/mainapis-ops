@@ -15,6 +15,7 @@ export function storageConfig(input,previous={}){
 }
 export function publicStorage(c){return c?{enabled:c.enabled,bucket:c.bucket,region:c.region,publicOrigin:c.publicOrigin,allowedOrigins:c.allowedOrigins,credentialsSaved:true}:{enabled:false,allowedOrigins:[],credentialsSaved:false};}
 export const storageDestination=c=>hash(JSON.stringify([c.bucket,c.region,c.publicOrigin]));
+export const compactImageKey=(owner,bytes,ext)=>'ops/'+hash(owner).slice(0,16)+'/'+hash(bytes)+'.'+ext;
 export function imageType(b){
  if(b.length>=24&&b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return {mime:'image/png',ext:'png'};
  if(b.length>3&&b[0]===255&&b[1]===216&&b[2]===255)return {mime:'image/jpeg',ext:'jpg'};
@@ -47,9 +48,9 @@ export function ossHeaders(c,key,mime,bytes,date=new Date()){
  return headers;
 }
 export async function uploadImage(c,key,image,{fetchImpl=fetch}={}){
+ const url=c.publicOrigin+'/'+key;if(url.length>128)throw Error('图片地址超过128字符，请使用更短的图片域名或存储路径');
  const r=await fetchImpl('https://'+c.bucket+'.oss-'+c.region+'.aliyuncs.com/'+key,{method:'PUT',dispatcher:mallDispatcher,redirect:'error',headers:ossHeaders(c,key,image.mime,image.bytes),body:image.bytes,signal:AbortSignal.timeout(60000)});
  await r.body?.cancel();if(!r.ok)throw Error('OSS 上传失败 HTTP '+r.status+'，请检查地域、权限和存储配置');
- const url=c.publicOrigin+'/'+key;
  const read=await readImage(url,{fetchImpl});if(hash(read.bytes)!==hash(image.bytes))throw Error('图片域名返回内容与上传文件不一致，请检查域名、公开读取和防盗链设置');
  return url;
 }
@@ -76,11 +77,11 @@ export function imageStorage({db,store,fetchImpl=fetch}){
     if(urls.length>300)throw Error('转存最多支持300张不同图片，请整理后发布');let total=0;const map=new Map();
     for(const [i,source]of urls.entries()){
      const existing=db.prepare('SELECT * FROM image_transfer_files WHERE job_id=? AND source=?').get(job.id,source);
-     if(existing){total+=existing.bytes;if(total>200*1024*1024)throw Error('单任务图片总大小不能超过200MB');map.set(source,existing.url);continue;}
+     if(existing&&existing.url.length<=128){total+=existing.bytes;if(total>200*1024*1024)throw Error('单任务图片总大小不能超过200MB');map.set(source,existing.url);continue;}
      db.prepare("UPDATE jobs SET message=?,updated=? WHERE id=? AND status='dispatching'").run('正在转存图片 '+(i+1)+'/'+urls.length,new Date().toISOString(),job.id);
      const image=await readImage(source,{fetchImpl});total+=image.bytes.length;if(total>200*1024*1024)throw Error('单任务图片总大小不能超过200MB');
-     const key='ops/'+hash(job.owner).slice(0,24)+'/'+hash(job.mall_connection_id).slice(0,24)+'/'+job.id+'/'+hash(image.bytes)+'.'+image.ext;
-     const url=await uploadImage(c,key,image,{fetchImpl});db.prepare('INSERT INTO image_transfer_files VALUES(?,?,?,?)').run(job.id,source,url,image.bytes.length);map.set(source,url);
+     const key=compactImageKey(job.owner,image.bytes,image.ext);
+     const url=await uploadImage(c,key,image,{fetchImpl});db.prepare('INSERT INTO image_transfer_files VALUES(?,?,?,?) ON CONFLICT(job_id,source) DO UPDATE SET url=excluded.url,bytes=excluded.bytes').run(job.id,source,url,image.bytes.length);map.set(source,url);
     }
     const transferred={...p,images:p.images.map(x=>map.get(x)),detail_images:(p.detail_images||[]).map(x=>map.get(x)),skus:p.skus.map(s=>({...s,...(s.image?{image:map.get(s.image)}:{})}))};
     if(storageDestination(requireAllowed(row.mall_origin))!==row.destination)throw Error('存储目标在转存中发生变化，未替换任务图片');

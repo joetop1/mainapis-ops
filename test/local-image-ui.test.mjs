@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 test('编辑上传遇到已有上传不释放其保存锁；关闭或切换后不会把旧图写入其他商品',async()=>{
- const save={disabled:true},status={textContent:''},form={querySelector:()=>save,elements:{detail_images:{value:''}}},nodes={productForm:form,localImageStatus:status,editor:{open:true},localMainImages:{},localDetailImages:{}};let resolveUpload;const calls=[];
+ const save={disabled:true},status={textContent:''},form={querySelector:()=>save,elements:{detail_images:{value:''}}},nodes={productForm:form,localImageStatus:status,editor:{open:true},localMainImages:{},localDetailImages:{},shortenProductImages:{}};let resolveUpload;const calls=[];
  class FileReader{readAsDataURL(){this.result='data:image/png;base64,AAA=';this.onload();}}
  const context=vm.createContext({$:s=>nodes[s.slice(1)],FileReader,toast(){},api:()=>new Promise(resolve=>{resolveUpload=resolve;}),imageLinks:()=>[],renderImageGallery:field=>calls.push(field)});
  vm.runInContext('let editorImageBusy=1,editorImageGeneration=1;',context);vm.runInContext(source.slice(source.indexOf('async function uploadEditorImages('),source.indexOf('for(const field of Object.keys(imageFields))')),context);

@@ -245,6 +245,13 @@ async function uploadEditorImages(files,field,row=null){
  }catch(e){if(generation===editorImageGeneration){status.textContent=(completed?'已加入 '+completed+' 张图片；':'')+e.message;toast(status.textContent,{error:true});}}
  finally{if(generation===editorImageGeneration){if(acquired)editorImageBusy--;save.disabled=editorImageBusy>0;}}
 }
+$('#shortenProductImages').onclick=async()=>{
+ const generation=editorImageGeneration,save=$('#productForm').querySelector('button[type=submit]');let acquired=false,done=0;
+ try{if(editorImageBusy)throw Error('请等待当前图片上传完成');const skuInputs=[...$('#skuRows').querySelectorAll('[data-key="image"]')],urls=[...new Set([...imageLinks('images'),...imageLinks('detail_images'),...skuInputs.map(input=>input.value).filter(Boolean)])].filter(url=>url.length>128);if(!urls.length)return toast('当前图片地址长度无需修复');editorImageBusy++;acquired=true;save.disabled=true;
+ for(const [index,url]of urls.entries()){if(generation!==editorImageGeneration||!$('#editor').open)throw Error('编辑窗口已切换，停止修复');$('#localImageStatus').textContent='正在修复图片地址 '+(index+1)+'/'+urls.length;const result=await api('/api/images/shorten','POST',{url});if(generation!==editorImageGeneration||!$('#editor').open)throw Error('编辑窗口已切换，图片未加入商品');for(const field of ['images','detail_images']){$('#productForm').elements[field].value=imageLinks(field).map(value=>value===url?result.url:value).join('\n');renderImageGallery(field);}for(const input of $('#skuRows').querySelectorAll('[data-key="image"]'))if(input.value===url){input.value=result.url;input.dispatchEvent(new Event('input'));}done++;}
+ $('#localImageStatus').textContent='已修复 '+done+' 张图片的地址，请保存商品。';toast($('#localImageStatus').textContent);
+ }catch(e){if(generation===editorImageGeneration){$('#localImageStatus').textContent=(done?'已修复 '+done+' 张；':'')+e.message;toast($('#localImageStatus').textContent,{error:true});}}finally{if(generation===editorImageGeneration){if(acquired)editorImageBusy--;save.disabled=editorImageBusy>0;}}
+};
 $('#localMainImages').onchange=event=>uploadEditorImages([...event.target.files],'images').finally(()=>{event.target.value='';});
 $('#localDetailImages').onchange=event=>uploadEditorImages([...event.target.files],'detail_images').finally(()=>{event.target.value='';});
 for(const field of Object.keys(imageFields))$('#productForm').elements[field].addEventListener('input',()=>renderImageGallery(field));

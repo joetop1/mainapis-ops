@@ -6,8 +6,13 @@ export function requireOfficialToken(response){
 }
 export function officialCreateReceipt(response){
   // Even a business error can follow a committed save/event failure. Never release a write for retry.
+  if(/Data too long for column ['`"]image['`"]/i.test(String(response?.msg||'')))return {status:'unknown',message:'商城返回图片字段长度超限；请先按任务编码核对是否已入库，勿重复创建。未入库时修复OPS商品图片地址后再处理原任务'};
   if(response?.error||Number(response?.status)!==200)return {status:'unknown',message:'创建请求未返回明确成功（接口错误或响应异常）；请先在商城按任务编码核对，禁止自动重新创建'};
   return {status:'awaiting_review',message:'官方接口已返回成功；请到商城仓库查找该任务编码，填回商品 ID 后核验。此接口不返回 ID，当前尚未计为成功'};
+}
+export function assertCrmebImageLengths(p){
+ if((p.images||[]).some(url=>typeof url==='string'&&url.length>256))throw Error('CRMEB主图地址超过256字符，请在商品编辑页修复图片地址长度或选择转存');
+ if((p.skus||[]).some(s=>typeof(s.image||p.images?.[0])==='string'&&(s.image||p.images[0]).length>128))throw Error('CRMEB规格图片地址超过128字符，请在商品编辑页修复图片地址长度或选择转存；尚未创建商品');
 }
 export function buildOfficialProduct(lease,config){
   const p=lease?.product;
@@ -19,6 +24,7 @@ export function buildOfficialProduct(lease,config){
   if(!Array.isArray(p.images)||!p.images.length||p.images.length>30)throw Error('图片数量不正确');
   const images=p.images.map(x=>{if(typeof x!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?(?:[/?#]|$)/i.test(x)||/[\u0000-\u0020]/.test(x))throw Error('图片必须是无账号密码的HTTPS地址');return x;});
   if(!Array.isArray(p.skus)||!p.skus.length||p.skus.length>100)throw Error('请使用1–100个SKU');
+  if(!config.pendingImageTransfer)assertCrmebImageLengths(p);
   const codes=new Set(),specs=new Set();
   const matrix=specificationMatrix(p);
   for(const key of ['brand_ids','tag_ids'])if(p[key]!==undefined&&(!Array.isArray(p[key])||p[key].length>50||p[key].some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(p[key]).size!==p[key].length))throw Error('品牌或商品标签 ID 无效');

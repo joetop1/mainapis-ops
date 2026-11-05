@@ -15,8 +15,8 @@ test('多门店字段独立适配：单SKU强制多规格、下架、独立图�
 test('多门店轮播最多5张且限制序列化长度，详情和SKU图片完整保留',()=>{
  const l=structuredClone(lease);l.product.images=Array.from({length:29},(_,i)=>'https://cbu01.alicdn.com/img/ibank/photo-'+i+'.jpg');
  l.product.detail_images=['https://example.com/real-detail.jpg'];const original=JSON.stringify(l),p=buildStoreProduct(l,config);assert.equal(p.slider_image.length,5);assert.equal(p.attrs[0].pic,l.product.skus[0].image);assert.ok(p.description.includes('real-detail.jpg'));assert.equal(p.description.includes('photo-28.jpg'),false);assert.equal(JSON.stringify(l),original);
- l.product.images=['https://example.com/'+('a'.repeat(600))+'.jpg','https://example.com/'+('b'.repeat(600))+'.jpg'];assert.equal(buildStoreProduct(l,config).slider_image.length,1);
- l.product.images=['https://example.com/'+('a'.repeat(1100))+'.jpg'];assert.throws(()=>buildStoreProduct(l,config),/地址过长/);
+ l.product.images=['https://example.com/'+('a'.repeat(600))+'.jpg','https://example.com/'+('b'.repeat(600))+'.jpg'];assert.throws(()=>buildStoreProduct(l,config),/256字符/);assert.equal(buildStoreProduct(l,{...config,pendingImageTransfer:true}).slider_image.length,1);
+ l.product.images=['https://example.com/'+('a'.repeat(1100))+'.jpg'];assert.throws(()=>buildStoreProduct(l,{...config,pendingImageTransfer:true}),/地址过长/);
 });
 test('多门店工作流隔离域名、Token路径、目标和字段，不携带会员凭据',()=>{
  const w=JSON.parse(readFileSync(new URL('../workflows/publish-crmeb-store.json',import.meta.url)));
