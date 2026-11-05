@@ -31,6 +31,8 @@ test('多商城部分提交后，只重试未创建任务的商城，已有任�
  await nodes.get('publishForm').onsubmit({preventDefault(){},submitter:nodes.get('publishSubmit')});assert.equal(inputs[0].disabled,true);assert.equal(inputs[1].disabled,false);assert.equal(nodes.get('publishSubmit').textContent,'重试未提交商城');
  await nodes.get('publishForm').onsubmit({preventDefault(){},submitter:nodes.get('publishSubmit')});assert.equal(calls[1].destinations.length,1);assert.equal(calls[1].destinations[0].connection_id,'b');
  context.openPublish({...product,publications:[{mall_connection_id:'a',status:'succeeded',revision:1}]});assert.equal(inputs[0].disabled,true);assert.equal(inputs[0].checked,false);
+ context.openPublish({...product,publications:[{mall_connection_id:'a',status:'failed'}]});assert.equal(inputs[0].disabled,true);
+ context.openPublish({...product,publications:[{mall_connection_id:'a',status:'failed',can_republish:true}]});assert.equal(inputs[0].disabled,false);assert.equal(inputs[0].checked,true);
  context.openPublish({...product,mall_mappings:product.mall_mappings.slice(0,1)});assert.equal(inputs[1].disabled,true);
 });
 test('图片转存对每个商城默认关闭，勾选一个商城不会改动另一个商城的请求',async()=>{
