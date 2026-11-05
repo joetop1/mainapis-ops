@@ -1,3 +1,4 @@
+import {imageStorage} from './image-storage.mjs';
 import {systemSettings,systemAdministrator,renderSystemBranding,DEFAULT_ICON} from './system-settings.mjs';
 import {productMerge} from './product-merge.mjs';
 import {productForMall} from './public/mall-mappings.js';
@@ -91,6 +92,9 @@ const savedConnections=await connectionStore(db,dataDir);
 const yunzhongConnections=await connectionStore(db,dataDir,'yunzhong');
 const shopxoConnections=await connectionStore(db,dataDir,'shopxo');
 const mallProfiles=await connectionStore(db,dataDir,'profiles');
+const imageSecrets=await connectionStore(db,dataDir,'images');
+const images=imageStorage({db,store:imageSecrets});
+const mallImageOrigin=mall=>credentialsFor(mall.system,mall.owner,mall.id)?.url||(mall.legacy?MALL_SYSTEMS[mall.system].origin:'');
 const notificationSecrets=await connectionStore(db,dataDir,'notifications');
 const findNotificationMall=id=>db.prepare('SELECT * FROM mall_connections WHERE id=?').get(id);
 const notifications=mallNotifications({db,store:notificationSecrets,findMall:findNotificationMall});
@@ -181,12 +185,13 @@ function putProduct(owner,input) {
   collectors.record(id,actorContext.getStore()?.actor||owner,actorContext.getStore()?.name||'');
   audit(owner,'product.create',id);return id;
 }
-// Only configured server endpoints are called. Product URLs are stored, never fetched here.
+// Unselected jobs keep external URLs. Opted-in jobs must finish bounded image transfer before any connector sees the snapshot.
 async function dispatch(job,p,action='publish_draft',verification={}) {
  try {
   job=db.prepare('SELECT * FROM jobs WHERE id=?').get(job.id)||job;
   const mall=malls.forJob(job);job={...job,mall_connection_id:mall.id};
   if(p.catalog_connection_id&&p.catalog_connection_id!==mall.id)throw Error('任务快照与目标商城连接不匹配');
+  if(action==='publish_draft'){try{const plan=db.prepare('SELECT mall_origin FROM image_transfer_jobs WHERE job_id=?').get(job.id);if(plan&&mallOrigin(mallImageOrigin(mall))!==plan.mall_origin)throw Error('商城域名已变化，请恢复原连接后重试');if(plan){p=await images.transfer(job)||p;if(mallOrigin(mallImageOrigin(mall))!==plan.mall_origin)throw Error('商城域名已变化，请恢复原连接后重试');}}catch(e){db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('图片转存未完成，未调用商城创建；请重试原未领取任务。'+e.message,now(),job.id);return;}}
   if(['crmeb-pro','crmeb-store'].includes(job.target)&&!mall.legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await crmebRunner(job,action);return;}
   if(job.target==='shopxo'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await shopxoRunner(job,action);return;}
   if(job.target==='yunzhong'){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);await yunzhongRunner(job,action);return;}
@@ -270,8 +275,10 @@ const handleRequest=async(req,res)=>{
       if(route[2]){
         if(!officialTargets.includes(job.target)||!snapshot)return json(res,409,{error:'此任务没有官方发布快照'});
         if(b.action==='inspect_publish'){
+          if(db.prepare("SELECT 1 FROM image_transfer_jobs WHERE job_id=? AND state!='done'").get(id))return json(res,409,{error:'图片转存尚未完成，不能领取创建'});
           if(snapshot.claimed || !['dispatching','accepted','unknown'].includes(job.status))return json(res,409,{error:'此任务不可重新创建，请先核对商城记录'});
         }else if(b.action==='publish_draft'){
+          if(db.prepare("SELECT 1 FROM image_transfer_jobs WHERE job_id=? AND state!='done'").get(id))return json(res,409,{error:'图片转存尚未完成，不能领取创建'});
           if(!['dispatching','accepted','unknown'].includes(job.status))return json(res,409,{error:'当前任务不可领取创建操作'});
           const claimed=db.prepare('UPDATE job_snapshots SET claimed=1 WHERE job_id=? AND claimed=0').run(id);
           if(!claimed.changes)return json(res,409,{error:'此任务已领取，禁止重复创建；请到商城核对'});
@@ -300,6 +307,11 @@ const handleRequest=async(req,res)=>{
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
+    if(['/api/image-storage','/api/image-storage/test'].includes(path)){
+      if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可配置共享图片存储'});
+      if(req.method==='GET'&&path==='/api/image-storage')return json(res,200,images.view());
+      if(req.method==='POST'){if(demo)throw Error('演示模式不操作存储');const input=await body(req);const result=path.endsWith('/test')?await images.test(input):images.save(input);audit(s.user.sub,path.endsWith('/test')?'image_storage.test':'image_storage.save','global');return json(res,200,result);}
+    }
     if(path==='/api/system-settings'){
       if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅指定的系统管理员可管理全站基本信息'});
       if(req.method==='GET')return json(res,200,branding.read());
@@ -327,6 +339,7 @@ const handleRequest=async(req,res)=>{
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
     malls.ensure(owner);
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
+    if(path==='/api/image-storage/availability'&&req.method==='GET')return json(res,200,{malls:malls.list(owner).map(m=>({id:m.id,available:images.available(mallImageOrigin(m))}))});
     if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
     if(path==='/api/team'&&req.method==='POST'){
       if(demo)throw Error('演示模式不创建团队');const b=await body(req);
@@ -495,7 +508,7 @@ const handleRequest=async(req,res)=>{
       const job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(retryRoute[1],owner),snap=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(retryRoute[1]);
       if(!job||!officialTargets.includes(job.target)||!snap||snap.claimed||!['accepted','unknown'].includes(job.status))return json(res,409,{error:'任务可能已开始创建，禁止重新发送'});
       if(!connected(job.target,owner,job.mall_connection_id))return json(res,503,{error:'请先配置该目标商城连接'});
-      db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
+      db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else if(db.prepare('SELECT 1 FROM image_transfer_jobs WHERE job_id=?').get(job.id))setImmediate(()=>dispatch(job,JSON.parse(snap.product)));else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
     }
     const verificationRoute=path.match(/^\/api\/jobs\/([^/]+)\/verify$/);
     if(verificationRoute && req.method==='POST'){
@@ -540,6 +553,8 @@ const handleRequest=async(req,res)=>{
         const submit=async b=>{
         if(!targets.some(t=>t.id===b.target))throw Error('目标商城无效');
         const destination=malls.get(owner,b.connection_id,b.target),destinationId=destination.id;
+        if(b.import_images!==undefined&&typeof b.import_images!=='boolean')throw Error('图片转存选项无效');
+        const imagePlan=b.import_images===true?images.prepare(mallImageOrigin(destination)):null;
         const publishingProduct=productForMall(decodeProduct(current),destinationId,b.target);assertPublishable(publishingProduct);
         if(!connected(b.target,owner,destinationId))throw Object.assign(Error('请先在连接与配置中完成目标商城连接，未发送任务'),{httpStatus:503});
         if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
@@ -553,8 +568,8 @@ const handleRequest=async(req,res)=>{
         if(['crmeb-pro','crmeb-store'].includes(b.target)&&!destination.legacy){const c=credentialsFor(b.target,owner,destinationId);publishingProduct.crmeb={origin:c.url,shippingTemplateId:c.shippingTemplateId};}
         if(['crmeb-pro','crmeb-store'].includes(b.target)&&!destination.legacy)(b.target==='crmeb-store'?buildStoreProduct:buildOfficialProduct)({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},publishingProduct.crmeb);
         if(db.prepare('SELECT j.id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND j.mall_connection_id=? AND s.claimed=1 LIMIT 1').get(r.id,b.target,destinationId))throw Object.assign(Error('此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'),{httpStatus:409});
-        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{const latest=productFor(owner,r.id);if(latest.revision!==current.revision||latest.status!=='approved')throw Error('商品版本或审核状态已变化，未创建此商城任务');db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated,mall_connection_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t,destinationId);initiators.record(id,actor,s.user.name||'');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))throw Object.assign(Error('该版本已有发布任务，请在任务列表查看结果'),{httpStatus:409});throw e;}
-        audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else if(input.destinations)setImmediate(()=>dispatch(job,publishingProduct));else await dispatch(job,publishingProduct);return {id};
+        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{const latest=productFor(owner,r.id);if(latest.revision!==current.revision||latest.status!=='approved')throw Error('商品版本或审核状态已变化，未创建此商城任务');db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated,mall_connection_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t,destinationId);initiators.record(id,actor,s.user.name||'');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));if(imagePlan)images.record(id,publishingProduct,imagePlan);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))throw Object.assign(Error('该版本已有发布任务，请在任务列表查看结果'),{httpStatus:409});throw e;}
+        audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else if(input.destinations||imagePlan)setImmediate(()=>dispatch(job,publishingProduct));else await dispatch(job,publishingProduct);return {id};
         };
         if(input.destinations!==undefined){
           if(!Array.isArray(input.destinations)||!input.destinations.length||input.destinations.length>10)throw Error('请选择1至10个目标商城');

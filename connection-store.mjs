@@ -4,7 +4,7 @@ import {join} from 'node:path';
 
 // Keep the encryption key outside SQLite, in the persistent private data volume.
 export async function connectionStore(db,dataDir,scope='tigshop'){
- const tables={notifications:'connections_notifications',shopxo:'connections_shopxo',profiles:'connection_profiles',yunzhong:'connections_yunzhong',tigshop:'connections','crmeb-pro':'connections_crmeb_pro','crmeb-store':'connections_crmeb_store'};
+ const tables={images:'connections_images',notifications:'connections_notifications',shopxo:'connections_shopxo',profiles:'connection_profiles',yunzhong:'connections_yunzhong',tigshop:'connections','crmeb-pro':'connections_crmeb_pro','crmeb-store':'connections_crmeb_store'};
  const table=tables[scope];if(!table)throw Error('无效连接类型');
  const path=join(dataDir,'connections.key');
  try{await writeFile(path,randomBytes(32),{flag:'wx',mode:0o600});}catch(e){if(e.code!=='EEXIST')throw e;}
