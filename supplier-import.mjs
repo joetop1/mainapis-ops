@@ -1,0 +1,66 @@
+import {createHash,randomUUID} from 'node:crypto';
+import {mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {imageType,uploadImage,storageDestination} from './image-storage.mjs';
+import {validateProduct} from './core.mjs';
+const execute=promisify(execFile),hash=v=>createHash('sha256').update(v).digest('hex');
+export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
+ const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
+ db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
+ function batch(owner,id){const r=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('货盘预览不存在或不属于当前空间');return r;}
+ function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,products:d.products,assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
+ async function prune(){for(const r of db.prepare('SELECT id FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id))continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
+ return {
+  prune,
+  async preview(owner,input){
+   await prune();const supplier=String(input.supplier||'').trim(),filename=String(input.filename||'').slice(0,180);
+   if(!supplier||supplier.length>100||!filename.toLowerCase().endsWith('.xlsx'))throw Error('请填写供应商并选择xlsx文件');
+   if(typeof input.data!=='string'||input.data.length>48*1024*1024||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data))throw Error('文件数据无效或超过35MB');
+   const bytes=Buffer.from(input.data,'base64');if(bytes.length>35*1024*1024||bytes.subarray(0,4).toString('hex')!=='504b0304')throw Error('请选择不超过35MB的xlsx文件');
+   if(parsing>=2||db.prepare('SELECT COUNT(*) n FROM supplier_batches').get().n>=50)throw Error('货盘预览繁忙，请稍后重试或删除旧预览');
+   if(db.prepare('SELECT COUNT(*) n FROM supplier_batches WHERE owner=?').get(owner).n>=5)throw Error('最多保留5份货盘预览，请删除旧预览或等待24小时过期');
+   const id=randomUUID(),dir=join(directory,id);await mkdir(dir,{recursive:true,mode:0o700});await writeFile(join(dir,'input.xlsx'),bytes,{mode:0o600});
+   parsing++;try{let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:25000,maxBuffer:2*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败，请确认文件完整、无密码且为支持的报价单版式');}
+    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets){imageType(await readFile(join(dir,a.file)));}
+    db.prepare('INSERT INTO supplier_batches(id,owner,supplier,filename,data,created) VALUES(?,?,?,?,?,?)').run(id,owner,supplier,filename,JSON.stringify(data),Date.now());audit(owner,'supplier.preview',id);return view(batch(owner,id));
+   }catch(e){await rm(dir,{recursive:true,force:true});throw e;}finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});}
+  },
+  get(owner,id){return view(batch(owner,id));},
+  async asset(owner,id,asset){const r=batch(owner,id),a=JSON.parse(r.data).assets.find(a=>a.id===asset);if(!a)throw Error('图片不存在');const bytes=await readFile(join(directory,id,a.file));return {bytes,...imageType(bytes)};},
+  async remove(owner,id){batch(owner,id);if(active.has(id))throw Error('正在导入，不能删除');await rm(join(directory,id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(id);return {ok:true};},
+  start(owner,id,input){
+   const r=batch(owner,id);if(active.has(id))return view(r);if(active.size>=2)throw Error('已有2个货盘正在导入，请稍后重试');const data=JSON.parse(r.data),c=getStorage();if(!c?.enabled||!allowedStorage(owner,c))throw Error('请先启用共享OSS，并将当前空间至少一个商城域名加入允许列表');
+   if(!Array.isArray(input.items)||!input.items.length||input.items.length>100)throw Error('请选择1至100件商品');
+   const keys=new Set();const items=input.items.map(item=>{
+    const original=data.products.find(p=>p.key===item.key);if(!original||keys.has(item.key)||item.confirmed!==true)throw Error('请逐件确认商品及规格对应关系');keys.add(item.key);
+    if(!String(item.title||'').trim()||!Array.isArray(item.skus)||!item.skus.length||item.skus.length>50)throw Error('标题或SKU无效');
+    if(item.skus.length!==Math.max(1,original.barcodes.length))throw Error('SKU数量必须与识别条码数量一致；无法对应的请暂不勾选');
+    const specs=new Set();const skus=item.skus.map((s,i)=>{const cost=Number(s.cost),price=Number(s.price),stock=Number(s.stock),spec=String(s.spec||'').trim();if([s.cost,s.price,s.stock].some(x=>x===null||x===undefined||String(x).trim()==='')||!Number.isFinite(cost)||cost<0||!Number.isFinite(price)||price<=0||!Number.isSafeInteger(stock)||stock<0||!spec||specs.has(spec))throw Error('请填写每个SKU的成本、正售价、整数库存和不重复的规格');specs.add(spec);return {sku:original.barcodes[i]||'SUP-'+hash(r.supplier+'|'+original.title).slice(0,20),spec,cost,price,stock};});
+    return {key:item.key,title:String(item.title).trim().slice(0,200),skus,confirmed:true};
+   });
+   const plan=JSON.stringify(items);if(r.plan&&r.plan!==plan)throw Error('此批次已开始导入，重试请保持原选择和内容；可重新上传文件建立新预览');if(r.destination&&r.destination!==storageDestination(c))throw Error('存储目标已变化，请恢复原存储配置再重试');
+   db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing' WHERE id=?").run(plan,storageDestination(c),id);active.add(id);
+   setImmediate(async()=>{let results=JSON.parse(r.results);try{
+    for(const item of items){if(results.some(x=>x.key===item.key&&x.ok))continue;const original=data.products.find(p=>p.key===item.key);let result;
+     try{
+      const current=getStorage();if(!current?.enabled||!allowedStorage(owner,current)||storageDestination(current)!==storageDestination(c))throw Error('存储配置或授权已变化');
+      const source='supplier:'+hash(r.supplier.toLowerCase()+'|'+(original.barcodes.length?original.barcodes.join('|'):original.title));
+      const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(owner,source);
+      if(existing){result={key:item.key,ok:true,id:existing.id,duplicate:true};}
+      else{
+       const urls=[];for(const asset of original.images){let row=db.prepare('SELECT url FROM supplier_uploaded WHERE batch_id=? AND asset=?').get(id,asset);if(!row){const a=data.assets.find(a=>a.id===asset),bytes=await readFile(join(directory,id,a.file)),type=imageType(bytes),key='ops/'+hash(owner).slice(0,24)+'/supplier/'+id+'/'+asset+'.'+type.ext;const url=await uploadImage(c,key,{bytes,...type},{fetchImpl});db.prepare('INSERT INTO supplier_uploaded VALUES(?,?,?)').run(id,asset,url);row={url};}urls.push(row.url);}
+       const latest=getStorage();if(!latest?.enabled||!allowedStorage(owner,latest)||storageDestination(latest)!==storageDestination(c))throw Error('存储配置或授权已变化，未创建商品');
+       const metadata={supplier:r.supplier,batch_id:id,filename:r.filename,card:original.key,barcodes:original.barcodes,packaging:original.packaging,category_hint:original.category_hint};
+       const product=validateProduct({source_url:source,title:item.title,description:original.description,attributes:original.attributes,category:'',images:urls,detail_images:[],skus:item.skus},{supplier:metadata});
+       const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
+      }
+     }catch(e){result={key:item.key,ok:false,error:e.message};}
+     results=results.filter(x=>x.key!==item.key);results.push(result);db.prepare('UPDATE supplier_batches SET results=? WHERE id=?').run(JSON.stringify(results),id);
+    }
+   }finally{active.delete(id);db.prepare('UPDATE supplier_batches SET state=? WHERE id=?').run(items.every(item=>results.some(r=>r.key===item.key&&r.ok))?'done':'partial',id);}});
+   return view(batch(owner,id));
+  }
+ };
+}

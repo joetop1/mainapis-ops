@@ -42,6 +42,7 @@ export function teamPermission(role,path,method){
  if(path==='/api/malls'&&method!=='GET')return false;
  if(path.startsWith('/api/connections/')||path.startsWith('/api/team'))return false;
  if(['GET','HEAD'].includes(method))return true;
+ if(role==='editor'&&path.startsWith('/api/supplier-imports'))return true;
  if(role==='editor')return ['/api/products/merge-preview','/api/products/merge'].includes(path)||path==='/api/import'||path==='/api/products'||(/^\/api\/products\/[^/]+$/.test(path)&&method==='PUT');
  return role==='reviewer';
 }

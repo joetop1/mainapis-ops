@@ -16,12 +16,13 @@ function skuSource(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.product_id!=='string'||!value.product_id||value.product_id.length>100||!Number.isSafeInteger(value.revision)||value.revision<1||typeof value.sku!=='string'||!value.sku||value.sku.length>100)throw Error('SKU来源记录格式无效');
  return {url:sourceURL(value.url),sku:value.sku,product_id:value.product_id,revision:value.revision,spec:String(value.spec||'').slice(0,300)};
 }
-export function validateProduct(input) {
+export function validateProduct(input,options={}) {
   if(!input || typeof input!=='object' || Array.isArray(input)) throw Error('商品必须是对象');
   if(input.images!==undefined && !Array.isArray(input.images)) throw Error('images 必须是数组');
   if(input.skus!==undefined && !Array.isArray(input.skus)) throw Error('skus 必须是数组');
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
-  const p={attributes:normalizeProductAttributes(input.attributes),source_url:sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
+  const p={attributes:normalizeProductAttributes(input.attributes),source_url:options.supplier?String(input.source_url):sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
+  if(options.supplier){if(!/^supplier:[a-f0-9]{64}$/.test(p.source_url))throw Error('货盘来源标识无效');p.supplier_import=options.supplier;}
   if(input.merge_sources!==undefined){if(!Array.isArray(input.merge_sources)||input.merge_sources.length<2||input.merge_sources.length>20)throw Error('合并来源记录格式无效');p.merge_sources=input.merge_sources.map(r=>{if(!r||typeof r.product_id!=='string'||!r.product_id||r.product_id.length>100||!Number.isSafeInteger(r.revision)||r.revision<1)throw Error('合并来源记录格式无效');return {product_id:r.product_id,revision:r.revision,url:sourceURL(r.url)};});}
   if(input.mall_mappings!==undefined)p.mall_mappings=normalizeMallMappings(input.mall_mappings);
   if(input.catalog_target!==undefined&&!['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'].includes(input.catalog_target))throw Error('商品资料所属商城无效');

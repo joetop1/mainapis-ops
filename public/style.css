@@ -56,3 +56,5 @@
 @media(max-width:760px){aside nav{min-width:0;overflow-x:auto;flex:1;justify-content:flex-start;scrollbar-width:none}aside nav button{flex-shrink:0}.brand #brandName{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 
 .image-transfer-choice{display:flex;align-items:center;gap:7px;margin:9px 0 0;font-size:12px}.image-transfer-choice input{width:auto;margin:0}#imageStorageForm>label:has(>input[type=checkbox]){display:flex;align-items:center;gap:8px}#imageStorageEnabled{width:auto}
+
+#supplierDialog{width:min(1100px,95vw);max-height:94vh;overflow:auto}#supplierUploadForm>.form-body{max-height:none}.supplier-card{border:1px solid #dce6dc;border-radius:8px;padding:16px;margin:15px 0}.supplier-pictures{display:flex;gap:10px}.supplier-pictures img{width:120px;height:120px;object-fit:contain}.supplier-card>label:has([data-confirm]){display:flex;gap:8px}.supplier-card input[type=checkbox]{width:auto}.supplier-skus>div{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}.supplier-skus small{grid-column:1/-1}@media(max-width:650px){.supplier-skus>div{grid-template-columns:1fr 1fr}}

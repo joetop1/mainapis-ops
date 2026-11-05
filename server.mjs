@@ -1,3 +1,4 @@
+import {supplierImports} from './supplier-import.mjs';
 import {imageStorage} from './image-storage.mjs';
 import {systemSettings,systemAdministrator,renderSystemBranding,DEFAULT_ICON} from './system-settings.mjs';
 import {productMerge} from './product-merge.mjs';
@@ -101,6 +102,8 @@ const notifications=mallNotifications({db,store:notificationSecrets,findMall:fin
 let notificationTimer;
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const malls=mallConnections(db,mallProfiles);
+const supplierImport=supplierImports({db,dataDir,root,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
+const supplierPruneTimer=setInterval(()=>supplierImport.prune().catch(()=>{}),3600000);supplierPruneTimer.unref();
 // Idempotent migration of persisted owners before any task can resume.
 for(const row of db.prepare("SELECT owner FROM products UNION SELECT owner FROM jobs UNION SELECT owner FROM connections UNION SELECT owner FROM connections_yunzhong UNION SELECT owner FROM connections_crmeb_pro UNION SELECT owner FROM connections_crmeb_store UNION SELECT owner FROM connections_shopxo UNION SELECT owner FROM connection_profiles").all())malls.ensure(row.owner);
 const refundPoll=crmebRefundPoll({db,getCredentials:mall=>credentialsFor(mall.system,mall.owner,mall.id),getNotificationConfig:id=>notificationSecrets.get('notification:'+id),findMall:findNotificationMall,enqueue:notifications.enqueueRefund});
@@ -530,6 +533,9 @@ const handleRequest=async(req,res)=>{
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size'),{scope:query.get('task_scope')||'all',actor,mall:query.get('mall')||'',status:query.get('status')||''}));}
     if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner);return json(res,200,{team,products:collectors.rows(owner,actor,new URL(req.url,origin).searchParams.get('collection_scope')||'all').map(row=>({...decodeProduct(row),collected_by:row.collected_by||'',collector_name:row.collector_name||'',publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
+    if(path==='/api/supplier-imports'&&req.method==='POST'){if(demo)throw Error('演示模式不导入货盘');return json(res,201,await supplierImport.preview(owner,await body(req,48*1024*1024)));}
+    const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|assets\/[a-f0-9]{64}))?$/);
+    if(supplierRoute){const id=supplierRoute[1],action=supplierRoute[2];if(req.method==='GET'&&action?.startsWith('assets/')){const image=await supplierImport.asset(owner,id,action.slice(7));res.writeHead(200,{'Content-Type':image.mime,'Content-Length':image.bytes.length,'Cache-Control':'private, no-store'});return res.end(image.bytes);}if(req.method==='GET'&&!action)return json(res,200,supplierImport.get(owner,id));if(req.method==='DELETE'&&!action)return json(res,200,await supplierImport.remove(owner,id));if(req.method==='POST'&&action==='commit'){if(demo)throw Error('演示模式不导入货盘');return json(res,202,supplierImport.start(owner,id,await body(req)));}}
     if(['/api/products/merge-preview','/api/products/merge'].includes(path)&&req.method==='POST'){const input=await body(req);return path.endsWith('merge-preview')?json(res,200,mergeProducts.preview(owner,input)):json(res,201,mergeProducts.create(owner,input));}
     if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);return json(res,201,{id:putProduct(owner,p)});}
     if(path==='/api/import' && req.method==='POST') {
@@ -541,7 +547,7 @@ const handleRequest=async(req,res)=>{
       if(!match[2] && req.method==='PUT') {
         const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'商品已被更新，请刷新后重试'});
         if(p.merge_sources&&Array.isArray(b.skus)){const original=new Map(p.skus.filter(s=>s.source).map(s=>[s.sku,s.source]));b.skus=b.skus.map(s=>({...s,...(original.has(s.sku)?{source:original.get(s.sku)}:{})}));}
-        const candidate=validateProduct({...b,...(p.merge_sources?{merge_sources:p.merge_sources}:{})});
+        const candidate=validateProduct({...b,...(p.merge_sources?{merge_sources:p.merge_sources}:{})},p.supplier_import?{supplier:p.supplier_import}:{});
         if(b.mall_mappings===undefined&&p.mall_mappings!==undefined){
           const active=malls.get(owner,candidate.catalog_connection_id,candidate.catalog_target||'crmeb-pro');candidate.catalog_connection_id=active.id;
           candidate.mall_mappings=p.mall_mappings.filter(m=>m.catalog_connection_id!==active.id).map(m=>({...m}));candidate.mall_mappings.push({catalog_connection_id:active.id,catalog_target:active.system,category_id:candidate.category_id||0,category:candidate.category||'',brand_ids:candidate.brand_ids,tag_ids:candidate.tag_ids,...(active.system==='crmeb-store'?{applicable_type:candidate.applicable_type??0}:{})});
@@ -590,7 +596,7 @@ const handleRequest=async(req,res)=>{
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
 export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
-export const closeStore=()=>{clearInterval(notificationTimer);notifications.stop();nativeRelay.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
+export const closeStore=()=>{clearInterval(notificationTimer);clearInterval(supplierPruneTimer);notifications.stop();nativeRelay.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>{nativeRelay.tick().catch(()=>console.error('native_notification_read_failed'));notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));tigshopNoticePoll.tick().catch(()=>console.error('tigshop_notification_poll_failed'));},4000);notificationTimer.unref();}
