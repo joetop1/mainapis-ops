@@ -53,11 +53,11 @@ test('导入允许减少和新增SKU，条码跟随行保留，重复编码拦�
  const dir=await mkdtemp(join(tmpdir(),'ops-supplier-skus-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'test.xlsx');createFixture(path);const service=supplierImports({db,dataDir:dir,root,getStorage:()=>config,allowedStorage:()=>true,recordCollector(){},audit(){},python});
  try{
   const b=await service.preview('alice',{supplier:'调整SKU',filename:'报价.xlsx',data:(await readFile(path)).toString('base64')});
-  const reduced={key:b.products[1].key,title:'多规格减少为单规格',confirmed:true,skus:[{barcode:'6977880050033',spec:'保留款',cost:2,price:5,stock:3}]};
+  const reduced={key:b.products[1].key,title:'多规格减少为单规格',confirmed:true,mall_mappings:[{catalog_connection_id:'mall-a',catalog_target:'crmeb-pro',category_id:11,category:'分类',brand_ids:[21],tag_ids:[]}],skus:[{barcode:'6977880050033',spec:'保留款',cost:2,price:5,stock:3}]};
   const added={key:b.products[0].key,title:'单规格增加为两规格',confirmed:true,skus:[{barcode:'6977880050002',spec:'原款',cost:2,price:5,stock:3},{barcode:'',spec:'新增款',cost:3,price:6,stock:4}]};
   assert.throws(()=>service.start('alice',b.id,{items:[{...added,skus:added.skus.map(s=>({...s,barcode:'SAME'}))}]}),/不能重复/);
   assert.throws(()=>service.start('alice',b.id,{items:[{...added,skus:[]}]}),/SKU无效/);
-  service.start('alice',b.id,{items:[reduced,added]});let result=await wait(service,'alice',b.id);assert.equal(result.state,'done');const products=db.prepare('SELECT data FROM products').all().map(r=>JSON.parse(r.data)),one=products.find(p=>p.title===reduced.title),two=products.find(p=>p.title===added.title);assert.equal(one.skus.length,1);assert.equal(one.skus[0].sku,'6977880050033');assert.equal(one.supplier_import.barcodes.length,2);assert.equal(two.skus.length,2);assert.match(two.skus[1].sku,/^SUP-/);assert.notEqual(two.skus[0].sku,two.skus[1].sku);
+  service.start('alice',b.id,{items:[reduced,added]});let result=await wait(service,'alice',b.id);assert.equal(result.state,'done');const products=db.prepare('SELECT data FROM products').all().map(r=>JSON.parse(r.data)),one=products.find(p=>p.title===reduced.title),two=products.find(p=>p.title===added.title);assert.equal(one.mall_mappings[0].category_id,11);assert.deepEqual(one.brand_ids,[21]);assert.equal(one.skus.length,1);assert.equal(one.skus[0].sku,'6977880050033');assert.equal(one.supplier_import.barcodes.length,2);assert.equal(two.skus.length,2);assert.match(two.skus[1].sku,/^SUP-/);assert.notEqual(two.skus[0].sku,two.skus[1].sku);
   service.start('alice',b.id,{items:result.plan});result=await wait(service,'alice',b.id);assert.equal(result.state,'done');assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,2);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });

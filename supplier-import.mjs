@@ -1,3 +1,4 @@
+import {normalizeMallMappings} from './public/mall-mappings.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -37,7 +38,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
     const original=data.products.find(p=>p.key===item.key);if(!original||keys.has(item.key)||item.confirmed!==true)throw Error('请逐件确认商品及规格对应关系');keys.add(item.key);
     if(!String(item.title||'').trim()||!Array.isArray(item.skus)||!item.skus.length||item.skus.length>50)throw Error('标题或SKU无效');
     const specs=new Set(),codes=new Set();const skus=item.skus.map((s,i)=>{const cost=Number(s.cost),price=Number(s.price),stock=Number(s.stock),spec=String(s.spec||'').trim();if([s.cost,s.price,s.stock].some(x=>x===null||x===undefined||String(x).trim()==='')||!Number.isFinite(cost)||cost<0||!Number.isFinite(price)||price<=0||!Number.isSafeInteger(stock)||stock<0||!spec||specs.has(spec))throw Error('请填写每个SKU的成本、正售价、整数库存和不重复的规格');specs.add(spec);const raw=Object.hasOwn(s,'barcode')?String(s.barcode||'').trim():String(s.sku||original.barcodes[i]||'').trim();if(raw&&!/^[A-Za-z0-9._-]{1,100}$/.test(raw))throw Error('条码或SKU编码仅支持字母、数字、点、横线和下划线，最多100字');const sku=raw||'SUP-'+hash(r.supplier+'|'+original.key+'|'+i).slice(0,20);if(codes.has(sku))throw Error('同一商品的条码或SKU编码不能重复');codes.add(sku);return {sku,spec,cost,price,stock};});
-    return {key:item.key,title:String(item.title).trim().slice(0,200),skus,confirmed:true};
+    return {key:item.key,title:String(item.title).trim().slice(0,200),skus,confirmed:true,...(item.mall_mappings!==undefined?{mall_mappings:normalizeMallMappings(item.mall_mappings)}:{})};
    });
    const plan=JSON.stringify(items);if(r.plan&&r.plan!==plan)throw Error('此批次已开始导入，重试请保持原选择和内容；可重新上传文件建立新预览');if(r.destination&&r.destination!==storageDestination(c))throw Error('存储目标已变化，请恢复原存储配置再重试');
    db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing' WHERE id=?").run(plan,storageDestination(c),id);active.add(id);
@@ -52,7 +53,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
        const urls=[];for(const asset of original.images){let row=db.prepare('SELECT url FROM supplier_uploaded WHERE batch_id=? AND asset=?').get(id,asset);if(!row){const a=data.assets.find(a=>a.id===asset),bytes=await readFile(join(directory,id,a.file)),type=imageType(bytes),key='ops/'+hash(owner).slice(0,24)+'/supplier/'+id+'/'+asset+'.'+type.ext;const url=await uploadImage(c,key,{bytes,...type},{fetchImpl});db.prepare('INSERT INTO supplier_uploaded VALUES(?,?,?)').run(id,asset,url);row={url};}urls.push(row.url);}
        const latest=getStorage();if(!latest?.enabled||!allowedStorage(owner,latest)||storageDestination(latest)!==storageDestination(c))throw Error('存储配置或授权已变化，未创建商品');
        const metadata={supplier:r.supplier,batch_id:id,filename:r.filename,card:original.key,barcodes:original.barcodes,sku_codes:item.skus.map(s=>s.sku),packaging:original.packaging,category_hint:original.category_hint};
-       const product=validateProduct({source_url:source,title:item.title,description:original.description,attributes:original.attributes,category:'',images:urls,detail_images:[],skus:item.skus},{supplier:metadata});
+       const product=validateProduct({source_url:source,title:item.title,description:original.description,attributes:original.attributes,category:'',images:urls,detail_images:[],skus:item.skus,...(item.mall_mappings?{mall_mappings:item.mall_mappings,...(item.mall_mappings[0]||{})}:{})},{supplier:metadata});
        const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
       }
      }catch(e){result={key:item.key,ok:false,error:e.message};}
