@@ -35,7 +35,7 @@ for n in [16,32,48,64,96,128,256,512,1024]:
 manifest.host_permissions=['https://ops.mainapis.com/*','https://detail.1688.com/*','https://item.taobao.com/*','https://detail.tmall.com/*'];
 await writeFile(join(destination,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 await copyFile(join(source,'version-bridge.js'),join(destination,'version-bridge.js'));
-for(const name of ['collector.js','taobao.js','source-url.js'])await copyFile(join(source,name),join(destination,name));
+for(const name of ['collector.js','taobao.js','source-url.js','draft-cache.js'])await copyFile(join(source,name),join(destination,name));
 let js=await readFile(join(source,'popup.js'),'utf8');
 js=js.replace("import {fillMerchant554Images} from './merchant-images.js';",'const extensionApi=globalThis.browser ?? globalThis.chrome;');
 js=js.slice(0,js.indexOf("$('#merchantImagesFile').onchange="));
@@ -54,7 +54,7 @@ const zip=destination+'.zip';
 execFileSync('python3',['-c',`import zipfile,sys,pathlib
 root=pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_DEFLATED) as z:
- for name in ['manifest.json','version-bridge.js','collector.js','taobao.js','source-url.js','popup.js','popup.html','popup.css','README.md']:
+ for name in ['manifest.json','version-bridge.js','collector.js','taobao.js','source-url.js','draft-cache.js','popup.js','popup.html','popup.css','README.md']:
   z.write(root/name,name)
  for icon in sorted((root/'icons').glob('icon-*.png')):
   z.write(icon,icon.relative_to(root))

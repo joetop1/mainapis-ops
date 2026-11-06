@@ -1,9 +1,11 @@
+import {draftCache} from './draft-cache.js';
 import {collectTaobao} from './taobao.js';
 import {canonicalSourceURL} from './source-url.js';
 import {collect1688} from './collector.js';
 import {fillMerchant554Images} from './merchant-images.js';
 const $=s=>document.querySelector(s),OPS='https://ops.mainapis.com';
 function activeCollector(tab){if(!tab?.id)throw Error('请打开1688、淘宝或天猫商品详情页');const url=canonicalSourceURL(tab.url);return new URL(url).hostname==='detail.1688.com'?collect1688:collectTaobao;}
+const drafts=draftCache({storage:chrome.storage.local});let draftTimer;
 const status=message=>{$('#status').textContent=message;};
 function preview(result){
  if(result?.error)throw Error(result.error);if(!result?.product)throw Error('页面未返回商品数据，请刷新后重试');
@@ -20,7 +22,7 @@ $('#collect').onclick=e=>busy(e.currentTarget,async()=>{
  const collector=activeCollector(tab);
  status('正在读取已加载的商品资料…');
  const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:collector});
- preview(out.result);await chrome.storage.local.set({draft:out.result});status('采集预览已生成，请核对后导入。');
+ clearTimeout(draftTimer);preview(out.result);const cached=await drafts.save(out.result);status(cached.saved?'采集预览已生成，请核对后导入。':'采集成功，但浏览器未能缓存草稿。请保持窗口打开，直接导入或下载JSON；关闭后可能需要重新采集。');
 });
 // Runs in an isolated OPS tab. Existing login + CSRF apply; no server-side token or CORS exception.
 export async function importIntoOps(product){
@@ -48,8 +50,8 @@ $('#send').onclick=e=>busy(e.currentTarget,async()=>{
  status('已导入待整理采集箱。到 OPS 点击刷新，设置分类、售价和库存后审核。');
 });
 $('#download').onclick=()=>{try{const data=JSON.parse($('#json').value);const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-product.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{status('JSON 格式不正确，请检查预览内容。');}};
-$('#json').addEventListener('input',()=>{try{const data=JSON.parse($('#json').value);if(data.products?.length===1)chrome.storage.local.set({draft:{product:data.products[0],warnings:['已恢复你编辑的采集草稿，请再次核对。']}});}catch{}});
-const {draft}=await chrome.storage.local.get('draft');if(draft){try{preview(draft);status('已恢复上次采集预览；点击「读取当前商品」可替换。');}catch{}}
+$('#json').addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(async()=>{try{const data=JSON.parse($('#json').value);if(data.products?.length===1){const result=await drafts.save({product:data.products[0],warnings:['已恢复你编辑的采集草稿，请再次核对。']});if(!result.saved)status('修改保留在当前窗口，但未能缓存；请直接导入或下载JSON。');}}catch{}},600);});
+const draft=await drafts.read();if(draft){try{preview(draft);status('已恢复上次采集预览；点击「读取当前商品」可替换。');}catch{}}
 $('#diagnose').onclick=e=>busy(e.currentTarget,async()=>{
  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
  const collector=activeCollector(tab);

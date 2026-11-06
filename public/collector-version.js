@@ -1,5 +1,5 @@
 // Resource release versions, distinct from the containing iOS app version.
-export const safariCollectorVersion='0.1.16';
+export const safariCollectorVersion='0.1.17';
 export function compareVersions(a,b){
  if(!/^\d+(\.\d+){1,3}$/.test(a)||!/^\d+(\.\d+){1,3}$/.test(b))return null;
  const left=a.split('.').map(Number),right=b.split('.').map(Number);

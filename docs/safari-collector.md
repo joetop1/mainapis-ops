@@ -1,4 +1,4 @@
-# MainAPIs Safari 采集助手 0.1.16（待真机验收）
+# MainAPIs Safari 采集助手 0.1.17（待真机验收）
 
 此包是 Safari Web Extension 资源包，不是可以直接安装的 IPA。需使用自己的 Apple Developer 账号签名、构建后，通过 TestFlight 安装。桌面 Chrome/Edge 采集插件保持原样。
 
@@ -47,3 +47,5 @@ node scripts/build-safari-collector.mjs
 0.1.15：加入淘宝桌面商品页读取和OPS淘宝来源支持；需重新生成并安装Safari扩展，允许访问item.taobao.com。新增资源taobao.js和source-url.js须随包安装。本版本仍需iPad真机验收。
 
 0.1.16：加入detail.tmall.com天猫商品页支持；资源包需要重新打包安装并授予天猫域名访问权限，仍待真机验收。
+
+0.1.17：修复Safari browser.storage.local配额不足导致采集报错。草稿优先使用IndexedDB，仅保留当前一份，成功迁移后清理旧草稿缓存；编辑保存防抖并串行写入。若两种缓存均不可用，当前预览仍可直接导入或下载JSON，关闭窗口前请先导出。新增draft-cache.js必须加入扩展资源。
