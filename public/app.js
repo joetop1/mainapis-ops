@@ -371,9 +371,10 @@ $('#skuImagesFile').onchange=async e=>{
 };
 $('#batchPriceMode').onchange=()=>{
  const mode=$('#batchPriceMode').value;
- $('#batchPriceLabel').textContent=mode==='percent'?'加价比例 %':mode==='add'?'每件加价 ¥':'统一售价 ¥';
- $('#batchPriceHint').textContent=mode==='percent'?'售价 = 每个规格成本 ×（1 + 比例 ÷ 100），结果四舍五入到分。':'应用会更新下方全部规格的售价；点击「保存商品」后才会保存。';
+ $('#batchPriceLabel').textContent=mode==='multiply'?'成本乘数（如 1.3）':mode==='percent'?'加价比例 %':mode==='add'?'每件加价 ¥':'统一售价 ¥';
+ $('#batchPriceHint').textContent=(mode==='multiply'?'售价 = 每个规格成本 × 倍数，例如 13.2 × 1.3 = 17.16。':mode==='percent'?'售价 = 每个规格成本 ×（1 + 比例 ÷ 100），结果四舍五入到分。':'应用会更新下方全部规格的售价；点击「保存商品」后才会保存。')+($('#batchPriceEnding').value==='nine'?' 向上调整为 x.9，例如 17.16 → 17.90，17.95 → 18.90；不会低于计算金额。':'');
 };
+$('#batchPriceEnding').onchange=()=>$('#batchPriceMode').onchange();
 $('#applyBatchStock').onclick=()=>{
  try{
   const raw=$('#batchStockValue').value.trim(),value=Number(raw);
@@ -388,7 +389,7 @@ $('#applyBatchStock').onclick=()=>{
 $('#applyBatchPrice').onclick=()=>{
  try{
   const rows=[...$('#skuRows').children];
-  const prices=batchPrices(rows.map(row=>row.querySelector('[data-key="cost"]').value),$('#batchPriceMode').value,$('#batchPriceValue').value);
+  const prices=batchPrices(rows.map(row=>row.querySelector('[data-key="cost"]').value),$('#batchPriceMode').value,$('#batchPriceValue').value,$('#batchPriceEnding').value);
   rows.forEach((row,i)=>{row.querySelector('[data-key="price"]').value=prices[i];});
   toast(`已设置 ${prices.length} 个规格的售价，请检查后保存商品`);
  }catch(e){toast(e.message);}

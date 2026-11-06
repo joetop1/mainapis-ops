@@ -14,3 +14,15 @@ test('无效输入与任一SKU异常时拒绝整批，统一金额不依赖成�
  assert.deepEqual(batchPrices([''],'fixed',10),['10.00']);
  assert.throws(()=>batchPrices([99999999],'percent',100));
 });
+
+test('成本倍数配合向上x.9，不影响默认计算，全部模式支持且不降价',()=>{
+ assert.deepEqual(batchPrices([13.2],'multiply','1.3'),['17.16']);
+ assert.deepEqual(batchPrices([13.2],'multiply','1.3','nine'),['17.90']);
+ assert.deepEqual(batchPrices([13.2],'percent','30','nine'),['17.90']);
+ assert.deepEqual(batchPrices([17,17.9,17.95,18,0.01],'multiply',1,'nine'),['17.90','17.90','18.90','18.90','0.90']);
+ assert.deepEqual(batchPrices([0.1],'add',0.8,'nine'),['0.90']);
+ assert.deepEqual(batchPrices([0],'fixed',17.95,'nine'),['18.90']);
+ assert.deepEqual(batchPrices([17.90001],'multiply',1,'nine'),['18.90']);
+ assert.throws(()=>batchPrices([10],'multiply',0,'nine'));assert.throws(()=>batchPrices([10],'multiply',1,'other'));assert.throws(()=>batchPrices([99999999],'multiply',1,'nine'));
+ for(let cents=1;cents<3000;cents++){const amount=cents/100,price=Number(batchPrices([amount],'multiply',1,'nine')[0]);assert.ok(price>=amount-1e-9);assert.equal(Math.round(price*100)%100,90);}
+});
