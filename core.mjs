@@ -12,9 +12,10 @@ export function sourceURL(value) {
   if(u.protocol!=='https:' || u.hostname!=='detail.1688.com' || !/^\/offer\/\d+\.html$/.test(u.pathname)) throw Error('请使用 https://detail.1688.com/offer/数字.html 商品链接');
   return u.origin+u.pathname;
 }
+function provenanceURL(value){return typeof value==='string'&&/^supplier:[a-f0-9]{64}$/.test(value)?value:sourceURL(value);}
 function skuSource(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.product_id!=='string'||!value.product_id||value.product_id.length>100||!Number.isSafeInteger(value.revision)||value.revision<1||typeof value.sku!=='string'||!value.sku||value.sku.length>100)throw Error('SKU来源记录格式无效');
- return {url:sourceURL(value.url),sku:value.sku,product_id:value.product_id,revision:value.revision,spec:String(value.spec||'').slice(0,300)};
+ return {url:provenanceURL(value.url),sku:value.sku,product_id:value.product_id,revision:value.revision,spec:String(value.spec||'').slice(0,300)};
 }
 export function validateProduct(input,options={}) {
   if(!input || typeof input!=='object' || Array.isArray(input)) throw Error('商品必须是对象');
@@ -23,7 +24,8 @@ export function validateProduct(input,options={}) {
   if(input.images?.length>30 || input.skus?.length>500) throw Error('每件商品最多 30 张图片、500 个 SKU，请拆分商品后导入');
   const p={attributes:normalizeProductAttributes(input.attributes),source_url:options.supplier?String(input.source_url):sourceURL(input.source_url),title:String(input.title||'').trim().slice(0,200),category:String(input.category||'').slice(0,100),description:String(input.description||'').slice(0,50000)};
   if(options.supplier){if(!/^supplier:[a-f0-9]{64}$/.test(p.source_url))throw Error('货盘来源标识无效');p.supplier_import=options.supplier;}
-  if(input.merge_sources!==undefined){if(!Array.isArray(input.merge_sources)||input.merge_sources.length<2||input.merge_sources.length>20)throw Error('合并来源记录格式无效');p.merge_sources=input.merge_sources.map(r=>{if(!r||typeof r.product_id!=='string'||!r.product_id||r.product_id.length>100||!Number.isSafeInteger(r.revision)||r.revision<1)throw Error('合并来源记录格式无效');return {product_id:r.product_id,revision:r.revision,url:sourceURL(r.url)};});}
+  if(input.merge_sources!==undefined){if(!Array.isArray(input.merge_sources)||input.merge_sources.length<2||input.merge_sources.length>20)throw Error('合并来源记录格式无效');p.merge_sources=input.merge_sources.map(r=>{if(!r||typeof r.product_id!=='string'||!r.product_id||r.product_id.length>100||!Number.isSafeInteger(r.revision)||r.revision<1)throw Error('合并来源记录格式无效');return {product_id:r.product_id,revision:r.revision,url:provenanceURL(r.url)};});}
+  if(input.same_style!==undefined){const v=input.same_style;if(!v||typeof v.reference_id!=='string'||!Array.isArray(v.stock_ids)||!v.stock_ids.length||v.stock_ids.length>19||v.stock_ids.some(id=>typeof id!=='string'||!id||id.length>100)||!input.merge_sources?.some(r=>r.product_id===v.reference_id)||v.stock_ids.some(id=>!input.merge_sources.some(r=>r.product_id===id)))throw Error('同款整理来源格式无效');const matches=v.matches??[];if(!Array.isArray(matches)||matches.length>500||matches.some(r=>!r||!v.stock_ids.includes(r.product_id)||typeof r.sku!=='string'||!r.sku||r.sku.length>100||typeof r.reference_sku!=='string'||r.reference_sku.length>100))throw Error('同款SKU对应记录格式无效');p.same_style={reference_id:v.reference_id,stock_ids:[...v.stock_ids],matches:matches.map(r=>({product_id:r.product_id,sku:r.sku,reference_sku:r.reference_sku}))};}
   if(input.mall_mappings!==undefined)p.mall_mappings=normalizeMallMappings(input.mall_mappings);
   if(input.catalog_target!==undefined&&!['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'].includes(input.catalog_target))throw Error('商品资料所属商城无效');
   if(input.category_id!==undefined){

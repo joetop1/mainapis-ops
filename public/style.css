@@ -62,3 +62,7 @@
 #supplierDialog>.supplier-footer{position:sticky;bottom:0;background:#fff;z-index:4;flex-wrap:wrap;padding:14px 20px;border-top:1px solid #dce6dc;max-width:none}#supplierStatus{flex-basis:100%;margin:0 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}#supplierStatus.is-error{color:#a23421;font-weight:600}
 
 .supplier-back-top{position:sticky;bottom:140px;margin-left:auto;margin-right:18px;display:block;z-index:5;border-radius:24px;padding:11px 15px;background:#245d46;color:#fff;box-shadow:0 3px 14px #173a2940}.supplier-back-top.hidden{display:none}.supplier-card>small{display:block;margin-top:8px}.supplier-skus>div{padding:12px;background:#f5f8f4;border-radius:7px}
+
+#sameStyleDialog{max-width:1100px}#sameStyleRows td{min-width:180px}#sameStyleRows input,#sameStyleRows select{width:100%}#sameStyleDialog footer{flex-wrap:wrap;gap:12px}#sameStyleStatus{flex:1 1 300px}
+
+.style-source-toggle{display:flex;align-items:center;gap:6px;margin:0;font-size:11px}.style-source-toggle>input{width:auto;margin:0}
