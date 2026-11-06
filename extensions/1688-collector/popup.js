@@ -3,7 +3,7 @@ import {canonicalSourceURL} from './source-url.js';
 import {collect1688} from './collector.js';
 import {fillMerchant554Images} from './merchant-images.js';
 const $=s=>document.querySelector(s),OPS='https://ops.mainapis.com';
-function activeCollector(tab){if(!tab?.id)throw Error('请打开1688或淘宝商品详情页');const url=canonicalSourceURL(tab.url);return url.includes('item.taobao.com')?collectTaobao:collect1688;}
+function activeCollector(tab){if(!tab?.id)throw Error('请打开1688、淘宝或天猫商品详情页');const url=canonicalSourceURL(tab.url);return new URL(url).hostname==='detail.1688.com'?collect1688:collectTaobao;}
 const status=message=>{$('#status').textContent=message;};
 function preview(result){
  if(result?.error)throw Error(result.error);if(!result?.product)throw Error('页面未返回商品数据，请刷新后重试');

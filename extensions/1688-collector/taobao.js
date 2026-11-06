@@ -1,7 +1,8 @@
 // Injected into MAIN world: self-contained, reads only already-loaded product data.
 export function collectTaobao(diagnostic=false){
  let u;try{u=new URL(location.href);}catch{return {error:'商品地址无效'};}
- const id=u.searchParams.get('id');if(u.protocol!=='https:'||u.hostname!=='item.taobao.com'||u.pathname!=='/item.htm'||!/^\d+$/.test(id||''))return {error:'请打开淘宝商品详情页 item.taobao.com/item.htm?id=数字'};
+ const id=u.searchParams.get('id');if(u.protocol!=='https:'||!['item.taobao.com','detail.tmall.com'].includes(u.hostname)||u.pathname!=='/item.htm'||!/^\d+$/.test(id||'')||u.searchParams.getAll('id').length!==1||u.username||u.password||u.port)return {error:'请打开淘宝或天猫的标准商品详情页（item.htm?id=数字）'};
+ const platform=u.hostname==='detail.tmall.com'?'tmall':'taobao',platformName=platform==='tmall'?'天猫':'淘宝';
  const warnings=[],schemas=[],seen=new WeakSet(),candidates=[];let visited=0;
  const clean=(v,n=200)=>typeof v==='string'?v.replace(/\s+/g,' ').trim().slice(0,n):'';
  const image=v=>{if(typeof v!=='string')return '';try{const a=new URL(v.startsWith('//')?'https:'+v:v);return a.protocol==='https:'&&!a.username&&!a.password&&/(^|\.)(alicdn\.com|taobaocdn\.com|tbcdn\.cn)$/.test(a.hostname)?a.href:'';}catch{return '';}};
@@ -29,10 +30,10 @@ export function collectTaobao(diagnostic=false){
  if(valid)for(const prop of props){const name=clean(prop.name,30),pid=String(prop.pid||'');if(!name||!pid||!Array.isArray(prop.values)||prop.values.length>500||names.includes(name)){valid=false;break;}names.push(name);for(const v of prop.values)values.set(pid+':'+v.vid,{pid,name:clean(v.name,100),image:image(v.image)});}
  const codes=new Set(),combinations=new Set();
  if(valid)for(const row of rows){const code=String(row.skuId||''),parts=String(row.propPath||'').split(';').filter(Boolean).map(k=>values.get(k)),rowValues=props.map(p=>parts.find(v=>v?.pid===String(p.pid))?.name||'');if(!/^\d{1,40}$/.test(code)||codes.has(code)||rowValues.some(v=>!v)||parts.length!==names.length||combinations.has(JSON.stringify(rowValues))){valid=false;break;}codes.add(code);combinations.add(JSON.stringify(rowValues));const price=info[code]?.price?.priceText,number=typeof price==='string'&&/^\d+(\.\d+)?$/.test(price)?Number(price):0;const picture=parts.find(v=>v?.image)?.image;skus.push({sku:'TB-'+code,spec:rowValues.join(' / ')||'默认',...(names.length?{spec_values:rowValues}:{}),cost:Number.isFinite(number)?number:0,price:0,stock:0,...(picture?{image:picture}:{})});}
- if(!valid){skus.length=0;warnings.push('未识别到完整淘宝SKU结构，请展开规格、等待加载后重读；不会将多规格商品伪造为单规格。');}
+ if(!valid){skus.length=0;warnings.push('未识别到完整'+platformName+'SKU结构，请展开规格、等待加载后重读；不会将多规格商品伪造为单规格。');}
  if(!title)warnings.push('未读取到商品标题，请确认已进入商品页而非登录或验证页。');
  if(!images.length)warnings.push('未读取到主图，请等待商品图片加载。');if(!details.length)warnings.push('未读取到真实详情图，请展开并滚动商品详情后重读；跨域详情框内的图片不会冒充已采集。');
- warnings.push('淘宝价格仅作参考成本，售价和库存均为0；请自行核对条码、规格、成本、售价和库存后审核。');
- if(diagnostic)return {diagnostics:{version:'0.1.12',platform:'taobao',item_id:id,selectedPath:selected?.path||'',schemas}};
- return {product:{source_url:'https://item.taobao.com/item.htm?id='+id,title,category:'',description:'',attributes,images:images.slice(0,30),detail_images:details.slice(0,100),skus,...(valid&&names.length?{spec_names:names}:{})},warnings};
+ warnings.push(platformName+'价格仅作参考成本，售价和库存均为0；请自行核对条码、规格、成本、售价和库存后审核。');
+ if(diagnostic)return {diagnostics:{version:'0.1.13',platform,item_id:id,selectedPath:selected?.path||'',schemas}};
+ return {product:{source_url:'https://'+u.hostname+'/item.htm?id='+id,title,category:'',description:'',attributes,images:images.slice(0,30),detail_images:details.slice(0,100),skus,...(valid&&names.length?{spec_names:names}:{})},warnings};
 }

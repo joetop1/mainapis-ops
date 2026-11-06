@@ -20,7 +20,7 @@ export function setupSameStyle({$,esc,context,api,load,edit,toast}){
   const {products,selected}=context();stocks=products.filter(p=>selected.has(p.id)&&p.supplier_import);
   if(!stocks.length||stocks.length>19||stocks.some(p=>!p.skus?.length)||stocks.reduce((n,p)=>n+p.skus.length,0)>500)throw Error('请勾选1至19条已录入SKU的同款货盘商品，合计最多500个SKU');
   const references=products.filter(p=>!p.supplier_import&&!stocks.includes(p)&&p.skus?.length&&!p.same_style);
-  if(!references.length)throw Error('请先将对应的1688或淘宝商品采集到采集箱，再打开同款整理');
+  if(!references.length)throw Error('请先将对应的1688、淘宝或天猫商品采集到采集箱，再打开同款整理');
   generation++;requestId=crypto.randomUUID();previewKey='';pending=null;lock(false);
   $('#sameStyleReference').innerHTML=references.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+'</option>').join('');
   const selectedReference=references.filter(p=>selected.has(p.id));if(selectedReference.length===1)$('#sameStyleReference').value=selectedReference[0].id;

@@ -39,3 +39,17 @@ test('淘宝作为同款图文来源，仍保留货盘的编码和价格库存',
  const ref={...capture(fixture()).product,id:'ref',revision:1},stock={id:'stock',revision:1,source_url:'supplier:'+'a'.repeat(64),supplier_import:{supplier:'供应商'},title:'货盘',images:['https://img.alicdn.com/stock.jpg'],skus:[{sku:'BARCODE',spec:'50ml',cost:8,price:16,stock:20}]};
  const {product}=buildSameStyleProduct([stock,ref],{main_id:'stock',reference_id:'ref',title:'整理商品',dimension:'容量',images:'reference',rows:[{product_id:'stock',original_sku:'BARCODE',value:'50ml',reference_sku:'TB-51'}]});assert.equal(product.source_url,url);assert.equal(product.skus.length,1);assert.equal(product.skus[0].sku,'BARCODE');assert.equal(product.skus[0].stock,20);assert.equal(product.skus[0].cost,8);assert.equal(product.skus[0].image,ref.skus[0].image);
 });
+
+test('天猫独立来源与相同商品ID的淘宝区分，图文SKU可导入及补充',()=>{
+ const source='https://detail.tmall.com/item.htm?id=123';
+ assert.equal(canonicalSourceURL(source+'&spm=tracking#x'),source);assert.notEqual(canonicalSourceURL(source),canonicalSourceURL(url));
+ const result=capture(fixture(),false,source),product=validateProduct(result.product);
+ assert.equal(product.source_url,source);assert.equal(product.skus.length,2);assert.equal(product.skus[0].image,'https://img.alicdn.com/50.jpg');assert.ok(result.warnings.some(w=>w.startsWith('天猫价格')));
+ assert.equal(capture(fixture(),true,source).diagnostics.platform,'tmall');
+ product.detail_images=['https://img.alicdn.com/detail.jpg'];const data={products:[product]};
+ assert.equal(detailImagesFromJSON(source+'&track=1',data).length,1);assert.equal(productAttributesFromJSON(source,data)[0].name,'品牌');assert.equal(matchSkuImages(source,product.skus.map(s=>s.sku),product).length,1);assert.deepEqual(matchSpecificationImport(source,product.skus,product).names,['容量']);assert.throws(()=>detailImagesFromJSON(url,data),/不一致/);
+ for(const address of [source.replace('detail.tmall.com','detail.tmall.com.evil.test'),source.replace('https:','http:'),source+'&id=456',source.replace('/item.htm','/other.htm')]){assert.throws(()=>canonicalSourceURL(address));assert.ok(capture(fixture(),false,address).error);}
+ const stock={id:'stock',revision:1,source_url:'supplier:'+'b'.repeat(64),supplier_import:{supplier:'供应商'},title:'货盘',images:[],skus:[{sku:'BAR',spec:'50ml',cost:9,price:19,stock:8}]};
+ const merged=buildSameStyleProduct([stock,{...product,id:'ref',revision:1}],{main_id:'stock',reference_id:'ref',title:'新商品',dimension:'容量',images:'reference',rows:[{product_id:'stock',original_sku:'BAR',value:'50ml',reference_sku:'TB-51'}]}).product;
+ assert.equal(merged.source_url,source);assert.equal(merged.skus[0].sku,'BAR');assert.equal(merged.skus[0].cost,9);
+});
