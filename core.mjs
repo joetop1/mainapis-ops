@@ -1,3 +1,4 @@
+import {canonicalSourceURL as sourceURL} from './public/source-url.js';
 import {normalizeMallMappings} from './public/mall-mappings.js';
 import {normalizeProductAttributes} from './public/product-attributes.js';
 import {specificationMatrix} from './public/specifications.js';
@@ -7,11 +8,8 @@ import { randomUUID, randomBytes, timingSafeEqual, createPublicKey, verify } fro
 export const uid = () => randomUUID();
 export const secret = () => randomBytes(32).toString('base64url');
 export function equal(a,b) { const x=Buffer.from(String(a||'')), y=Buffer.from(String(b||'')); return x.length===y.length && x.length>0 && timingSafeEqual(x,y); }
-export function sourceURL(value) {
-  const u=new URL(String(value));
-  if(u.protocol!=='https:' || u.hostname!=='detail.1688.com' || !/^\/offer\/\d+\.html$/.test(u.pathname)) throw Error('请使用 https://detail.1688.com/offer/数字.html 商品链接');
-  return u.origin+u.pathname;
-}
+export {canonicalSourceURL as sourceURL} from './public/source-url.js';
+
 function provenanceURL(value){return typeof value==='string'&&/^supplier:[a-f0-9]{64}$/.test(value)?value:sourceURL(value);}
 function skuSource(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.product_id!=='string'||!value.product_id||value.product_id.length>100||!Number.isSafeInteger(value.revision)||value.revision<1||typeof value.sku!=='string'||!value.sku||value.sku.length>100)throw Error('SKU来源记录格式无效');

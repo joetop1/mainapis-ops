@@ -1,4 +1,5 @@
-const source=value=>{const u=new URL(value);if(u.protocol!=='https:'||u.hostname!=='detail.1688.com'||!/^\/offer\/\d+\.html$/.test(u.pathname)||u.username||u.password)throw Error('来源不是有效的1688商品链接');return u.origin+u.pathname;};
+import {canonicalSourceURL} from './source-url.js';
+const source=canonicalSourceURL;
 export function detailImagesFromJSON(currentSource,data){
  if(!Array.isArray(data?.products)||data.products.length!==1)throw Error('请选择只包含当前商品的采集 JSON');
  const p=data.products[0];if(source(currentSource)!==source(p.source_url))throw Error('采集文件与当前商品来源不一致，未修改详情');

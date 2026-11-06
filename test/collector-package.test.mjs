@@ -22,7 +22,7 @@ test('采集包包含当前插件全部依赖、可解压路径与动态版本�
   assert.deepEqual(b.subarray(start,start+length),await readFile(join(directory,localName)));pos=start+length;
  }
  assert.equal(b.readUInt32LE(pos),0x02014b50);assert.equal(b.readUInt32LE(b.length-22),0x06054b50);
- assert.deepEqual(names.sort(),['README.md','version-bridge.js','collector.js','manifest.json','merchant-images.js','popup.css','popup.html','popup.js'].sort());
+ assert.deepEqual(names.sort(),['README.md','version-bridge.js','collector.js','taobao.js','source-url.js','manifest.json','merchant-images.js','popup.css','popup.html','popup.js'].sort());
 });
 test('登录团队编辑员可下载，未登录及停用成员被拒绝；下载不开放商城凭证',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ops-collector-download-'));Object.assign(process.env,{DATA_DIR:dir,APP_ORIGIN:'https://ops.mainapis.com',DEMO_MODE:'false'});

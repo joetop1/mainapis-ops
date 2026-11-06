@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-const files=['manifest.json','version-bridge.js','popup.html','popup.js','popup.css','collector.js','merchant-images.js','README.md'];
+const files=['manifest.json','version-bridge.js','popup.html','popup.js','popup.css','collector.js','taobao.js','source-url.js','merchant-images.js','README.md'];
 function crc32(bytes){let n=0xffffffff;for(const b of bytes){n^=b;for(let i=0;i<8;i++)n=(n>>>1)^((n&1)?0xedb88320:0);}return (n^0xffffffff)>>>0;}
 // Standard ZIP with stored entries. Fixed allowlist excludes credentials and user data.
 export async function createCollectorPackage(directory){

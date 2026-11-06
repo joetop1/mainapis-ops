@@ -1,3 +1,4 @@
+import {canonicalSourceURL} from './source-url.js';
 // Product facts only. Supply-chain, platform and merchant metadata is never published.
 export function normalizeProductAttributes(input){
  if(input===undefined||input===null)return [];
@@ -19,7 +20,7 @@ export function descriptionWithAttributes(description,attributes){
  return rows.length?'产品基本信息\n'+rows.map(row=>row.name+'：'+row.value).join('\n')+(description?'\n\n'+description:''):String(description||'');
 }
 export function productAttributesFromJSON(source,data){
- const canonical=value=>{const u=new URL(value);if(u.protocol!=='https:'||u.hostname!=='detail.1688.com'||!/^\/offer\/\d+\.html$/.test(u.pathname))throw Error('来源链接无效');return u.origin+u.pathname;};
+ const canonical=canonicalSourceURL;
  if(data?.products?.length!==1||canonical(data.products[0].source_url)!==canonical(source))throw Error('请选择当前商品来源对应的单件采集文件');
  const rows=normalizeProductAttributes(data.products[0].attributes);
  if(!rows.length)throw Error('采集文件未包含可用的产品参数，请使用新版插件重新采集');

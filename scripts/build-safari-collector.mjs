@@ -32,10 +32,10 @@ for n in [16,32,48,64,96,128,256,512,1024]:
  data=b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows),9))+chunk(b'IEND',b'')
  (root/('icon-%s.png'%n)).write_bytes(data)
 `,join(destination,'icons')]);
-manifest.host_permissions=['https://ops.mainapis.com/*','https://detail.1688.com/*'];
+manifest.host_permissions=['https://ops.mainapis.com/*','https://detail.1688.com/*','https://item.taobao.com/*'];
 await writeFile(join(destination,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 await copyFile(join(source,'version-bridge.js'),join(destination,'version-bridge.js'));
-await copyFile(join(source,'collector.js'),join(destination,'collector.js'));
+for(const name of ['collector.js','taobao.js','source-url.js'])await copyFile(join(source,name),join(destination,name));
 let js=await readFile(join(source,'popup.js'),'utf8');
 js=js.replace("import {fillMerchant554Images} from './merchant-images.js';",'const extensionApi=globalThis.browser ?? globalThis.chrome;');
 js=js.slice(0,js.indexOf("$('#merchantImagesFile').onchange="));
@@ -44,7 +44,7 @@ await writeFile(join(destination,'popup.js'),js);
 let html=await readFile(join(source,'popup.html'),'utf8');
 html=html.replace(/<details><summary>修复已发布商品 554[\s\S]*?<\/details>/,'');
 html=html.replace(/试用版 [0-9.]+/,'Safari 测试版 '+safariCollectorVersion);
-html=html.replace('等待采集','请先允许此扩展访问 1688 和 OPS；在 Safari 打开商品详情页后点击读取。');
+html=html.replace('等待采集','请先允许此扩展访问 1688、淘宝和 OPS；在 Safari 打开商品详情页后点击读取。');
 await writeFile(join(destination,'popup.html'),html);
 const css=await readFile(join(source,'popup.css'),'utf8');
 await writeFile(join(destination,'popup.css'),css+'\n/* Safari sizes its popover from intrinsic document dimensions. Do not clamp to the initial viewport. */html{width:380px;min-width:380px;box-sizing:border-box}body{width:380px;min-width:380px;padding:18px;box-sizing:border-box;overflow-x:hidden}h1{word-break:normal;overflow-wrap:normal}.actions>button{flex:1 1 auto}button{min-height:44px}.actions{flex-wrap:wrap}textarea{font-size:16px}img{max-width:100%}\n');
@@ -54,7 +54,7 @@ const zip=destination+'.zip';
 execFileSync('python3',['-c',`import zipfile,sys,pathlib
 root=pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_DEFLATED) as z:
- for name in ['manifest.json','version-bridge.js','collector.js','popup.js','popup.html','popup.css','README.md']:
+ for name in ['manifest.json','version-bridge.js','collector.js','taobao.js','source-url.js','popup.js','popup.html','popup.css','README.md']:
   z.write(root/name,name)
  for icon in sorted((root/'icons').glob('icon-*.png')):
   z.write(icon,icon.relative_to(root))

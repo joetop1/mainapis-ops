@@ -1,3 +1,4 @@
+import {canonicalSourceURL} from './source-url.js';
 // Explicit dimensions only. Legacy display text is never guessed into dimensions.
 export function specificationMatrix(product){
  const skus=product.skus||[],raw=product.spec_names;
@@ -33,7 +34,7 @@ export function remapSpecificationValues(skus,previous,next){
 }
 
 export function matchSpecificationImport(sourceUrl,current,incoming){
- const canonical=value=>typeof value==='string'?value.match(/^https:\/\/detail\.1688\.com\/offer\/(\d+)\.html(?:[?#].*)?$/)?.[1]:null;
+ const canonical=value=>{try{return canonicalSourceURL(value);}catch{return null;}};
  if(!canonical(sourceUrl)||canonical(sourceUrl)!==canonical(incoming?.source_url))throw Error('规格导入来源与当前商品不一致');
  if(!Array.isArray(current)||!current.length||!Array.isArray(incoming?.skus)||incoming.skus.length!==current.length)throw Error('重新采集的 SKU 数量与当前商品不一致，请核对完整规格');
  const matrix=specificationMatrix(incoming);if(!matrix.structured)throw Error('采集文件不含独立规格维度，请使用新版采集助手重新采集');

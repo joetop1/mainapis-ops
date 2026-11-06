@@ -1,5 +1,6 @@
+import {canonicalSourceURL} from './source-url.js';
 export function matchSkuImages(source,skus,product){
- const canonical=value=>{const u=new URL(value);if(u.protocol!=='https:'||u.hostname!=='detail.1688.com'||!/^\/offer\/\d+\.html$/.test(u.pathname))throw Error('来源必须是 1688 商品链接');return u.origin+u.pathname;};
+ const canonical=canonicalSourceURL;
  if(canonical(source)!==canonical(product?.source_url))throw Error('配图文件不是当前商品的来源');
  if(!Array.isArray(product.skus)||!product.skus.length)throw Error('配图文件缺少 SKU');
  const known=new Set(skus),seen=new Set(),updates=[];
