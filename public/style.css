@@ -66,3 +66,5 @@
 #sameStyleDialog{max-width:1100px}#sameStyleRows td{min-width:180px}#sameStyleRows input,#sameStyleRows select{width:100%}#sameStyleDialog footer{flex-wrap:wrap;gap:12px}#sameStyleStatus{flex:1 1 300px}
 
 .style-source-toggle{display:flex;align-items:center;gap:6px;margin:0;font-size:11px}.style-source-toggle>input{width:auto;margin:0}
+
+.merge-status{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;align-items:center}.badge.merge-source{background:#fdf0dc;color:#936021}.badge.merge-result{background:#e4f0eb;color:#285947}.merge-result-link{max-width:260px;white-space:normal;text-align:left;font-size:11px;padding:2px 4px;overflow-wrap:anywhere}
