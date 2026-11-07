@@ -3,7 +3,7 @@ import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 def parse(path,out):
  z=zipfile.ZipFile(path);infos=z.infolist()
- if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>300*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
+ if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>768*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
  for x in infos:
   if x.file_size>20*1024*1024 or x.flag_bits&1:raise ValueError('表格包含过大或加密内容')
  def xml(name):

@@ -73,3 +73,15 @@ test('后台货盘队列持久保存、跨实例解析、状态隔离及失败�
   const interrupted=await api.enqueue('alice',{supplier:'中断',filename:'旧.xlsx',bytes:await readFile(path)});db.prepare("UPDATE supplier_batches SET state='parsing',parse_started=1 WHERE id=?").run(interrupted.id);await worker.tick();assert.match(api.get('alice',interrupted.id).error,/中断/);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('私有OSS货盘按大小流式下载、解析后删除原件且不自动创建商品',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-private-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'test.xlsx');createFixture(path);const bytes=await readFile(path),calls=[];
+ const fetchImpl=async(url,options)=>{calls.push(options.method);return options.method==='GET'?new Response(bytes):new Response(null,{status:204});};
+ const service=supplierImports({db,dataDir:dir,root,getStorage:()=>config,allowedStorage:()=>true,recordCollector(){},audit(){},fetchImpl,python});
+ const {storageDestination}=await import('../image-storage.mjs');
+ try{
+  const input={supplier:'私有货盘',filename:'报价.xlsx',key:'ops-private/workbooks/test/file.xlsx',size:bytes.length,destination:storageDestination(config)};
+  const queued=await service.enqueueRemote('alice',input);assert.equal((await service.enqueueRemote('alice',input)).id,queued.id);await service.tick();assert.equal(service.get('alice',queued.id).state,'ready');assert.equal(service.get('alice',queued.id).products.length,2);assert.deepEqual(calls,['GET','DELETE']);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);
+  const bad=await service.enqueueRemote('alice',{...input,key:'ops-private/workbooks/test/bad.xlsx',size:bytes.length+1});await service.tick();assert.equal(service.get('alice',bad.id).state,'parse_failed');assert.match(service.get('alice',bad.id).error,/不完整/);
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});

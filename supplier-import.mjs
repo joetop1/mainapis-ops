@@ -1,3 +1,8 @@
+import {ossRequest,MAX_WORKBOOK_BYTES} from './oss-multipart.mjs';
+import {createWriteStream} from 'node:fs';
+import {pipeline} from 'node:stream/promises';
+import {Transform,Readable} from 'node:stream';
+import {statfs} from 'node:fs/promises';
 import {normalizeMallMappings} from './public/mall-mappings.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readFile,rm} from 'node:fs/promises';
@@ -10,14 +15,17 @@ const execute=promisify(execFile),hash=v=>createHash('sha256').update(v).digest(
 export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
  const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
- for(const [name,type] of [['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
+ for(const [name,type] of [['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
  async function parseBatch(r){
   const dir=join(directory,r.id);parsing++;
-  try{let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
+  try{
+   if(r.remote_source){const remote=JSON.parse(r.remote_source),c=getStorage();if(!c?.enabled||!allowedStorage(r.owner,c)||storageDestination(c)!==remote.destination)throw Error('OSS配置或授权发生变化');const free=await statfs(dataDir);if(free.bavail*free.bsize<remote.size+1024*1024*1024)throw Error('解析所需磁盘空间不足，请先清理');const response=await ossRequest(c,remote.key,'GET',{}, {},undefined,fetchImpl);let size=0;await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,encoding,callback){size+=chunk.length;callback(size>remote.size||size>MAX_WORKBOOK_BYTES?Error('OSS文件大小异常'):null,chunk);}}),createWriteStream(join(dir,'input.xlsx'),{mode:0o600}));if(size!==remote.size)throw Error('OSS文件不完整');}
+   let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
   }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
-  finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});}
+  finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});if(r.remote_source){try{const remote=JSON.parse(r.remote_source),c=getStorage();if(c&&storageDestination(c)===remote.destination){const response=await ossRequest(c,remote.key,'DELETE',{}, {},undefined,fetchImpl);await response.body?.cancel();db.prepare("UPDATE supplier_batches SET remote_source='' WHERE id=?").run(r.id);}}catch{console.error('supplier_private_cleanup_pending');}}}
+
  }
  async function tick(){
   if(parsing)return;
@@ -31,6 +39,14 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
  async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
   prune,tick,
+  async enqueueRemote(owner,input){
+   if(input.uploadId){const existing=db.prepare('SELECT * FROM supplier_batches WHERE id=? AND owner=?').get(input.uploadId,owner);if(existing)return view(existing);}
+   await prune();if(db.prepare('SELECT COUNT(*) n FROM supplier_batches WHERE owner=?').get(owner).n>=5)throw Error('最多保留5份货盘预览，请删除旧预览');
+   if(db.prepare('SELECT COUNT(*) n FROM supplier_batches').get().n>=50)throw Error('预览数量已达上限');
+   const remote=JSON.stringify({key:input.key,size:input.size,destination:input.destination}),existing=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND remote_source=?').get(owner,remote);if(existing)return view(existing);
+   const id=input.uploadId||randomUUID(),dir=join(directory,id);await mkdir(dir,{recursive:true,mode:0o700});
+   db.prepare("INSERT INTO supplier_batches(id,owner,supplier,filename,data,created,state,remote_source) VALUES(?,?,?,?,?,?,'queued',?)").run(id,owner,input.supplier,input.filename,JSON.stringify({products:[],assets:[]}),Date.now(),JSON.stringify({key:input.key,size:input.size,destination:input.destination}));audit(owner,'supplier.direct_upload',id);return view(batch(owner,id));
+  },
   async enqueue(owner,input){return this.preview(owner,input,true);},
   async preview(owner,input,background=false){
    await prune();const supplier=String(input.supplier||'').trim(),filename=String(input.filename||'').slice(0,180);

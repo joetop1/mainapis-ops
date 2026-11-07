@@ -657,11 +657,23 @@ $('#supplierImportButton').onclick=async()=>{$('#supplierDialog').showModal();up
 $('#closeSupplier').onclick=()=>$('#supplierDialog').close();
 $('#supplierUploadForm').onsubmit=async e=>{
  e.preventDefault();if(['queued','parsing','processing'].includes(supplierBatch?.state))return;
- const file=$('#supplierFile').files[0];if(!file)return;if(file.size>100*1024*1024)return toast('文件请小于100MB');
- $('#parseSupplier').disabled=true;$('#supplierStatus').textContent='正在上传 0%…';
- try{const batch=await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api/supplier-imports?'+new URLSearchParams({supplier:$('#supplierName').value,filename:file.name}));xhr.setRequestHeader('Content-Type','application/octet-stream');xhr.setRequestHeader('X-CSRF-Token',me.csrf);xhr.timeout=600000;xhr.upload.onprogress=e=>{if(e.lengthComputable)$('#supplierStatus').textContent='正在上传 '+Math.round(e.loaded/e.total*100)+'%…';};xhr.onerror=()=>reject(Error('上传连接中断，请重新打开窗口检查是否已接收'));xhr.ontimeout=()=>reject(Error('上传超时，请检查网络和服务器上传限制'));xhr.onload=()=>{let data;try{data=JSON.parse(xhr.responseText);}catch{return reject(Error('上传失败 HTTP '+xhr.status+'，请检查代理上传大小限制'));}if(xhr.status<200||xhr.status>=300)return reject(Error(data.error||'上传失败'));resolve(data);};xhr.send(file);});supplierRender(batch);
- }catch(e){supplierFeedback(e.message,true);}finally{$('#parseSupplier').disabled=['queued','parsing','processing'].includes(supplierBatch?.state);}
+ const file=$('#supplierFile').files[0];if(!file)return;if(file.size>500*1024*1024)return toast('文件请小于500MB');
+ $('#parseSupplier').disabled=true;let pending;try{pending=JSON.parse(sessionStorage.getItem('ops-supplier-upload')||'null');}catch{}
+ const supplier=$('#supplierName').value,identity=[file.name,file.size,file.lastModified,supplier].join('|');
+ try{
+  if(pending&&pending.identity!==identity)throw Error('还有未完成的上传，请重新选择原文件继续，或点击取消上传');
+  if(!pending){supplierFeedback('正在申请OSS上传授权…');const upload=await api('/api/supplier-imports/uploads','POST',{supplier,filename:file.name,size:file.size});pending={...upload,identity,parts:[]};sessionStorage.setItem('ops-supplier-upload',JSON.stringify(pending));}
+  $('#cancelSupplierUpload').disabled=false;
+  for(let number=pending.parts.length+1;number<=Math.ceil(file.size/pending.partBytes);number++){
+   const start=(number-1)*pending.partBytes,blob=file.slice(start,Math.min(file.size,start+pending.partBytes));let etag;
+   for(let attempt=0;attempt<3;attempt++){try{const signed=await api('/api/supplier-imports/uploads/'+pending.id+'/sign','POST',{part:number});etag=await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',signed.url);for(const [key,value]of Object.entries(signed.headers))xhr.setRequestHeader(key,value);xhr.timeout=180000;xhr.upload.onprogress=e=>supplierFeedback('直传OSS '+Math.floor((start+e.loaded)/file.size*100)+'% · 分片 '+number);xhr.onerror=()=>reject(Error('OSS连接失败，请检查Bucket跨域CORS配置'));xhr.ontimeout=()=>reject(Error('分片上传超时'));xhr.onload=()=>{const tag=xhr.getResponseHeader('ETag');if(xhr.status>=200&&xhr.status<300&&tag)resolve(tag);else reject(Error('OSS分片上传失败 HTTP '+xhr.status+'，请检查CORS是否暴露ETag'));};xhr.send(blob);});break;}catch(error){if(attempt===2)throw error;await new Promise(r=>setTimeout(r,1000*(attempt+1)));}}
+   pending.parts.push({number,etag});sessionStorage.setItem('ops-supplier-upload',JSON.stringify(pending));
+  }
+  supplierFeedback('上传完成，正在核对文件并提交后台解析…');const result=await api('/api/supplier-imports/uploads/'+pending.id+'/complete','POST',{parts:pending.parts});sessionStorage.removeItem('ops-supplier-upload');$('#cancelSupplierUpload').disabled=true;supplierRender(await api('/api/supplier-imports/'+result.id));
+ }catch(error){supplierFeedback(error.message+'；未完成上传可重新选择同一文件后继续。',true);}finally{$('#parseSupplier').disabled=['queued','parsing','processing'].includes(supplierBatch?.state);}
 };
+$('#cancelSupplierUpload').onclick=async()=>{try{const pending=JSON.parse(sessionStorage.getItem('ops-supplier-upload')||'null');if(!pending)return supplierFeedback('没有未完成上传');if($('#parseSupplier').disabled)return supplierFeedback('请等待当前上传结束或报错后再取消',true);await api('/api/supplier-imports/uploads/'+pending.id,'DELETE');sessionStorage.removeItem('ops-supplier-upload');$('#cancelSupplierUpload').disabled=true;supplierFeedback('已取消上传并清理分片');}catch(error){supplierFeedback(error.message,true);}};
+
 function supplierFeedback(message,error=false){const status=$('#supplierStatus');status.textContent=message;status.classList.toggle('is-error',error);}
 function supplierSelectedItems(){
  const cards=[...$('#supplierPreview').querySelectorAll('[data-supplier-index]')].filter(el=>el.querySelector('[data-confirm]').checked);
