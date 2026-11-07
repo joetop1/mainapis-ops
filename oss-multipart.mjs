@@ -7,7 +7,7 @@ export const PART_BYTES=8*1024*1024,MAX_WORKBOOK_BYTES=500*1024*1024;
 export function ossSignedURL(c,key,method,query={},headers={},date=new Date()){
  const stamp=date.toISOString().replace(/[-:]|\.\d{3}/g,''),day=stamp.slice(0,8),scope=day+'/'+c.region+'/oss/aliyun_v4_request';
  const q={...query,'x-oss-date':stamp,'x-oss-expires':'900','x-oss-signature-version':'OSS4-HMAC-SHA256','x-oss-credential':c.accessKeyId+'/'+scope};
- const canonicalQuery=Object.entries(q).map(([k,v])=>[enc(k),enc(String(v))]).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>k+'='+v).join('&');
+ const canonicalQuery=Object.entries(q).map(([k,v])=>[enc(k),enc(String(v))]).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>v?k+'='+v:k).join('&');
  const canonicalHeaders=Object.entries(headers).sort(([a],[b])=>a<b?-1:1).map(([k,v])=>k.toLowerCase()+':'+v.trim()+'\n').join('');
  const request=method+'\n/'+c.bucket+'/'+key.split('/').map(enc).join('/')+'\n'+canonicalQuery+'\n'+canonicalHeaders+'\n\nUNSIGNED-PAYLOAD';
  const signing=hmac(hmac(hmac(hmac('aliyun_v4'+c.accessKeySecret,day),c.region),'oss'),'aliyun_v4_request');
@@ -15,7 +15,13 @@ export function ossSignedURL(c,key,method,query={},headers={},date=new Date()){
 }
 export async function ossRequest(c,key,method,query={},headers={},body,fetchImpl=fetch){
  const r=await fetchImpl(ossSignedURL(c,key,method,query,headers),{method,headers,body,dispatcher:mallDispatcher,redirect:'error',signal:AbortSignal.timeout(120000)});
- if(!r.ok){await r.body?.cancel();throw Error('OSS操作失败 HTTP '+r.status+'，请检查存储权限及跨域配置');}return r;
+ if(!r.ok){
+  let xml='';if(r.body){const reader=r.body.getReader();try{let size=0;while(size<16384){const part=await reader.read();if(part.done)break;size+=part.value.length;xml+=Buffer.from(part.value).toString('utf8');}}finally{await reader.cancel().catch(()=>{});}}
+  const code=xml.match(/<Code>([A-Za-z0-9_-]{1,100})<\/Code>/)?.[1]||'Unknown',requestId=(r.headers.get('x-oss-request-id')||xml.match(/<RequestId>([A-Za-z0-9_-]{1,100})<\/RequestId>/)?.[1]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,100);
+  const operation=query.uploads!==undefined?'初始化分片':query.uploadId&&method==='POST'?'合并分片':query.uploadId&&method==='DELETE'?'取消分片':query.acl!==undefined?'读取私有权限':method==='HEAD'?'核对文件':method==='GET'?'读取货盘':method==='DELETE'?'删除临时货盘':'请求';
+  const hints={AccessDenied:'请检查RAM或Bucket策略是否允许ops-private/workbooks/*路径的相应操作',SignatureDoesNotMatch:'OSS签名不匹配，请反馈此错误码以核对签名实现',InvalidAccessKeyId:'请检查OPS保存的AccessKey ID',RequestTimeTooSkewed:'请校准OPS服务器时间',RequestHasExpired:'授权已过期，请重试',KmsServiceNotEnabled:'请检查Bucket的KMS加密配置'};
+  throw Object.assign(Error('OSS'+operation+'失败 HTTP '+r.status+' · '+code+'；'+(hints[code]||'请检查存储权限、地域及Bucket策略')+(requestId?'；RequestId '+requestId:'')),{ossCode:code,ossStatus:r.status});
+ }return r;
 }
 export function workbookUploads({db,getStorage,allowedStorage,enqueueRemote,fetchImpl=fetch}){
  db.exec("CREATE TABLE IF NOT EXISTS supplier_uploads(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,size INTEGER NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL DEFAULT '',destination TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'uploading',batch_id TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL)");

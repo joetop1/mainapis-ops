@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {workbookUploads,ossSignedURL,PART_BYTES,MAX_WORKBOOK_BYTES} from '../oss-multipart.mjs';
+import {workbookUploads,ossSignedURL,ossRequest,PART_BYTES,MAX_WORKBOOK_BYTES} from '../oss-multipart.mjs';
 const c={enabled:true,bucket:'examplebucket',region:'cn-hongkong',publicOrigin:'https://img.example.com',accessKeyId:'exampleAccessKey',accessKeySecret:'exampleSecret1234567890'};
 test('OSS分片URL限于对象、编号、有效期与请求方法，不泄露Secret',()=>{
  const now=new Date('2026-11-07T01:02:03Z'),headers={'content-type':'application/octet-stream'};
@@ -31,4 +31,18 @@ test('私有分片上传隔离、合并响应丢失重试、完整性与单次�
   assert.throws(()=>service.sign('alice',upload.id,1),/状态|结束/);
   const second=await service.create('alice',{supplier:'供应商',filename:'x.xlsx',size});await service.cancel('alice',second.id);assert.equal(calls.at(-1).method,'DELETE');
  }finally{db.close();}
+});
+
+test('后台OSS错误显示安全错误码与阶段，不泄露签名响应内容',async()=>{
+ await assert.rejects(ossRequest(c,'ops-private/workbooks/file.xlsx','POST',{uploads:''},{},undefined,async()=>new Response('<Error><Code>AccessDenied</Code><RequestId>TEST123</RequestId><StringToSign>PRIVATE-SIGNING-DETAIL</StringToSign></Error>',{status:403})),error=>error.message.includes('初始化分片')&&error.message.includes('AccessDenied')&&error.message.includes('TEST123')&&!error.message.includes('PRIVATE-SIGNING-DETAIL'));
+});
+
+test('OSS V4空值子资源签名按官方SDK规则省略等号',()=>{
+ // Canonical query rule: aliyun/alibabacloud-oss-python-sdk-v2 signer/v4.py,
+ // _calc_canonical_request omits '=' when a query value is empty.
+ // Fixed digest independently reproduced with Python hashlib/hmac.
+ const url=ossSignedURL(c,'ops-private/workbooks/test.xlsx','POST',{uploads:''},{'x-oss-object-acl':'private'},new Date('2026-11-07T01:02:03Z'));
+ assert.match(url,/\?uploads&/);assert.doesNotMatch(url,/uploads=/);
+ assert.equal(new URL(url).searchParams.get('x-oss-signature'),'507ad14aae285c67640f3f84f96c69d944f1ed92d99d1fbfa55096ae2e6fad4e');
+ const acl=ossSignedURL(c,'ops-private/workbooks/test.xlsx','GET',{acl:''},{},new Date('2026-11-07T01:02:03Z'));assert.match(acl,/\?acl&/);
 });
