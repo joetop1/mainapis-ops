@@ -68,3 +68,5 @@
 .style-source-toggle{display:flex;align-items:center;gap:6px;margin:0;font-size:11px}.style-source-toggle>input{width:auto;margin:0}
 
 .merge-status{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;align-items:center}.badge.merge-source{background:#fdf0dc;color:#936021}.badge.merge-result{background:#e4f0eb;color:#285947}.merge-result-link{max-width:260px;white-space:normal;text-align:left;font-size:11px;padding:2px 4px;overflow-wrap:anywhere}
+
+.action-dialog{position:fixed;inset:0;margin:auto;max-width:520px;max-height:90vh}.action-dialog #actionMessage{white-space:pre-wrap;line-height:1.8;margin-bottom:20px}.action-dialog footer{justify-content:flex-end;gap:12px}#toast{inset:50% auto auto 50%;top:50%;bottom:auto;left:50%;margin:0;transform:translate(-50%,-50%);max-width:min(520px,90vw);max-height:70vh;overflow:auto;white-space:pre-wrap;border:0;line-height:1.7;z-index:9999}#toast.is-error{background:#853c2b}#toast::backdrop{background:transparent}
