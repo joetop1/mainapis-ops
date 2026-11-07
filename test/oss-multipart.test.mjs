@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {workbookUploads,ossSignedURL,ossRequest,PART_BYTES,MAX_WORKBOOK_BYTES} from '../oss-multipart.mjs';
+import {workbookUploads,ossBrowserOrigin,ossSignedURL,ossRequest,PART_BYTES,MAX_WORKBOOK_BYTES} from '../oss-multipart.mjs';
 const c={enabled:true,bucket:'examplebucket',region:'cn-hongkong',publicOrigin:'https://img.example.com',accessKeyId:'exampleAccessKey',accessKeySecret:'exampleSecret1234567890'};
 test('OSS分片URL限于对象、编号、有效期与请求方法，不泄露Secret',()=>{
  const now=new Date('2026-11-07T01:02:03Z'),headers={'content-type':'application/octet-stream'};
@@ -45,4 +45,10 @@ test('OSS V4空值子资源签名按官方SDK规则省略等号',()=>{
  assert.match(url,/\?uploads&/);assert.doesNotMatch(url,/uploads=/);
  assert.equal(new URL(url).searchParams.get('x-oss-signature'),'507ad14aae285c67640f3f84f96c69d944f1ed92d99d1fbfa55096ae2e6fad4e');
  const acl=ossSignedURL(c,'ops-private/workbooks/test.xlsx','GET',{acl:''},{},new Date('2026-11-07T01:02:03Z'));assert.match(acl,/\?acl&/);
+});
+
+test('页面只放行已启用且有效的OSS桶域名，阻止CSP注入',()=>{
+ assert.equal(ossBrowserOrigin(c),'https://examplebucket.oss-cn-hongkong.aliyuncs.com');
+ assert.equal(ossBrowserOrigin({...c,enabled:false}),'');assert.equal(ossBrowserOrigin(null),'');
+ assert.equal(ossBrowserOrigin({...c,bucket:"evil; connect-src *"}),'');assert.equal(ossBrowserOrigin({...c,region:"cn-hongkong; script-src *"}),'');
 });

@@ -1,4 +1,4 @@
-import {workbookUploads} from './oss-multipart.mjs';
+import {workbookUploads,ossBrowserOrigin} from './oss-multipart.mjs';
 import {taskQueue,queueWorker} from './task-queue.mjs';
 import {operations,readiness} from './operations.mjs';
 import {productMergeUsage} from './product-merge-status.mjs';
@@ -239,7 +239,7 @@ if(!isWorker)db.prepare("UPDATE jobs SET status='unknown',message='服务重启�
 setInterval(()=>db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()),60000).unref();
 const handleRequest=async(req,res)=>{
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: blob:; connect-src 'self' "+ossBrowserOrigin(images.get())+"; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try {
     const path=new URL(req.url,'http://localhost').pathname;
     if(req.method==='GET'&&path==='/api/system-info')return json(res,200,branding.read());

@@ -3,6 +3,7 @@ import {mallDispatcher} from './mall-address.mjs';
 import {storageDestination} from './image-storage.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex'),hmac=(k,v)=>createHmac('sha256',k).update(v).digest();
 const enc=x=>encodeURIComponent(x).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase());
+export function ossBrowserOrigin(c){return c?.enabled&&/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(c.bucket||'')&&/^[a-z]{2}-[a-z0-9-]{2,40}$/.test(c.region||'')?'https://'+c.bucket+'.oss-'+c.region+'.aliyuncs.com':'';}
 export const PART_BYTES=8*1024*1024,MAX_WORKBOOK_BYTES=500*1024*1024;
 export function ossSignedURL(c,key,method,query={},headers={},date=new Date()){
  const stamp=date.toISOString().replace(/[-:]|\.\d{3}/g,''),day=stamp.slice(0,8),scope=day+'/'+c.region+'/oss/aliyun_v4_request';
