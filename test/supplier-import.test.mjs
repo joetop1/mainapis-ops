@@ -61,3 +61,15 @@ test('导入允许减少和新增SKU，条码跟随行保留，重复编码拦�
   service.start('alice',b.id,{items:result.plan});result=await wait(service,'alice',b.id);assert.equal(result.state,'done');assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,2);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('后台货盘队列持久保存、跨实例解析、状态隔离及失败可见',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-queue-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'test.xlsx');createFixture(path);
+ const options={db,dataDir:dir,root,getStorage:()=>config,allowedStorage:()=>true,recordCollector(){},audit(){},python};
+ try{
+  const api=supplierImports(options),b=await api.enqueue('alice',{supplier:'后台供应商',filename:'报价.xlsx',bytes:await readFile(path)});
+  assert.equal(b.state,'queued');assert.deepEqual(b.products,[]);assert.throws(()=>api.get('bob',b.id),/不属于/);assert.throws(()=>api.start('alice',b.id,{items:[]}),/解析完成/);
+  const worker=supplierImports(options);await worker.tick();const ready=api.get('alice',b.id);assert.equal(ready.state,'ready');assert.equal(ready.products.length,2);
+  const broken=await api.enqueue('alice',{supplier:'损坏文件',filename:'坏.xlsx',bytes:Buffer.from('504b03040000','hex')});await worker.tick();assert.equal(api.get('alice',broken.id).state,'parse_failed');assert.ok(api.get('alice',broken.id).error);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);
+  const interrupted=await api.enqueue('alice',{supplier:'中断',filename:'旧.xlsx',bytes:await readFile(path)});db.prepare("UPDATE supplier_batches SET state='parsing',parse_started=1 WHERE id=?").run(interrupted.id);await worker.tick();assert.match(api.get('alice',interrupted.id).error,/中断/);
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});

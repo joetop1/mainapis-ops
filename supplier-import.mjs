@@ -10,29 +10,45 @@ const execute=promisify(execFile),hash=v=>createHash('sha256').update(v).digest(
 export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
  const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
+ for(const [name,type] of [['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
+ async function parseBatch(r){
+  const dir=join(directory,r.id);parsing++;
+  try{let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
+   const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+   db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
+  }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
+  finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});}
+ }
+ async function tick(){
+  if(parsing)return;
+  db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error='解析进程中断，请删除此预览后重新上传' WHERE state='parsing' AND parse_started<?").run(Date.now()-300000);
+  const r=db.prepare("SELECT * FROM supplier_batches WHERE state='queued' ORDER BY created LIMIT 1").get();if(!r)return;
+  if(!db.prepare("UPDATE supplier_batches SET state='parsing',parse_started=? WHERE id=? AND state='queued'").run(Date.now(),r.id).changes)return;
+  await parseBatch(r);
+ }
  function batch(owner,id){const r=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('货盘预览不存在或不属于当前空间');return r;}
- function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,products:d.products,assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
- async function prune(){for(const r of db.prepare('SELECT id FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id))continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
+ function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products,assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
+ async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
-  prune,
-  async preview(owner,input){
+  prune,tick,
+  async enqueue(owner,input){return this.preview(owner,input,true);},
+  async preview(owner,input,background=false){
    await prune();const supplier=String(input.supplier||'').trim(),filename=String(input.filename||'').slice(0,180);
    if(!supplier||supplier.length>100||!filename.toLowerCase().endsWith('.xlsx'))throw Error('请填写供应商并选择xlsx文件');
-   if(typeof input.data!=='string'||input.data.length>48*1024*1024||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data))throw Error('文件数据无效或超过35MB');
-   const bytes=Buffer.from(input.data,'base64');if(bytes.length>35*1024*1024||bytes.subarray(0,4).toString('hex')!=='504b0304')throw Error('请选择不超过35MB的xlsx文件');
+   if(!Buffer.isBuffer(input.bytes)&&(typeof input.data!=='string'||input.data.length>140*1024*1024||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)))throw Error('文件数据无效或超过100MB');
+   const bytes=Buffer.isBuffer(input.bytes)?input.bytes:Buffer.from(input.data,'base64');if(bytes.length>100*1024*1024||bytes.subarray(0,4).toString('hex')!=='504b0304')throw Error('请选择不超过100MB的xlsx文件');
    if(parsing>=2||db.prepare('SELECT COUNT(*) n FROM supplier_batches').get().n>=50)throw Error('货盘预览繁忙，请稍后重试或删除旧预览');
    if(db.prepare('SELECT COUNT(*) n FROM supplier_batches WHERE owner=?').get(owner).n>=5)throw Error('最多保留5份货盘预览，请删除旧预览或等待24小时过期');
    const id=randomUUID(),dir=join(directory,id);await mkdir(dir,{recursive:true,mode:0o700});await writeFile(join(dir,'input.xlsx'),bytes,{mode:0o600});
-   parsing++;try{let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:25000,maxBuffer:2*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败，请确认文件完整、无密码且为支持的报价单版式');}
-    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets){imageType(await readFile(join(dir,a.file)));}
-    db.prepare('INSERT INTO supplier_batches(id,owner,supplier,filename,data,created) VALUES(?,?,?,?,?,?)').run(id,owner,supplier,filename,JSON.stringify(data),Date.now());audit(owner,'supplier.preview',id);return view(batch(owner,id));
-   }catch(e){await rm(dir,{recursive:true,force:true});throw e;}finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});}
+   db.prepare('INSERT INTO supplier_batches(id,owner,supplier,filename,data,created,state,parse_started) VALUES(?,?,?,?,?,?,?,?)').run(id,owner,supplier,filename,JSON.stringify({products:[],assets:[]}),Date.now(),background?'queued':'parsing',background?0:Date.now());audit(owner,'supplier.preview',id);
+   if(!background)await parseBatch(batch(owner,id));
+   const result=view(batch(owner,id));if(!background&&result.state==='parse_failed')throw Error(result.error);return result;
   },
   get(owner,id){return view(batch(owner,id));},
   async asset(owner,id,asset){const r=batch(owner,id),a=JSON.parse(r.data).assets.find(a=>a.id===asset);if(!a)throw Error('图片不存在');const bytes=await readFile(join(directory,id,a.file));return {bytes,...imageType(bytes)};},
-  async remove(owner,id){batch(owner,id);if(active.has(id))throw Error('正在导入，不能删除');await rm(join(directory,id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(id);return {ok:true};},
+  async remove(owner,id){batch(owner,id);if(active.has(id)||batch(owner,id).state==='parsing')throw Error('正在处理，不能删除');await rm(join(directory,id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(id);return {ok:true};},
   start(owner,id,input){
-   const r=batch(owner,id);if(active.has(id))return view(r);if(active.size>=2)throw Error('已有2个货盘正在导入，请稍后重试');const data=JSON.parse(r.data),c=getStorage();if(!c?.enabled||!allowedStorage(owner,c))throw Error('请先启用共享OSS，并将当前空间至少一个商城域名加入允许列表');
+   const r=batch(owner,id);if(!['ready','partial','done','processing'].includes(r.state))throw Error('请等待解析完成后再导入');if(active.has(id))return view(r);if(active.size>=2)throw Error('已有2个货盘正在导入，请稍后重试');const data=JSON.parse(r.data),c=getStorage();if(!c?.enabled||!allowedStorage(owner,c))throw Error('请先启用共享OSS，并将当前空间至少一个商城域名加入允许列表');
    if(!Array.isArray(input.items)||!input.items.length||input.items.length>100)throw Error('请选择1至100件商品');
    const keys=new Set();const items=input.items.map(item=>{
     const original=data.products.find(p=>p.key===item.key);if(!original||keys.has(item.key)||item.confirmed!==true)throw Error('请逐件确认商品及规格对应关系');keys.add(item.key);

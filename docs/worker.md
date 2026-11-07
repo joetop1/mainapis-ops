@@ -7,7 +7,7 @@ Compose服务：
 - `goods-ops`：登录、页面、商品编辑、审核、持久队列提交、结果回调、备份及现有通知轮询。
 - `worker`：消费发布和商品ID核对队列，执行现有商城适配器或派发到旧n8n工作流。图片转存随发布任务在此执行。
 
-两者使用同一个**主机本地**数据卷`goods_ops_data`和SQLite WAL。没有新增Redis、外部数据库或公开Worker端口。当前只有一个有效执行者，其他Worker等待租约；直连任务串行处理，n8n内部任务的并发仍由n8n管理。供应商货盘预览/导入、通知轮询及备份调度未在本阶段迁入发布Worker。
+两者使用同一个**主机本地**数据卷`goods_ops_data`和SQLite WAL。没有新增Redis、外部数据库或公开Worker端口。当前只有一个有效执行者，其他Worker等待租约；直连任务串行处理，n8n内部任务的并发仍由n8n管理。0.13.1起货盘解析也在Worker中单独串行执行；确认导入、通知轮询及备份调度仍在网页服务。
 
 Compose为两者设置`OPS_DURABLE_QUEUE=true`。直接用Node运行时须为网页服务和Worker都设置此变量，分别运行`node server.mjs`与`node worker.mjs`。不设置时网页保留单进程兼容模式；不要在有待执行任务时随意切换模式。演示模式不执行商城任务，Worker空闲待命。
 
