@@ -10,11 +10,12 @@ test('OSS分片URL限于对象、编号、有效期与请求方法，不泄露Se
  assert.notEqual(url,ossSignedURL(c,'ops-private/workbooks/alice/file.xlsx','PUT',{partNumber:'2',uploadId:'abc'},headers,now));assert.notEqual(url,ossSignedURL(c,'ops-private/workbooks/alice/file.xlsx','GET',{partNumber:'1',uploadId:'abc'},headers,now));
 });
 test('私有分片上传隔离、合并响应丢失重试、完整性与单次入队',async()=>{
- const db=new DatabaseSync(':memory:');let exists=false,acl='private',size=PART_BYTES+1,enqueues=0,completes=0,allowed=true;const calls=[];
+ const db=new DatabaseSync(':memory:');let exists=false,acl='private',size=PART_BYTES+1,enqueues=0,completes=0,allowed=true,repairWorks=false;const calls=[];
  const fetchImpl=async(url,options)=>{const u=new URL(url);calls.push({u,...options});
-  if(options.method==='POST'&&u.searchParams.has('uploads')){assert.equal(options.headers['x-oss-object-acl'],'private');return new Response('<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>');}
+  if(options.method==='POST'&&u.searchParams.has('uploads')){return new Response('<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>');}
   if(options.method==='HEAD')return new Response(null,{status:exists?200:404,headers:{'content-length':String(size)}});
-  if(options.method==='POST'){completes++;exists=true;return new Response('<CompleteMultipartUploadResult/>');}
+  if(options.method==='PUT'&&u.searchParams.has('acl')){assert.equal(options.headers['x-oss-object-acl'],'private');if(repairWorks)acl='private';return new Response(null,{status:200});}
+  if(options.method==='POST'){assert.equal(options.headers['x-oss-object-acl'],'private');completes++;exists=true;return new Response('<CompleteMultipartUploadResult/>');}
   if(options.method==='GET')return new Response('<AccessControlPolicy><AccessControlList><Grant>'+acl+'</Grant></AccessControlList></AccessControlPolicy>');
   return new Response(null,{status:204});
  };
@@ -27,7 +28,7 @@ test('私有分片上传隔离、合并响应丢失重试、完整性与单次�
   const parts=[{number:1,etag:'"'+'a'.repeat(32)+'"'},{number:2,etag:'b'.repeat(32)}];
   await assert.rejects(service.complete('alice',upload.id,{parts:parts.slice(0,1)}),/不完整/);
   acl='public-read';await assert.rejects(service.complete('alice',upload.id,{parts}),/私有/);assert.equal(enqueues,0);assert.equal(completes,1);
-  acl='private';assert.deepEqual(await service.complete('alice',upload.id,{parts}),{id:'batch'});assert.equal(completes,1);assert.equal(enqueues,1);await service.complete('alice',upload.id,{parts});assert.equal(enqueues,1);
+  repairWorks=true;assert.deepEqual(await service.complete('alice',upload.id,{parts}),{id:'batch'});assert.equal(completes,1);assert.equal(enqueues,1);await service.complete('alice',upload.id,{parts});assert.equal(enqueues,1);
   assert.throws(()=>service.sign('alice',upload.id,1),/状态|结束/);
   const second=await service.create('alice',{supplier:'供应商',filename:'x.xlsx',size});await service.cancel('alice',second.id);assert.equal(calls.at(-1).method,'DELETE');
  }finally{db.close();}
