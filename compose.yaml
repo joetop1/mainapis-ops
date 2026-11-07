@@ -3,6 +3,9 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      OPS_DURABLE_QUEUE: "true"
+      OPS_WORKER_PAUSED: ${OPS_WORKER_PAUSED:-false}
     ports:
       - "127.0.0.1:3080:3080"
     volumes:
@@ -11,6 +14,26 @@ services:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3080/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
+      retries: 3
+  worker:
+    build: .
+    command: ["node", "worker.mjs"]
+    restart: unless-stopped
+    stop_grace_period: 45s
+    env_file: .env
+    environment:
+      OPS_DURABLE_QUEUE: "true"
+      OPS_WORKER_PAUSED: ${OPS_WORKER_PAUSED:-false}
+    volumes:
+      - goods_ops_data:/app/data
+    depends_on:
+      goods-ops:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "worker.mjs", "--check"]
+      interval: 15s
+      timeout: 5s
+      start_period: 130s
       retries: 3
 volumes:
   goods_ops_data:
