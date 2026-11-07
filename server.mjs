@@ -1,3 +1,4 @@
+import {operations,readiness} from './operations.mjs';
 import {productMergeUsage} from './product-merge-status.mjs';
 import {localImageUploader,repairSavedImageUrls} from './local-image-upload.mjs';
 import {bulkProductSettings} from './bulk-settings.mjs';
@@ -107,6 +108,7 @@ const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','c
 const malls=mallConnections(db,mallProfiles);
 const uploadLocalImage=localImageUploader({getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}})});
 const supplierImport=supplierImports({db,dataDir,root,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
+const ops=await operations({db,dataDir,root,enabled:!demo&&process.env.OPS_AUTO_BACKUP!=='false',intervalHours:Number(process.env.OPS_BACKUP_INTERVAL_HOURS||24),keep:Number(process.env.OPS_BACKUP_KEEP||14)});let operationsTimer;
 const supplierPruneTimer=setInterval(()=>supplierImport.prune().catch(()=>{}),3600000);supplierPruneTimer.unref();
 // Idempotent migration of persisted owners before any task can resume.
 for(const row of db.prepare("SELECT owner FROM products UNION SELECT owner FROM jobs UNION SELECT owner FROM connections UNION SELECT owner FROM connections_yunzhong UNION SELECT owner FROM connections_crmeb_pro UNION SELECT owner FROM connections_crmeb_store UNION SELECT owner FROM connections_shopxo UNION SELECT owner FROM connection_profiles").all())malls.ensure(row.owner);
@@ -237,7 +239,8 @@ const handleRequest=async(req,res)=>{
     if(req.method==='GET'&&path==='/api/system-info')return json(res,200,branding.read());
     if(req.method==='GET'&&(path==='/favicon.ico'||path==='/default-icon.svg'||/^\/api\/system-assets\/(icon|logo)$/.test(path))){const slot=path.endsWith('logo')?'logo':'icon',saved=path==='/default-icon.svg'?null:branding.asset(slot);if(!saved&&slot==='logo')return json(res,404,{error:'未设置Logo'});res.writeHead(200,{'Content-Type':saved?.mime||'image/svg+xml','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"});return res.end(saved?Buffer.from(saved.bytes):DEFAULT_ICON);}
     if(path==='/healthz')return json(res,200,{ok:true});
-    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/bulk-settings.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString(),branding.read()):data);}
+    if(path==='/readyz'){const health=await readiness(db,dataDir);return json(res,health.ok?200:503,{ok:health.ok,reason:health.reason});}
+    if(req.method==='GET' && ['/','/app.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/operations.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/bulk-settings.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString(),branding.read()):data);}
     const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
     if(nativeNotice){
       if(demo||req.method!=='POST')return json(res,403,{errcode:1});
@@ -331,6 +334,7 @@ const handleRequest=async(req,res)=>{
       if(req.method==='GET'&&path==='/api/image-storage')return json(res,200,images.view());
       if(req.method==='POST'){if(demo)throw Error('演示模式不操作存储');const input=await body(req);const result=path.endsWith('/test')?await images.test(input):images.save(input);audit(s.user.sub,path.endsWith('/test')?'image_storage.test':'image_storage.save','global');return json(res,200,result);}
     }
+    if(path==='/api/operations'||path==='/api/operations/backup'){if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可以查看运行状态和执行备份'});if(path==='/api/operations'&&req.method==='GET')return json(res,200,await ops.status());if(path.endsWith('/backup')&&req.method==='POST'){if(demo)throw Error('演示模式不执行备份');return json(res,202,{started:ops.start()});}return json(res,405,{error:'请求方式不支持'});}
     if(path==='/api/system-settings'){
       if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅指定的系统管理员可管理全站基本信息'});
       if(req.method==='GET')return json(res,200,branding.read());
@@ -610,8 +614,8 @@ const handleRequest=async(req,res)=>{
   } catch(e){console.error('request_failed',e.name);return json(res,400,{error:e instanceof SyntaxError?'数据格式错误':e.message||'请求失败'});}
 };
 export const handler=(req,res)=>actorContext.run({actor:''},()=>handleRequest(req,res));
-export const closeStore=()=>{clearInterval(notificationTimer);clearInterval(supplierPruneTimer);notifications.stop();nativeRelay.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
+export const closeStore=()=>{clearInterval(notificationTimer);clearInterval(supplierPruneTimer);clearInterval(operationsTimer);ops.stop();notifications.stop();nativeRelay.stop();refundPoll.stop();tigshopNoticePoll.stop();db.close();};
 const server=http.createServer(handler);
 server.requestTimeout=30000;server.headersTimeout=10000;
-if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){notificationTimer=setInterval(()=>{nativeRelay.tick().catch(()=>console.error('native_notification_read_failed'));notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));tigshopNoticePoll.tick().catch(()=>console.error('tigshop_notification_poll_failed'));},4000);notificationTimer.unref();}
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)){ops.tick();operationsTimer=setInterval(()=>ops.tick(),60000);operationsTimer.unref();notificationTimer=setInterval(()=>{nativeRelay.tick().catch(()=>console.error('native_notification_read_failed'));notifications.tick().catch(()=>console.error('notification_worker_failed'));refundPoll.tick().catch(()=>console.error('refund_poll_failed'));tigshopNoticePoll.tick().catch(()=>console.error('tigshop_notification_poll_failed'));},4000);notificationTimer.unref();}
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Goods Ops listening on ${host}:${process.env.PORT||3080}${demo?' [LOCAL DEMO]':''}`));

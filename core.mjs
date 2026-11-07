@@ -80,7 +80,7 @@ export function openStore(path) {
   const existed=path!==':memory:'&&existsSync(path),db=new DatabaseSync(path);
   const jobTable=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get();
   if(existed&&jobTable&&!db.prepare('PRAGMA table_info(jobs)').all().some(row=>row.name==='mall_connection_id')){const backup=path+'.pre-mall-connections-'+Date.now()+'.sqlite';db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600);}
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+  db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
   CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY, owner TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(owner,source));
   CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, owner TEXT NOT NULL, product_id TEXT NOT NULL REFERENCES products(id), revision INTEGER NOT NULL, target TEXT NOT NULL, status TEXT NOT NULL, token TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS job_snapshots(job_id TEXT PRIMARY KEY REFERENCES jobs(id), product TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0, candidate_id TEXT NOT NULL DEFAULT '', verification_nonce TEXT NOT NULL DEFAULT '');
