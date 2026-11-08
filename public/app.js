@@ -123,7 +123,7 @@ for(const form of document.querySelectorAll('[data-mall-profile]'))form.onsubmit
  event.preventDefault();const button=form.querySelector('button'),status=form.querySelector('[data-profile-status]');button.disabled=true;
  try{await api('/api/connections/'+form.dataset.mallProfile+'/profile','POST',{name:form.elements.mall_name.value,badge:form.elements.mall_badge.value});await load();status.textContent='商城名称与标识已保存';}catch(error){status.textContent=error.message;}finally{button.disabled=false;}
 };
-function renderStats(){for(const card of dashboardCards(page,state,jobView)){$('#'+card.id).textContent=card.value;$('#'+card.id+'Label').textContent=card.label;$('#'+card.id+'Hint').textContent=card.hint;}}
+function renderStats(){document.querySelector('.stats').classList.toggle('hidden',!['products','jobs'].includes(page));for(const card of dashboardCards(page,state,jobView)){$('#'+card.id).textContent=card.value;$('#'+card.id+'Label').textContent=card.label;$('#'+card.id+'Hint').textContent=card.hint;}}
 function render(){
  for(const id of mergeSelected)if(!state.products.some(p=>p.id===id))mergeSelected.delete(id);updateMergeSelection();
  const role=state.team?.role||'admin';

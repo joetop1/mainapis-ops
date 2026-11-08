@@ -11,7 +11,7 @@ export function inspectTasks(db,now=Date.now()){
 }
 export async function readiness(db,dataDir){
  try{db.prepare('SELECT 1 FROM products LIMIT 1').get();}catch{return {ok:false,reason:'database_unavailable'};}
- try{await access(dataDir,constants.W_OK);if((await stat(join(dataDir,'connections.key'))).size!==32)return {ok:false,reason:'connection_key_invalid'};const fs=await statfs(dataDir),freeBytes=fs.bavail*fs.bsize;return {ok:freeBytes>=200*1024*1024,reason:freeBytes>=200*1024*1024?'ready':'disk_low',freeBytes};}catch{return {ok:false,reason:'storage_unavailable'};}
+ try{await access(dataDir,constants.W_OK);if((await stat(join(dataDir,'connections.key'))).size!==32)return {ok:false,reason:'connection_key_invalid'};const fs=await statfs(dataDir),freeBytes=fs.bavail*fs.bsize,totalBytes=fs.blocks*fs.bsize;return {ok:freeBytes>=200*1024*1024,reason:freeBytes>=200*1024*1024?'ready':'disk_low',freeBytes,totalBytes};}catch{return {ok:false,reason:'storage_unavailable'};}
 }
 export async function operations({db,dataDir,root,enabled=true,intervalHours=24,keep=14,workerEnabled=false,workerPaused=false,runBackup,runOffsite,alertService,clock=()=>Date.now()}){
  if(!Number.isFinite(intervalHours)||intervalHours<1||intervalHours>168||!Number.isSafeInteger(keep)||keep<1||keep>90)throw Error('备份周期或保留数量无效');
