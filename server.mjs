@@ -280,7 +280,8 @@ const handleRequest=async(req,res)=>{
       const meta=await discovery();
       const tokens=await remoteJSON(meta.token_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',client_id:client,client_secret:clientSecret,code:q.get('code'),redirect_uri:origin+'/auth/callback',code_verifier:pending.verifier})});
       const claims=verifyIdToken(tokens.id_token,await remoteJSON(meta.jwks_uri),{issuer,audience:client,nonce:pending.nonce});
-      if(users.blocked(claims.sub)||(teams.member(claims.sub)&&!teams.member(claims.sub).active)||(!allowed.includes(claims.sub)&&!teams.context(claims.sub)&&!users.granted(claims.sub)))return json(res,403,{error:'账号未获OPS访问权限或已停用，请联系系统管理员'});
+      if(users.blocked(claims.sub)||(teams.member(claims.sub)&&!teams.member(claims.sub).active))return json(res,403,{error:'账号已停用，请联系系统管理员'});
+      if(!allowed.includes(claims.sub)&&!teams.context(claims.sub)&&!users.granted(claims.sub)){users.request(claims.sub,claims.name||claims.preferred_username||claims.sub);return redirect(res,'/?access=pending');}
       users.seen(claims.sub,claims.name||claims.preferred_username||claims.sub);
       sessionSet(res,{user:{sub:claims.sub,name:claims.name||claims.preferred_username||claims.sub},csrf:secret()});audit(claims.sub,'login','');return redirect(res,'/');
     }
@@ -341,7 +342,7 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/api/users'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理OPS用户'});
-      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1));}
+      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1,q.get('filter')||'all'));}
       if(req.method==='POST')return json(res,200,users.update(s.user.sub,await body(req)));
       return json(res,405,{error:'请求方式不支持'});
     }

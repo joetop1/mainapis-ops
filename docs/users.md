@@ -1,19 +1,54 @@
-# OPS用户管理（0.15.0）
+import test from 'node:test';
+import {generateKeyPairSync,sign} from 'node:crypto';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Readable} from 'node:stream';
+import {openStore} from '../core.mjs';
+import {teamStore} from '../teams.mjs';
+import {userDirectory} from '../users.mjs';
+test('用户访问授权、停用立即撤销会话、管理员与团队最后管理员保护、审计分页',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-users-')),db=openStore(join(dir,'test.sqlite'));teamStore(db);
+ db.prepare("INSERT INTO teams VALUES('team','测试团队','admin','now')").run();db.prepare("INSERT INTO team_members VALUES('member','team','admin',1)").run();db.prepare('INSERT INTO sessions VALUES(?,?,?)').run('session',JSON.stringify({user:{sub:'member',name:'成员'}}),Date.now()+10000);
+ const users=userDirectory({db,allowed:['admin'],isSystemAdmin:s=>s==='admin'});
+ try{
+  users.request('pending','申请人');users.request('pending','申请人');assert.equal(users.list('',1,'pending').total,1);assert.equal(users.detail('pending').events.length,1);assert.equal(users.detail('pending').user.access,'pending');assert.equal(users.detail('pending').user.last_login,'');users.update('admin',{sub:'pending',action:'disable'});users.request('pending','再次申请');assert.equal(users.blocked('pending'),true);assert.equal(users.list('',1,'pending').total,0);
+  assert.equal(users.granted('stranger'),false);users.seen('seen','姓名');assert.equal(users.granted('seen'),false);
+  users.update('admin',{sub:'member',action:'disable'});assert.equal(users.blocked('member'),true);assert.equal(db.prepare('SELECT COUNT(*) n FROM sessions').get().n,0);
+  assert.throws(()=>users.update('admin',{sub:'admin',action:'disable'}),/不能停用/);
+  users.update('admin',{sub:'member',action:'enable'});assert.equal(users.granted('member'),true);assert.equal(users.blocked('member'),false);
+  const detail=users.detail('member');assert.deepEqual(detail.user.sources,['OPS管理员授权','团队成员']);assert.equal(detail.user.sessions,0);assert.equal(detail.events[0].actor,'admin');assert.equal(detail.events[0].action,'enable');assert.equal(detail.user.access,'enabled');assert.throws(()=>users.detail('missing'),/不存在/);
+  db.prepare('INSERT INTO sessions VALUES(?,?,?)').run('sensitive-session-token',JSON.stringify({user:{sub:'member'},csrf:'secret-csrf'}),Date.now()+10000);assert.equal(users.detail('member').user.sessions,1);assert.equal(JSON.stringify(users.detail('member')).includes('secret-csrf'),false);assert.equal(JSON.stringify(users.detail('member')).includes('sensitive-session-token'),false);
+  assert.throws(()=>users.update('admin',{sub:'member',action:'role',role:'editor'}),/至少一位/);assert.equal(db.prepare("SELECT role FROM team_members WHERE sub='member'").get().role,'admin');
+  db.prepare("INSERT INTO team_members VALUES('other','team','admin',1)").run();users.update('admin',{sub:'member',action:'role',role:'editor'});assert.equal(db.prepare("SELECT role FROM team_members WHERE sub='member'").get().role,'editor');
+  assert.equal(users.list('测试团队').total,2);assert.equal(users.list('%').total,0);assert.equal(users.list('姓名').items[0].sub,'seen');
+  for(let i=0;i<25;i++)users.update('admin',{sub:'user'+i,action:'enable'});assert.equal(users.list('',1).items.length,20);assert.ok(users.list('',2).items.length>0);
+  assert.ok(db.prepare('SELECT COUNT(*) n FROM ops_user_events').get().n>=28);
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+test('用户管理API仅系统管理员可访问，写操作需要CSRF，停用阻断旧会话',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-users-api-'));Object.assign(process.env,{DATA_DIR:dir,APP_ORIGIN:'https://ops.mainapis.com',DEMO_MODE:'false',ALLOWED_SUBJECTS:'root,normal',SYSTEM_ADMIN_SUBJECTS:'root',CASDOOR_CLIENT_ID:'test-client',CASDOOR_CLIENT_SECRET:'test-secret'});
+ const {handler,closeStore}=await import('../server.mjs'),db=openStore(join(dir,'ops.sqlite'));
+ for(const sub of ['root','normal'])db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(sub,JSON.stringify({user:{sub},csrf:'csrf'}),Date.now()+60000);
+ const call=async(sub,path,method='GET',input={},csrf='csrf')=>{const req=Readable.from(method==='GET'?[]:[Buffer.from(JSON.stringify(input))]);Object.assign(req,{url:path,method,headers:{cookie:'ops_session='+sub,origin:'https://ops.mainapis.com','x-csrf-token':csrf,'content-type':'application/json'}});const res={headers:{},setHeader(k,v){this.headers[k]=v;},writeHead(status,headers={}){this.status=status;Object.assign(this.headers,headers);},end(data){this.data=data?JSON.parse(data):null;}};await handler(req,res);return res;};
+ try{
+  assert.equal((await call('normal','/api/users')).status,403);assert.equal((await call('normal','/api/users?sub=root')).status,403);assert.equal((await call('root','/api/users?sub=normal')).data.user.sub,'normal');assert.equal((await call('root','/api/users')).status,200);
+  assert.equal((await call('root','/api/users','POST',{sub:'normal',action:'disable'},'wrong')).status,403);
+  assert.equal((await call('root','/api/users','POST',{sub:'normal',action:'disable'})).status,200);assert.equal((await call('normal','/api/products')).status,401);
+  db.prepare('INSERT INTO sessions VALUES(?,?,?)').run('old',JSON.stringify({user:{sub:'normal'},csrf:'csrf'}),Date.now()+60000);assert.equal((await call('old','/api/me')).status,403);
+  assert.equal((await call('root','/api/users','POST',{sub:'new-user',action:'enable'})).status,200);assert.equal(db.prepare("SELECT granted FROM ops_users WHERE sub='new-user'").get().granted,1);
+  assert.equal((await call('root','/api/users','POST',{sub:'root',action:'disable'})).status,400);
+  const originalFetch=globalThis.fetch,{privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048}),issuer='https://auth.mainapis.com';
+  let tokenNonce='invalid';const encode=v=>Buffer.from(JSON.stringify(v)).toString('base64url');
+  globalThis.fetch=async url=>{let data;if(String(url).endsWith('/.well-known/openid-configuration'))data={issuer,authorization_endpoint:issuer+'/authorize',token_endpoint:issuer+'/token',jwks_uri:issuer+'/keys'};else if(String(url).endsWith('/keys'))data={keys:[{...publicKey.export({format:'jwk'}),kid:'test'}]};else {const payload=encode({alg:'RS256',kid:'test'})+'.'+encode({iss:issuer,aud:'test-client',sub:'applicant',name:'申请人',iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+300,nonce:tokenNonce});data={id_token:payload+'.'+sign('RSA-SHA256',Buffer.from(payload),privateKey).toString('base64url')};}return new Response(JSON.stringify(data));};
+  try{
+   const pending=()=>db.prepare('INSERT INTO sessions VALUES(?,?,?)').run('login-state',JSON.stringify({state:'state',nonce:'nonce',verifier:'verifier'}),Date.now()+60000);
+   pending();assert.equal((await call('login-state','/auth/callback?state=state&code=code')).status,400);assert.equal(db.prepare("SELECT COUNT(*) n FROM ops_users WHERE sub='applicant'").get().n,0);
+   tokenNonce='nonce';pending();const application=await call('login-state','/auth/callback?state=state&code=code');assert.equal(application.status,302);assert.equal(application.headers.Location,'/?access=pending');assert.equal(db.prepare("SELECT granted FROM ops_users WHERE sub='applicant'").get().granted,0);assert.equal((await call('root','/api/users?filter=pending')).data.total,1);
+   assert.equal(db.prepare('SELECT data FROM sessions').all().some(r=>JSON.parse(r.data).user?.sub==='applicant'),false);
+   await call('root','/api/users','POST',{sub:'applicant',action:'enable'});pending();assert.equal((await call('login-state','/auth/callback?state=state&code=code')).headers.Location,'/');assert.equal(db.prepare('SELECT data FROM sessions').all().some(r=>JSON.parse(r.data).user?.sub==='applicant'),true);
+  }finally{globalThis.fetch=originalFetch;}
 
-入口：侧栏“用户管理”，仅正式模式下的系统管理员可见和调用。
-
-- 查看已知用户的Casdoor sub、最近一次登录名称、OPS访问状态、现有团队及角色、最近登录时间；按姓名、sub或团队搜索，每页20人。
-- 输入准确的Casdoor sub授权或恢复OPS访问，无须修改ALLOWED_SUBJECTS和重启服务。不会创建Casdoor账号、注册第三方登录或自动加入团队。
-- 停用OPS访问，同时撤销该用户全部OPS会话；回调登录和旧会话请求均检查停用状态。不会停用Casdoor账号，不影响其他应用。
-- 强制退出清除全部OPS会话，之后仍可按现有权限重新登录。
-- 调整现有团队成员的编辑、审核或团队管理员角色；不移动团队、不移动商品或商城配置，且团队必须保留至少一位启用的管理员。
-- 当前账号及系统管理员不能被停用；系统管理员名单仍由SYSTEM_ADMIN_SUBJECTS等现有部署配置管理，此页面不能授予系统管理员身份。
-- 授权、停用、强制退出和角色变更保存在ops_user_events，包含操作者、目标、动作与时间。写操作需要现有会话、精确Origin及CSRF令牌，演示模式禁止管理。
-
-用户目录是OPS已知账号，并非全部Casdoor用户同步。旧版允许名单、团队成员和现有会话会补入；用户下次成功登录时更新姓名与登录时间。团队层面的停用仍需在团队管理中恢复，OPS全局恢复不会绕过团队停用。
-
-停用用户或强制退出不会取消已提交的商品发布、n8n任务或OSS处理；请按原有任务核对流程处理。没有新增删除账号、删除商品、重置密码或Casdoor管理密钥。
-
-部署：运行完整的docker compose up -d --build，刷新页面后由系统管理员检查侧栏。
-
-0.15.1新增“详情 / 记录”：显示授权来源、实际访问状态、有效OPS会话数量（不是在线人数）、团队角色、最近登录及最近50条权限操作。不会返回会话ID、CSRF或登录令牌，读取同样仅限系统管理员。
+ }finally{db.close();closeStore();await rm(dir,{recursive:true,force:true});}
+});
