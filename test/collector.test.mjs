@@ -98,3 +98,16 @@ test('无效懒加载属性不遮住后续真实图片，支持data-original和s
  const img=(attrs,src='')=>({getAttribute:key=>attrs[key]||null,src}),images=[img({'data-lazy-src':'data:image/gif;base64,x','data-src':'https://cbu01.alicdn.com/img/detail-a.jpg'}),img({'data-src':'not-an-image','data-original':'https://cbu01.alicdn.com/img/detail-b.jpg'}),img({'srcset':'https://cbu01.alicdn.com/img/small.jpg 400w, https://cbu01.alicdn.com/img/large.jpg 1200w'}),img({'data-src':'data:image/png;base64,x'},'https://cbu01.alicdn.com/img/detail-a.jpg')],detail={querySelectorAll:s=>s==='img'?images:[]};
  const result=capture({}, {querySelector:s=>s.startsWith('#desc-lazyload-container')?detail:null});assert.deepEqual(JSON.parse(JSON.stringify(result.product.detail_images)),['https://cbu01.alicdn.com/img/detail-a.jpg','https://cbu01.alicdn.com/img/detail-b.jpg','https://cbu01.alicdn.com/img/large.jpg']);
 });
+test('V-DETAIL-D详情兼容21张GIF及自定义懒加载源，忽略公共占位图且诊断不泄露地址',()=>{
+ const urls=Array.from({length:21},(_,i)=>`https://cbu01.alicdn.com/private-detail-${i}.${i?'gif':'jpg'}?secret=never-export`);
+ const images=urls.map((url,i)=>{const attrs={src:'https://cbu01.alicdn.com/loading.png','data-image-src':i%3===0?JSON.stringify({url}):i%3===1?`url("${url}")`:url};return {tagName:'IMG',getAttribute:key=>attrs[key]||null,getAttributeNames:()=>Object.keys(attrs)};});
+ const shadow={querySelectorAll:s=>s==='img'?[...images,images[0]]:[]};
+ const host={tagName:'V-DETAIL-D',shadowRoot:shadow,querySelectorAll:()=>[]};
+ const doc={querySelectorAll:s=>s.startsWith('#desc-lazyload-container')?[host]:[]};
+ assert.deepEqual(JSON.parse(JSON.stringify(capture({},doc).product.detail_images)),urls);
+ const diagnostic=capture({},doc,location,true).diagnostics;
+ assert.equal(diagnostic.detailStructure.detailImageSamples.length,22);
+ assert.equal(diagnostic.detailStructure.detailImageSamples[21].selectedGroup,1);
+ assert.equal(JSON.stringify(diagnostic).includes('never-export'),false);
+ assert.equal(JSON.stringify(diagnostic).includes('private-detail'),false);
+});

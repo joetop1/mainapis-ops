@@ -1,6 +1,6 @@
 # MainAPIs · 1688 / 淘宝 / 天猫采集助手
 
-当前版本：0.1.17。版本号以同目录 manifest.json 为准。
+当前版本：0.1.18。版本号以同目录 manifest.json 为准。
 
 ## 新设备安装（桌面版 Chrome / Edge）
 
