@@ -347,6 +347,13 @@ const handleRequest=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     if(path==='/api/releases'&&req.method==='GET')return json(res,200,{current:systemRelease,releases:RELEASE_NOTES});
+    if(path==='/api/billing/cards'){
+      if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可生成和作废卡密'});
+      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('batch')?billing.cardDetails(q.get('batch'),q.get('page')||1):billing.cardBatches(q.get('page')||1));}
+      if(req.method==='POST'){const input=await body(req);return json(res,201,billing.mintCards({actor:s.user.sub,label:input.label,amount:input.amount,quantity:input.quantity,expires:input.expires||'',key:input.key}));}
+      if(req.method==='DELETE'){const input=await body(req);return json(res,200,billing.revokeCards({actor:s.user.sub,batchId:input.batchId,reason:input.reason}));}
+      return json(res,405,{error:'请求方式不支持'});
+    }
     if(path==='/api/billing/admin'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理团队点数'});
       const q=new URL(req.url,origin).searchParams;
@@ -391,6 +398,10 @@ const handleRequest=async(req,res)=>{
       return json(res,200,{name:release.name,version:release.version,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/1688-collector/download'});
     }
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
+    if(path==='/api/billing/redeem'&&req.method==='POST'){
+      if(demo)return json(res,403,{error:'演示模式不兑换卡密'});if(team&&team.role!=='admin')return json(res,403,{error:'请由团队管理员兑换到团队钱包'});
+      const input=await body(req);if(input.expectedOwner!==undefined&&input.expectedOwner!==owner)return json(res,409,{error:'工作空间已变化，请刷新页面核对兑换目标后重试'});return json(res,200,billing.redeemCard({owner,actor,code:input.code}));
+    }
     if(path==='/api/billing'&&req.method==='GET')return json(res,200,billing.view(owner,new URL(req.url,origin).searchParams.get('page')||1));
     malls.ensure(owner);
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
