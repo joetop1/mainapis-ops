@@ -1,3 +1,4 @@
+import {billingStore} from './billing.mjs';
 import {offsiteBackups} from './offsite-backup.mjs';
 import {operationsAlerts} from './operations-alerts.mjs';
 import {RELEASE_NOTES} from './release-notes.mjs';
@@ -98,6 +99,7 @@ const db=openStore(join(dataDir,'ops.sqlite'));
 const tasks=taskQueue(db);
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
 const users=userDirectory({db,allowed,isSystemAdmin});
+const billing=billingStore(db,{legacyOwners:[...new Set([...allowed,...db.prepare('SELECT id FROM teams UNION SELECT owner AS id FROM products UNION SELECT owner AS id FROM jobs').all().map(r=>r.id)])]});
 const branding=systemSettings(db);
 const collectors=productCollectors(db);
 const mergeProducts=productMerge({db,collectors,audit:(...args)=>audit(...args),actor:()=>({sub:actorContext.getStore()?.actor||'',name:actorContext.getStore()?.name||''})});
@@ -345,6 +347,13 @@ const handleRequest=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     if(path==='/api/releases'&&req.method==='GET')return json(res,200,{current:systemRelease,releases:RELEASE_NOTES});
+    if(path==='/api/billing/admin'){
+      if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理团队点数'});
+      const q=new URL(req.url,origin).searchParams;
+      if(req.method==='GET'){if(q.has('request_key'))return json(res,200,{entry:billing.receipt(q.get('request_key'))});const owners=[...db.prepare('SELECT id owner,name FROM teams').all().map(r=>({...r,name:'团队 · '+r.name})),...db.prepare('SELECT sub owner,name FROM ops_users').all().map(r=>({...r,name:'个人 · '+(r.name||r.owner)}))];const selected=q.get('owner');if(selected&&!owners.some(r=>r.owner===selected))throw Error('目标工作空间不存在');return json(res,200,{owners,...(selected?{wallet:billing.view(selected,q.get('page')||1)}:{})});}
+      if(req.method==='POST'){const input=await body(req);if(!db.prepare('SELECT 1 FROM teams WHERE id=? UNION SELECT 1 FROM ops_users WHERE sub=?').get(input.owner,input.owner))throw Error('目标工作空间不存在');return json(res,200,billing.credit({owner:input.owner,actor:s.user.sub,amount:input.amount,key:input.key,reason:input.reason}));}
+      return json(res,405,{error:'请求方式不支持'});
+    }
     if(path==='/api/users'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理OPS用户'});
       if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('teams')?{teams:users.teams()}:q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1,q.get('filter')||'all'));}
@@ -382,6 +391,7 @@ const handleRequest=async(req,res)=>{
       return json(res,200,{name:release.name,version:release.version,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/1688-collector/download'});
     }
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
+    if(path==='/api/billing'&&req.method==='GET')return json(res,200,billing.view(owner,new URL(req.url,origin).searchParams.get('page')||1));
     malls.ensure(owner);
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
     if(path==='/api/image-storage/availability'&&req.method==='GET')return json(res,200,{malls:malls.list(owner).map(m=>({id:m.id,available:images.available(mallImageOrigin(m))}))});
