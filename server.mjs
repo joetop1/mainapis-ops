@@ -118,7 +118,7 @@ let notificationTimer;
 const brandConnectionStores=Object.fromEntries(await Promise.all(['crmeb-pro','crmeb-store'].map(async target=>[target,await connectionStore(db,dataDir,target)])));
 const malls=mallConnections(db,mallProfiles);
 const uploadLocalImage=localImageUploader({getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}})});
-const supplierImport=supplierImports({db,dataDir,root,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
+const supplierImport=supplierImports({db,dataDir,root,prepareCharge:(owner,revision,images)=>billing.prepareCharge(owner,'collect',revision,images),chargeProduct:(owner,id,rate)=>billing.chargeProduct({owner,id,actor:actorContext.getStore()?.actor||owner,rate}),getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
 const supplierUploads=workbookUploads({db,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),enqueueRemote:(owner,input)=>supplierImport.enqueueRemote(owner,input)});
 const alertService=await operationsAlerts({dataDir,webhook:process.env.OPS_OPERATIONS_WEBHOOK||''});
 const ops=await operations({db,dataDir,root,alertService,runOffsite:process.env.OPS_OFFSITE_BACKUP==='true'?offsiteBackups({getStorage:()=>images.get(),dataDir,key:process.env.OPS_OFFSITE_ENCRYPTION_KEY}):undefined,enabled:!demo&&process.env.OPS_AUTO_BACKUP!=='false',intervalHours:Number(process.env.OPS_BACKUP_INTERVAL_HOURS||24),keep:Number(process.env.OPS_BACKUP_KEEP||14),workerEnabled:durable,workerPaused:process.env.OPS_WORKER_PAUSED==='true'});let operationsTimer;
@@ -209,11 +209,9 @@ async function discovery() {
   return meta;
 }
 function productFor(owner,id) {const r=db.prepare('SELECT * FROM products WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('商品不存在');return r;}
-function putProduct(owner,input) {
+function putProduct(owner,input,billingRevision) {
   const p=validateProduct(input), t=now(); const id=uid();
-  try{db.prepare('INSERT INTO products(id,owner,source,data,created,updated) VALUES(?,?,?,?,?,?)').run(id,owner,p.source_url,JSON.stringify(p),t,t);}catch(e){if(String(e).includes('UNIQUE'))throw Error('该来源商品已在采集箱中，请编辑原商品');throw e;}
-  collectors.record(id,actorContext.getStore()?.actor||owner,actorContext.getStore()?.name||'');
-  audit(owner,'product.create',id);return id;
+  db.exec('BEGIN IMMEDIATE');try{const rate=billing.prepareCharge(owner,'collect',billingRevision);db.prepare('INSERT INTO products(id,owner,source,data,created,updated) VALUES(?,?,?,?,?,?)').run(id,owner,p.source_url,JSON.stringify(p),t,t);billing.chargeProduct({owner,actor:actorContext.getStore()?.actor||owner,id,rate});collectors.record(id,actorContext.getStore()?.actor||owner,actorContext.getStore()?.name||'');audit(owner,'product.create',id);db.exec('COMMIT');return id;}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))throw Error('该来源商品已在采集箱中，请编辑原商品');throw e;}
 }
 // Unselected jobs keep external URLs. Opted-in jobs must finish bounded image transfer before any connector sees the snapshot.
 async function dispatch(job,p,action='publish_draft',verification={}) {
@@ -241,7 +239,7 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
     if(r.ok)db.prepare("UPDATE jobs SET status='accepted',message='n8n 已接收，等待执行结果',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
     else db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('发布入口返回 HTTP '+r.status+'；请到连接与配置测试该商城发布入口，核对后重发原未领取任务',now(),job.id);
   } catch {db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
- }catch{db.prepare("UPDATE jobs SET status='unknown',message='商城连接或任务归属发生变化，请核对原商城记录；未自动重发',updated=? WHERE id=? AND status NOT IN ('succeeded','failed')").run(now(),job.id);}
+ }catch{db.prepare("UPDATE jobs SET status='unknown',message='商城连接或任务归属发生变化，请核对原商城记录；未自动重发',updated=? WHERE id=? AND status NOT IN ('succeeded','failed')").run(now(),job.id);}finally{try{billing.reconcileJob(job.id);}catch{console.error('billing_reconcile_pending');}}
 }
 if(!isWorker)db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE (status='dispatching' OR (target IN ('tigshop','yunzhong','crmeb-pro','crmeb-store','shopxo') AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))) AND NOT EXISTS(SELECT 1 FROM publication_queue q WHERE q.job_id=jobs.id AND q.state IN ('queued','running'))").run(now());
 setInterval(()=>db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()),60000).unref();
@@ -336,8 +334,8 @@ const handleRequest=async(req,res)=>{
         if(['awaiting_review','succeeded'].includes(job.status)&&!b.verification_nonce)return json(res,409,{error:'创建结果已处理，禁止重复回传覆盖'});
       }
       const remoteId=String(b.remote_id||'').slice(0,100);if(b.status==='succeeded'&&!remoteId)throw Error('成功回调必须返回商城商品 remote_id');
-      if(['succeeded','failed'].includes(job.status)){if(job.status!==b.status||job.remote_id!==remoteId)return json(res,409,{error:'终态结果冲突'});return json(res,200,{ok:true,duplicate:true});}
-      db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);return json(res,200,{ok:true});
+      if(['succeeded','failed'].includes(job.status)){if(job.status!==b.status||job.remote_id!==remoteId)return json(res,409,{error:'终态结果冲突'});billing.reconcileJob(id);return json(res,200,{ok:true,duplicate:true});}
+      db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);billing.reconcileJob(id);return json(res,200,{ok:true});
     }
     if(path!=='/auth/logout'&&s?.user&&users.blocked(s.user.sub))return json(res,403,{error:'OPS账号已停用，请联系系统管理员'});
     if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
@@ -347,6 +345,10 @@ const handleRequest=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     if(path==='/api/releases'&&req.method==='GET')return json(res,200,{current:systemRelease,releases:RELEASE_NOTES});
+    if(path==='/api/billing/rates'){
+      if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可配置单价'});
+      if(req.method==='GET')return json(res,200,billing.rates());if(req.method==='POST'){const input=await body(req);return json(res,200,billing.saveRates({actor:s.user.sub,collect:input.collect,publish:input.publish,revision:input.revision}));}return json(res,405,{error:'请求方式不支持'});
+    }
     if(path==='/api/billing/cards'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可生成和作废卡密'});
       if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('batch')?billing.cardDetails(q.get('batch'),q.get('page')||1):billing.cardBatches(q.get('page')||1));}
@@ -398,6 +400,7 @@ const handleRequest=async(req,res)=>{
       return json(res,200,{name:release.name,version:release.version,bytes:release.bytes.length,sha256:release.sha256,downloadUrl:'/api/extensions/1688-collector/download'});
     }
     const actor=s.user.sub,team=teams.context(actor),owner=team?.id||actor;
+    if(path==='/api/billing/quote'&&req.method==='POST'){const input=await body(req);return json(res,200,billing.quote(owner,{kind:input.kind,quantity:input.kind==='collect'&&input.table!==undefined?parseOfficialExport(input.table).length:input.quantity,images:input.images===true}));}
     if(path==='/api/billing/redeem'&&req.method==='POST'){
       if(demo)return json(res,403,{error:'演示模式不兑换卡密'});if(team&&team.role!=='admin')return json(res,403,{error:'请由团队管理员兑换到团队钱包'});
       const input=await body(req);if(input.expectedOwner!==undefined&&input.expectedOwner!==owner)return json(res,409,{error:'工作空间已变化，请刷新页面核对兑换目标后重试'});return json(res,200,billing.redeemCard({owner,actor,code:input.code}));
@@ -602,10 +605,10 @@ const handleRequest=async(req,res)=>{
     const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|assets\/[a-f0-9]{64}))?$/);
     if(supplierRoute){const id=supplierRoute[1],action=supplierRoute[2];if(req.method==='GET'&&action?.startsWith('assets/')){const image=await supplierImport.asset(owner,id,action.slice(7));res.writeHead(200,{'Content-Type':image.mime,'Content-Length':image.bytes.length,'Cache-Control':'private, no-store'});return res.end(image.bytes);}if(req.method==='GET'&&!action)return json(res,200,supplierImport.get(owner,id));if(req.method==='DELETE'&&!action)return json(res,200,await supplierImport.remove(owner,id));if(req.method==='POST'&&action==='commit'){if(demo)throw Error('演示模式不导入货盘');const input=await body(req);if(Array.isArray(input.items)){for(const item of input.items){if(item.mall_mappings!==undefined){if(!Array.isArray(item.mall_mappings)||item.mall_mappings.length>50)throw Error('商城映射格式无效');for(const mapping of item.mall_mappings){malls.get(owner,mapping.catalog_connection_id,mapping.catalog_target);if(mapping.category_id||mapping.brand_ids?.length){const checked=await checkedBulkMapping(owner,mapping);Object.assign(mapping,checked,{tag_ids:mapping.tag_ids||[]});}}}}}return json(res,202,supplierImport.start(owner,id,input));}}
     if(['/api/products/merge-preview','/api/products/merge'].includes(path)&&req.method==='POST'){const input=await body(req);return path.endsWith('merge-preview')?json(res,200,mergeProducts.preview(owner,input)):json(res,201,mergeProducts.create(owner,input));}
-    if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);const repaired=await repairSavedImageUrls(p,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});return json(res,201,{id:putProduct(owner,repaired)});}
+    if(path==='/api/products' && req.method==='POST') {const b=await body(req);const p=await validateCatalog(validateProduct(b),owner);const repaired=await repairSavedImageUrls(p,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});return json(res,201,{id:putProduct(owner,repaired,b.billing_revision)});}
     if(path==='/api/import' && req.method==='POST') {
       const b=await body(req);if(b.table!==undefined)b.products=parseOfficialExport(b.table);if(!Array.isArray(b.products)||b.products.length>100)throw Error('每次最多导入 100 件商品');
-      const results=[];for(const [i,input]of b.products.entries()){try{const p=await validateCatalog(validateProduct(input),owner);results.push({index:i,id:putProduct(owner,p),ok:true});}catch(e){results.push({index:i,ok:false,error:e.message});}}return json(res,200,{results});
+      const results=[];for(const [i,input]of b.products.entries()){try{const p=await validateCatalog(validateProduct(input),owner);results.push({index:i,id:putProduct(owner,p,b.billing_revision),ok:true});}catch(e){results.push({index:i,ok:false,error:e.message});}}return json(res,200,{results});
     }
     const match=path.match(/^\/api\/products\/([^/]+)(?:\/(approve|publish))?$/);
     if(match){const r=productFor(owner,match[1]),p=decodeProduct(r);
@@ -646,7 +649,7 @@ const handleRequest=async(req,res)=>{
         if(['crmeb-pro','crmeb-store'].includes(b.target)&&!destination.legacy){const c=credentialsFor(b.target,owner,destinationId);publishingProduct.crmeb={origin:c.url,shippingTemplateId:c.shippingTemplateId};}
         if(['crmeb-pro','crmeb-store'].includes(b.target)&&!destination.legacy)(b.target==='crmeb-store'?buildStoreProduct:buildOfficialProduct)({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.crmeb,pendingImageTransfer:!!imagePlan});
         if(db.prepare(`SELECT j.id FROM jobs j LEFT JOIN job_snapshots s ON s.job_id=j.id WHERE j.product_id=? AND j.target=? AND j.mall_connection_id=? AND (j.status<>'failed' OR COALESCE(s.claimed,1)<>0 OR j.remote_id<>'' OR COALESCE(s.candidate_id,'')<>'' OR COALESCE(s.verification_nonce,'')<>'') LIMIT 1`).get(r.id,b.target,destinationId))throw Object.assign(Error('此商品已有官方创建任务，不能再次创建；请到发布任务核对商品 ID'),{httpStatus:409});
-        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{const latest=productFor(owner,r.id);if(latest.revision!==current.revision||latest.status!=='approved')throw Error('商品版本或审核状态已变化，未创建此商城任务');db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated,mall_connection_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t,destinationId);initiators.record(id,actor,s.user.name||'');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));if(imagePlan)images.record(id,publishingProduct,imagePlan);if(durable){db.prepare("UPDATE jobs SET message='已进入后台队列，等待Worker执行' WHERE id=?").run(id);tasks.enqueue(id);}db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))throw Object.assign(Error('该版本已有发布任务，请在任务列表查看结果'),{httpStatus:409});throw e;}
+        const id=uid(),t=now();if(b.target==='tigshop')buildTigshopProduct({product:publishingProduct,marker:'OPS-'+id.replaceAll('-','')},publishingProduct.tigshop.fx,publishingProduct.tigshop.shipping);db.exec('BEGIN IMMEDIATE');try{const latest=productFor(owner,r.id);if(latest.revision!==current.revision||latest.status!=='approved')throw Error('商品版本或审核状态已变化，未创建此商城任务');db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated,mall_connection_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,owner,r.id,current.revision,b.target,'dispatching',secret(),t,t,destinationId);initiators.record(id,actor,s.user.name||'');db.prepare('INSERT INTO job_snapshots(job_id,product) VALUES(?,?)').run(id,JSON.stringify(publishingProduct));if(imagePlan)images.record(id,publishingProduct,imagePlan);billing.reservePublish({owner,actor,id,revision:input.billing_revision,images:!!imagePlan});if(durable){db.prepare("UPDATE jobs SET message='已进入后台队列，等待Worker执行' WHERE id=?").run(id);tasks.enqueue(id);}db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');if(String(e).includes('UNIQUE'))throw Object.assign(Error('该版本已有发布任务，请在任务列表查看结果'),{httpStatus:409});throw e;}
         audit(owner,'job.create',id);const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(durable)return {id};if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT INTO job_transports VALUES(?,'direct')").run(id);setImmediate(()=>dispatch(job,publishingProduct));}else if(input.destinations||imagePlan)setImmediate(()=>dispatch(job,publishingProduct));else await dispatch(job,publishingProduct);return {id};
         };
         if(input.destinations!==undefined){
@@ -671,7 +674,7 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
 export function startPublicationWorker(){
  if(!durable||demo||process.env.OPS_WORKER_PAUSED==='true')throw Error('Worker需要正式模式、启用OPS_DURABLE_QUEUE且未暂停');
  const worker=queueWorker({queue:tasks,dispatch,onError:()=>console.error('publication_worker_failed')});
- const poll=()=>worker.tick().catch(()=>console.error('publication_worker_failed'));
+ const poll=()=>{try{billing.reconcilePending();}catch{console.error('billing_reconcile_pending');}return worker.tick().catch(()=>console.error('publication_worker_failed'));};
  const supplierTick=setInterval(()=>supplierImport.tick().catch(()=>console.error('supplier_parse_failed')),2000);
  const tick=setInterval(poll,2000),heartbeat=setInterval(()=>{try{worker.heartbeat();}catch{console.error('worker_heartbeat_failed');}},5000);poll();
  return {async stop(){clearInterval(supplierTick);clearInterval(tick);clearInterval(heartbeat);await worker.stop();}};

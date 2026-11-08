@@ -12,10 +12,11 @@ import {promisify} from 'node:util';
 import {imageType,uploadImage,storageDestination,compactImageKey} from './image-storage.mjs';
 import {validateProduct} from './core.mjs';
 const execute=promisify(execFile),hash=v=>createHash('sha256').update(v).digest('hex');
-export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
+export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,prepareCharge,chargeProduct,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
  const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
- for(const [name,type] of [['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
+ for(const [name,type] of [['billing_rate',"TEXT NOT NULL DEFAULT ''"],['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
+ db.exec("UPDATE supplier_batches SET billing_rate='{\"due\":0,\"legacy\":true}' WHERE plan IS NOT NULL AND billing_rate=''");
  async function parseBatch(r){
   const dir=join(directory,r.id);parsing++;
   try{
@@ -73,7 +74,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
     return {key:item.key,title:String(item.title).trim().slice(0,200),skus,confirmed:true,...(item.mall_mappings!==undefined?{mall_mappings:normalizeMallMappings(item.mall_mappings)}:{})};
    });
    const plan=JSON.stringify(items);if(r.plan&&r.plan!==plan)throw Error('此批次已开始导入，重试请保持原选择和内容；可重新上传文件建立新预览');if(r.destination&&r.destination!==storageDestination(c))throw Error('存储目标已变化，请恢复原存储配置再重试');
-   db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing' WHERE id=?").run(plan,storageDestination(c),id);active.add(id);
+   const rate=r.billing_rate?JSON.parse(r.billing_rate):prepareCharge?.(owner,input.billing_revision,true);
+   db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing',billing_rate=? WHERE id=?").run(plan,storageDestination(c),JSON.stringify(rate||null),id);active.add(id);
    setImmediate(async()=>{let results=JSON.parse(r.results);try{
     for(const item of items){if(results.some(x=>x.key===item.key&&x.ok))continue;const original=data.products.find(p=>p.key===item.key);let result;
      try{
@@ -86,7 +88,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
        const latest=getStorage();if(!latest?.enabled||!allowedStorage(owner,latest)||storageDestination(latest)!==storageDestination(c))throw Error('存储配置或授权已变化，未创建商品');
        const metadata={supplier:r.supplier,batch_id:id,filename:r.filename,card:original.key,barcodes:original.barcodes,sku_codes:item.skus.map(s=>s.sku),packaging:original.packaging,category_hint:original.category_hint};
        const product=validateProduct({source_url:source,title:item.title,description:original.description,attributes:original.attributes,category:'',images:urls,detail_images:[],skus:item.skus,...(item.mall_mappings?{mall_mappings:item.mall_mappings,...(item.mall_mappings[0]||{})}:{})},{supplier:metadata});
-       const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
+       const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);chargeProduct?.(owner,pid,rate);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
       }
      }catch(e){result={key:item.key,ok:false,error:e.message};}
      results=results.filter(x=>x.key!==item.key);results.push(result);db.prepare('UPDATE supplier_batches SET results=? WHERE id=?').run(JSON.stringify(results),id);
