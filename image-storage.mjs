@@ -54,7 +54,7 @@ export async function uploadImage(c,key,image,{fetchImpl=fetch}={}){
  const read=await readImage(url,{fetchImpl});if(hash(read.bytes)!==hash(image.bytes))throw Error('图片域名返回内容与上传文件不一致，请检查域名、公开读取和防盗链设置');
  return url;
 }
-export function imageStorage({db,store,fetchImpl=fetch}){
+export function imageStorage({db,store,storeImage,fetchImpl=fetch}){
  db.exec(`CREATE TABLE IF NOT EXISTS image_transfer_jobs(job_id TEXT PRIMARY KEY,destination TEXT NOT NULL,mall_origin TEXT NOT NULL,original TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending');CREATE TABLE IF NOT EXISTS image_transfer_files(job_id TEXT NOT NULL,source TEXT NOT NULL,url TEXT NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(job_id,source));`);
  const active=new Set();let running=0;const waiters=[];
  const get=()=>store.get('global');
@@ -81,7 +81,7 @@ export function imageStorage({db,store,fetchImpl=fetch}){
      db.prepare("UPDATE jobs SET message=?,updated=? WHERE id=? AND status='dispatching'").run('正在转存图片 '+(i+1)+'/'+urls.length,new Date().toISOString(),job.id);
      const image=await readImage(source,{fetchImpl});total+=image.bytes.length;if(total>200*1024*1024)throw Error('单任务图片总大小不能超过200MB');
      const key=compactImageKey(job.owner,image.bytes,image.ext);
-     const url=await uploadImage(c,key,image,{fetchImpl});db.prepare('INSERT INTO image_transfer_files VALUES(?,?,?,?) ON CONFLICT(job_id,source) DO UPDATE SET url=excluded.url,bytes=excluded.bytes').run(job.id,source,url,image.bytes.length);map.set(source,url);
+     const url=await (storeImage?storeImage(c,key,image,job.owner):uploadImage(c,key,image,{fetchImpl}));db.prepare('INSERT INTO image_transfer_files VALUES(?,?,?,?) ON CONFLICT(job_id,source) DO UPDATE SET url=excluded.url,bytes=excluded.bytes').run(job.id,source,url,image.bytes.length);map.set(source,url);
     }
     const transferred={...p,images:p.images.map(x=>map.get(x)),detail_images:(p.detail_images||[]).map(x=>map.get(x)),skus:p.skus.map(s=>({...s,...(s.image?{image:map.get(s.image)}:{})}))};
     if(storageDestination(requireAllowed(row.mall_origin))!==row.destination)throw Error('存储目标在转存中发生变化，未替换任务图片');
