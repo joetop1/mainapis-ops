@@ -42,7 +42,8 @@ export function billingStore(db,{legacyOwners=[],clock=()=>new Date().toISOStrin
  }
  const transaction=fn=>{const nested=db.isTransaction,name='bill_'+randomUUID().replaceAll('-','');db.exec(nested?'SAVEPOINT '+name:'BEGIN IMMEDIATE');try{const result=fn();db.exec(nested?'RELEASE '+name:'COMMIT');return result;}catch(e){if(nested){db.exec('ROLLBACK TO '+name);db.exec('RELEASE '+name);}else db.exec('ROLLBACK');throw e;}};
  return {
-  view(owner,page=1){text(owner,'工作空间');page=Math.max(1,Math.min(100000,Math.trunc(Number(page))||1));const a=account(owner);const effective=policy(owner);return {account:{...a,internalExempt:!!a.exempt,exempt:effective.exempt},enabled:effective.enabled,testMode:effective.testMode,test:this.testSettings(owner),page,pageSize:20,total:db.prepare('SELECT COUNT(*) n FROM billing_ledger WHERE owner=?').get(owner).n,entries:db.prepare('SELECT * FROM billing_ledger WHERE owner=? ORDER BY created DESC,rowid DESC LIMIT 20 OFFSET ?').all(owner,(page-1)*20)};},
+  summary(owner){text(owner,'工作空间');const a=account(owner),effective=policy(owner);return {account:{...a,internalExempt:!!a.exempt,exempt:effective.exempt},enabled:effective.enabled,testMode:effective.testMode};},
+  view(owner,page=1){const summary=this.summary(owner);page=Math.max(1,Math.min(100000,Math.trunc(Number(page))||1));return {...summary,test:this.testSettings(owner),page,pageSize:20,total:db.prepare('SELECT COUNT(*) n FROM billing_ledger WHERE owner=?').get(owner).n,entries:db.prepare('SELECT * FROM billing_ledger WHERE owner=? ORDER BY created DESC,rowid DESC LIMIT 20 OFFSET ?').all(owner,(page-1)*20)};},
   storagePlan,
   isExempt:owner=>policy(owner).storageExempt,
   rates(){return db.prepare('SELECT enabled,collect_price,publish_price,revision FROM billing_settings WHERE id=1').get();},
