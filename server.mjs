@@ -1,3 +1,5 @@
+import {offsiteBackups} from './offsite-backup.mjs';
+import {operationsAlerts} from './operations-alerts.mjs';
 import {RELEASE_NOTES} from './release-notes.mjs';
 import {userDirectory} from './users.mjs';
 import {workbookUploads,ossBrowserOrigin} from './oss-multipart.mjs';
@@ -116,7 +118,8 @@ const malls=mallConnections(db,mallProfiles);
 const uploadLocalImage=localImageUploader({getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}})});
 const supplierImport=supplierImports({db,dataDir,root,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),recordCollector:id=>collectors.record(id,actorContext.getStore()?.actor||'',actorContext.getStore()?.name||''),audit:(...args)=>audit(...args)});
 const supplierUploads=workbookUploads({db,getStorage:()=>images.get(),allowedStorage:(owner,c)=>malls.list(owner).some(m=>{try{return c.allowedOrigins.includes(mallOrigin(mallImageOrigin(m)));}catch{return false;}}),enqueueRemote:(owner,input)=>supplierImport.enqueueRemote(owner,input)});
-const ops=await operations({db,dataDir,root,enabled:!demo&&process.env.OPS_AUTO_BACKUP!=='false',intervalHours:Number(process.env.OPS_BACKUP_INTERVAL_HOURS||24),keep:Number(process.env.OPS_BACKUP_KEEP||14),workerEnabled:durable,workerPaused:process.env.OPS_WORKER_PAUSED==='true'});let operationsTimer;
+const alertService=await operationsAlerts({dataDir,webhook:process.env.OPS_OPERATIONS_WEBHOOK||''});
+const ops=await operations({db,dataDir,root,alertService,runOffsite:process.env.OPS_OFFSITE_BACKUP==='true'?offsiteBackups({getStorage:()=>images.get(),dataDir,key:process.env.OPS_OFFSITE_ENCRYPTION_KEY}):undefined,enabled:!demo&&process.env.OPS_AUTO_BACKUP!=='false',intervalHours:Number(process.env.OPS_BACKUP_INTERVAL_HOURS||24),keep:Number(process.env.OPS_BACKUP_KEEP||14),workerEnabled:durable,workerPaused:process.env.OPS_WORKER_PAUSED==='true'});let operationsTimer;
 const supplierPruneTimer=isWorker?null:setInterval(()=>supplierImport.prune().catch(()=>{}),3600000);supplierPruneTimer?.unref();
 const supplierParseTimer=!demo&&!durable&&!isWorker?setInterval(()=>supplierImport.tick().catch(()=>console.error('supplier_parse_failed')),2000):null;supplierParseTimer?.unref();
 // Idempotent migration of persisted owners before any task can resume.

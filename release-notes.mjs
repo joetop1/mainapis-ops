@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.17.0',title:'加密异地备份与运行告警',changes:['可将配套数据库与连接密钥使用独立密钥加密后上传私有OSS，并读回校验。','支持离线解密验证到新目录，保留Worker暂停和恢复前核对要求。','可配置企业微信群运行告警，报告心跳超时、磁盘不足、备份失败和超时任务；默认不启用。']},
  {version:'0.16.2',title:'站内更新日志',changes:['点击页面顶部系统版本查看更新日志，支持按版本或关键词搜索。','补充最近版本的功能和修复记录。']},
  {version:'0.16.1',title:'审批时分配团队',changes:['授权新用户时可选择团队，指定编辑或审核角色。','已有个人资料或团队的账号不会被自动迁移；审批失败时整体回滚。']},
  {version:'0.16.0',title:'新用户访问审批',changes:['通过Casdoor验证的新用户进入待授权列表，批准后重新登录才能访问OPS。','支持待授权和已停用筛选、批准或拒绝申请。']},

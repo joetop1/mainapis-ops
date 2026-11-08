@@ -36,4 +36,4 @@ docker compose exec -T goods-ops node backup-data.mjs --verify /app/data/backups
 
 公开`/healthz`只检查进程存活；`/readyz`检查数据库可读、数据目录可写权限、32字节解密密钥文件及至少200MB数据盘空间，不连接任何商城，不暴露任务数量或备份信息。Compose使用`/readyz`，标记unhealthy不会自动触发Docker重启。
 
-0.13.0已加入独立发布Worker、持久队列和保守的中断处理，详见worker.md。跨服务器异地备份与外部告警接收端尚未实现。
+0.13.0已加入独立发布Worker、持久队列和保守的中断处理，详见worker.md。0.17.0增加可选加密异地备份和企业微信运行告警，详见offsite-backup.md。整机或网络完全离线仍需外部监控。
