@@ -89,3 +89,12 @@ test('产品参数按页面实际字段采集，平台字段过滤，推荐商�
  const dom=JSON.parse(JSON.stringify(capture({}, {querySelectorAll:s=>s.startsWith('.offer-attr-item,')?[{querySelector:s=>({textContent:s.includes('name')?'材质':'硅胶'})}]:[]})));
  assert.deepEqual(dom.product.attributes,[{name:'材质',value:'硅胶'}]);
 });
+test('详情扫描全部明确容器，空壳首容器不会遮住独立详情组件，推荐图片区不混入',()=>{
+ const img=url=>({src:url,getAttribute:()=>null}),empty={querySelectorAll:s=>s==='img'?[img('https://cbu01.alicdn.com/img/intro.jpg')]:[]},body={querySelectorAll:s=>s==='img'?[img('https://cbu01.alicdn.com/img/body-1.jpg'),img('https://cbu01.alicdn.com/img/body-2.jpg')]:[]};
+ const result=capture({}, {querySelector:s=>s.startsWith('#desc-lazyload-container')?empty:null,querySelectorAll:s=>s.startsWith('#desc-lazyload-container')?[empty,body]:s==='img'?[img('https://cbu01.alicdn.com/recommend.jpg')]:[]});
+ assert.deepEqual(JSON.parse(JSON.stringify(result.product.detail_images)),['https://cbu01.alicdn.com/img/intro.jpg','https://cbu01.alicdn.com/img/body-1.jpg','https://cbu01.alicdn.com/img/body-2.jpg']);
+});
+test('无效懒加载属性不遮住后续真实图片，支持data-original和srcset大图并去重',()=>{
+ const img=(attrs,src='')=>({getAttribute:key=>attrs[key]||null,src}),images=[img({'data-lazy-src':'data:image/gif;base64,x','data-src':'https://cbu01.alicdn.com/img/detail-a.jpg'}),img({'data-src':'not-an-image','data-original':'https://cbu01.alicdn.com/img/detail-b.jpg'}),img({'srcset':'https://cbu01.alicdn.com/img/small.jpg 400w, https://cbu01.alicdn.com/img/large.jpg 1200w'}),img({'data-src':'data:image/png;base64,x'},'https://cbu01.alicdn.com/img/detail-a.jpg')],detail={querySelectorAll:s=>s==='img'?images:[]};
+ const result=capture({}, {querySelector:s=>s.startsWith('#desc-lazyload-container')?detail:null});assert.deepEqual(JSON.parse(JSON.stringify(result.product.detail_images)),['https://cbu01.alicdn.com/img/detail-a.jpg','https://cbu01.alicdn.com/img/detail-b.jpg','https://cbu01.alicdn.com/img/large.jpg']);
+});

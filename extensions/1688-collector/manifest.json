@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MainAPIs · 1688 / 淘宝 / 天猫采集助手",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "读取当前打开的1688、淘宝或天猫商品，预览后导入OPS待整理采集箱。",
   "permissions": [
     "activeTab",
