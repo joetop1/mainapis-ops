@@ -342,7 +342,7 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/api/users'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理OPS用户'});
-      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1,q.get('filter')||'all'));}
+      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('teams')?{teams:users.teams()}:q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1,q.get('filter')||'all'));}
       if(req.method==='POST')return json(res,200,users.update(s.user.sub,await body(req)));
       return json(res,405,{error:'请求方式不支持'});
     }

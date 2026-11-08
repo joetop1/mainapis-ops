@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 export function userDirectory({db,allowed,isSystemAdmin}){
  db.exec("CREATE TABLE IF NOT EXISTS ops_users(sub TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,granted INTEGER NOT NULL DEFAULT 0,last_login TEXT NOT NULL DEFAULT '',created TEXT NOT NULL);CREATE TABLE IF NOT EXISTS ops_user_events(actor TEXT NOT NULL,subject TEXT NOT NULL,action TEXT NOT NULL,created TEXT NOT NULL)");
  if(!db.prepare('PRAGMA table_info(ops_users)').all().some(c=>c.name==='requested'))db.exec("ALTER TABLE ops_users ADD COLUMN requested TEXT NOT NULL DEFAULT ''");
@@ -21,6 +22,7 @@ export function userDirectory({db,allowed,isSystemAdmin}){
    const total=db.prepare('SELECT COUNT(*) n FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id '+where).get(...args).n;
    const items=db.prepare('SELECT u.*,m.team_id,m.role,m.active member_active,t.name team_name FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id '+where+' ORDER BY u.last_login DESC,u.sub LIMIT 20 OFFSET ?').all(...args,(page-1)*20).map(u=>({...u,system_admin:isSystemAdmin(u.sub),allowlisted:allowed.includes(u.sub)}));return {items,total,page,pageSize:20,pending:db.prepare("SELECT COUNT(*) n FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub WHERE u.active=1 AND u.granted=0 AND u.requested<>'' AND m.sub IS NULL").get().n};
   },
+  teams(){return db.prepare("SELECT t.id,t.name FROM teams t WHERE EXISTS(SELECT 1 FROM team_members m LEFT JOIN ops_users u ON u.sub=m.sub WHERE m.team_id=t.id AND m.role='admin' AND m.active=1 AND COALESCE(u.active,1)=1) ORDER BY t.name,t.id LIMIT 500").all();},
   detail(sub){
    const user=db.prepare('SELECT u.*,m.team_id,m.role,m.active member_active,t.name team_name FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id WHERE u.sub=?').get(sub);if(!user)throw Error('用户不存在');
    const sources=[...(allowed.includes(sub)?['部署允许名单']:[]),...(user.granted?['OPS管理员授权']:[]),...(user.team_id?['团队成员']:[])];let sessions=0;
@@ -35,6 +37,18 @@ export function userDirectory({db,allowed,isSystemAdmin}){
    db.exec('BEGIN IMMEDIATE');try{
     ensure(sub);
     if(input.action==='enable')db.prepare("UPDATE ops_users SET active=1,granted=1,requested='' WHERE sub=?").run(sub);
+    if(input.team_id!==undefined&&input.team_id!==''){
+     if(input.action!=='enable'||typeof input.team_id!=='string'||!['editor','reviewer'].includes(input.role))throw Error('审批加入团队仅支持编辑或审核角色');
+     if(isSystemAdmin(sub))throw Error('系统管理员不通过新用户审批调整团队');
+     if(db.prepare('SELECT 1 FROM team_members WHERE sub=?').get(sub))throw Error('此账号已有团队记录，请在团队管理中处理，未迁移团队');
+     if(!db.prepare("SELECT 1 FROM teams t WHERE t.id=? AND EXISTS(SELECT 1 FROM team_members m LEFT JOIN ops_users u ON u.sub=m.sub WHERE m.team_id=t.id AND m.role='admin' AND m.active=1 AND COALESCE(u.active,1)=1)").get(input.team_id))throw Error('目标团队不存在或缺少启用的管理员');
+     for(const table of ['products','jobs','connection_profiles','supplier_batches','connections','connections_yunzhong','connections_shopxo','connections_crmeb_pro','connections_crmeb_store','connections_tigshop']){
+      if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)&&db.prepare('SELECT 1 FROM '+table+' WHERE owner=? LIMIT 1').get(sub))throw Error('账号已有个人资料，请保留个人空间并单独安排迁移，未加入团队');
+     }
+     db.prepare('INSERT INTO team_members(sub,team_id,role,active) VALUES(?,?,?,1)').run(sub,input.team_id,input.role);
+     const stamp=new Date().toISOString();db.prepare('INSERT INTO ops_user_events VALUES(?,?,?,?)').run(actor,sub,'team_join:'+input.team_id+':'+input.role,stamp);
+     db.prepare('INSERT INTO team_events VALUES(?,?,?,?,?,?)').run(randomUUID(),input.team_id,actor,'member.approved',sub,stamp);
+    }
     if(input.action==='disable'){db.prepare('UPDATE ops_users SET active=0 WHERE sub=?').run(sub);revoke(sub);}
     if(input.action==='revoke_sessions')revoke(sub);
     if(input.action==='role'){

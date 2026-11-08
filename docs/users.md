@@ -52,3 +52,20 @@ test('用户管理API仅系统管理员可访问，写操作需要CSRF，停用�
 
  }finally{db.close();closeStore();await rm(dir,{recursive:true,force:true});}
 });
+
+test('审批同时加入团队保持原子性，拒绝迁移个人资料或现有团队及管理员提权',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-user-approval-team-')),db=openStore(join(dir,'test.sqlite'));teamStore(db);
+ db.prepare("INSERT INTO teams VALUES('team-a','团队A','root','now')").run();db.prepare("INSERT INTO teams VALUES('team-b','团队B','other','now')").run();
+ db.prepare("INSERT INTO team_members VALUES('root','team-a','admin',1)").run();db.prepare("INSERT INTO team_members VALUES('other','team-b','admin',0)").run();
+ const users=userDirectory({db,allowed:['root'],isSystemAdmin:sub=>sub==='root'});
+ try{
+  assert.deepEqual(users.teams().map(t=>({...t})),[{id:'team-a',name:'团队A'}]);
+  users.request('new','新成员');users.update('root',{sub:'new',action:'enable',team_id:'team-a',role:'editor'});
+  assert.equal(db.prepare("SELECT role FROM team_members WHERE sub='new'").get().role,'editor');assert.equal(users.granted('new'),true);assert.equal(users.list('',1,'pending').total,0);
+  assert.ok(users.detail('new').events.some(e=>e.action==='team_join:team-a:editor'));assert.equal(db.prepare("SELECT COUNT(*) n FROM team_events WHERE object_id='new'").get().n,1);
+  users.request('personal','有资料');db.prepare("INSERT INTO products VALUES('p','personal','source','{}','draft',1,'now','now')").run();
+  assert.throws(()=>users.update('root',{sub:'personal',action:'enable',team_id:'team-a',role:'reviewer'}),/个人资料/);assert.equal(users.granted('personal'),false);assert.equal(db.prepare("SELECT owner FROM products WHERE id='p'").get().owner,'personal');
+  assert.throws(()=>users.update('root',{sub:'new',action:'enable',team_id:'team-b',role:'editor'}),/已有团队/);assert.equal(db.prepare("SELECT team_id FROM team_members WHERE sub='new'").get().team_id,'team-a');
+  for(const input of [{sub:'bad-team',team_id:'team-b',role:'editor'},{sub:'bad-role',team_id:'team-a',role:'admin'}]){assert.throws(()=>users.update('root',{...input,action:'enable'}));assert.equal(db.prepare('SELECT 1 FROM ops_users WHERE sub=?').get(input.sub),undefined);}
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
