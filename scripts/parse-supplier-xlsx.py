@@ -1,6 +1,80 @@
-"""Read-only XLSX card parser. No formulas, macros, URLs or external relationships are executed."""
+"""Read-only XLSX card and row-table parser. No formulas, macros, URLs or external relationships are executed."""
 import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
+# Detect header-based catalogs; only explicit title rows become products.
+def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
+ from datetime import datetime,timedelta
+ from decimal import Decimal,InvalidOperation
+ aliases={
+  'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号'),
+  'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','销售价','售价','市场价'),
+  'barcode':('条形码','条码','商品条码'), 'images':('产品图片','商品图片','图片'),
+  'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量'),
+  'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
+  'position':('定位','产品定位'), 'series_info':('系列特点','系列说明')}
+ def normalize(text):return re.sub(r'[\s（）()¥￥]','',text).rstrip('元')
+ lookup={normalize(label):key for key,labels in aliases.items() for label in labels}
+ headers=[];by_row={}
+ for (r,c),text in cells.items():by_row.setdefault(r,[]).append((c,text))
+ for row in sorted(by_row):
+  labels={};columns={}
+  for c,text in by_row[row]:
+   key=lookup.get(normalize(text))
+   if key and key not in columns:columns[key]=c;labels[key]=text
+  if 'title' in columns and ('cost' in columns or 'price' in columns) and len(columns)>=3:headers.append((row,columns,labels))
+ if not headers:return None
+ merges=[]
+ def point(a):
+  m=re.fullmatch(r'([A-Z]+)([0-9]+)',a)
+  if not m:return None
+  col=0
+  for c in m[1]:col=col*26+ord(c)-64
+  return int(m[2])-1,col-1
+ for ref in merge_refs:
+  parts=ref.split(':');a=point(parts[0]);b=point(parts[-1])
+  if a and b:merges.append((a[0],a[1],b[0],b[1]))
+ def value(row,col):
+  direct=cells.get((row,col),'')
+  if direct:return direct
+  for top,left,bottom,right in merges:
+   if top<=row<=bottom and left<=col<=right:return cells.get((top,left),'')
+  return ''
+ def money(raw):
+  raw=raw.strip();raw=re.sub(r'^[¥￥]\s*','',raw);raw=re.sub(r'\s*元$','',raw)
+  if not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?',raw):return None
+  amount=float(raw.replace(',',''))
+  return amount if 0<=amount<=99999999 else None
+ result=[];last=max((r for r,c in cells),default=0)+1
+ row_numbers=sorted({r for r,c in cells})
+ for index,(header,columns,labels) in enumerate(headers):
+  end=headers[index+1][0] if index+1<len(headers) else last
+  for row in row_numbers:
+   if not header<row<end:continue
+   title=cells.get((row,columns['title']),'').strip()
+   if not title or title in ('合计','总计','小计','备注','说明'):continue
+   get=lambda key:value(row,columns[key]) if key in columns else ''
+   raw_barcode=get('barcode')
+   if re.fullmatch(r'\d+(?:\.\d+)?[eE][+-]?\d+',raw_barcode):
+    try:raw_barcode=format(Decimal(raw_barcode),'f').split('.')[0]
+    except InvalidOperation:pass
+   barcodes=list(dict.fromkeys(re.findall(r'(?<!\d)\d{8,14}(?!\d)',raw_barcode)))
+   pics=list(dict.fromkeys(aid for pr,pc,aid in pictures if pr==row and ('images' not in columns or pc==columns['images'])))
+   cost,price=money(get('cost')),money(get('price'));flags=[]
+   if cost is None:flags.append('采购成本未识别，请人工填写；不使用其他行价格')
+   if price is None:flags.append('售价未识别，请人工填写；赠品等文字不自动转成0元')
+   if get('images'):flags.append('图片栏备注：'+get('images'))
+   if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
+   if not barcodes:flags.append('无条码：使用系统SKU编码，条码保持空缺')
+   if len(barcodes)>1:flags.append('多个条码：请逐项确认规格与条码对应关系')
+   attributes=[]
+   for key in ('model','date','position','series_info'):
+    text=get(key)
+    if key=='date' and re.fullmatch(r'\d+(?:\.0+)?',text) and 1<=float(text)<=100000:
+     text=((datetime(1904,1,1) if date1904 else datetime(1899,12,30))+timedelta(days=float(text))).strftime('%Y-%m-%d')
+    if text:attributes.append({'name':labels[key],'value':text})
+   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':get('model')})
+ return result
+
 def parse(path,out):
  z=zipfile.ZipFile(path);infos=z.infolist()
  if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>768*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
@@ -19,7 +93,7 @@ def parse(path,out):
   v=0
   for c in s:v=v*26+ord(c)-64
   return v-1
- products=[];assets={};warnings=[];books=rels('xl/workbook.xml')
+ products=[];assets={};warnings=[];books=rels('xl/workbook.xml');workbook=xml('xl/workbook.xml');properties=workbook.find('s:workbookPr',N);date1904=properties is not None and properties.get('date1904') in ('1','true')
  for sheet in xml('xl/workbook.xml').findall('s:sheets/s:sheet',N):
   name=books.get(sheet.get('{'+N['r']+'}id'))
   if not name:continue
@@ -49,6 +123,9 @@ def parse(path,out):
     if asset not in assets:
      filename=asset+'.bin';open(os.path.join(out,filename),'wb').write(data);assets[asset]={'id':asset,'file':filename,'bytes':len(data)}
     pictures.append((int(origin.find('d:row',N).text),int(origin.find('d:col',N).text),asset))
+  tabular=table_products(cells,pictures,[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)],sheet.get('name'),date1904)
+  if tabular is not None:
+   products.extend(tabular);continue
   for r,c in starts:
    end=min([nr for nr,nc in starts if nc==c and nr>r]+[max((rr for rr,cc in cells),default=r)+1]);right=min([cc for rr,cc in starts if cc>c]+[c+4]);width=right-c
    # Card image sits to the left of its label column; require it within this card's row interval.
@@ -77,7 +154,7 @@ def parse(path,out):
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
    if not title:continue
    products.append({'key':sheet.get('name')+':'+str(r+1)+':'+str(c+1),'title':title,'category_hint':section,'barcodes':barcodes,'cost':price('批发价') if price('批发价') is not None else price('供货价'),'price':price('零售价'),'description':'\n'.join(fields.get('描述',[])),'attributes':[{'name':label,'value':' / '.join(fields[label])} for label in ('产品成分','产品参数') if fields.get(label)],'packaging':' / '.join(fields.get('箱规',[])),'images':list(dict.fromkeys(pics)),'warnings':flags,'sheet':sheet.get('name'),'row':r+1})
- if not products:raise ValueError('未识别到商品卡片；当前支持包含“产品名称、条码、批发价”等标签的左右排列报价单')
+ if not products:raise ValueError('未识别到商品卡片；支持左右排列商品卡片，或含“品名/产品名称、批发价/售价”等表头的一行一商品清单')
  if len(products)>100:raise ValueError('每批最多100个商品卡片，请拆分文件')
  return {'products':products,'assets':list(assets.values()),'warnings':warnings}
 if __name__=='__main__':
