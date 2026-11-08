@@ -1,7 +1,19 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>商品采集到 OPS</title><link rel="stylesheet" href="popup.css">
-<body><header><small>MAINAPIS · OPS</small><h1>采集当前商品</h1><p>在 1688、淘宝或天猫商品详情页打开，预览后保存到待整理采集箱。</p></header>
-<div class="actions"><button id="collect">读取当前商品</button><button id="open" class="secondary">打开 OPS</button></div>
-<p id="status" role="status">等待采集</p>
-<section id="preview" hidden><h2 id="title"></h2><p id="counts"></p><div id="skuPreview"></div><ul id="warnings"></ul><details><summary>产品基本信息（已过滤平台供货信息）</summary><p id="attributePreview" style="white-space:pre-wrap"></p></details><label>商品资料预览 <small>可修改 JSON 后再导入</small><textarea id="json" rows="12" spellcheck="false"></textarea></label><button id="send">查看导入目标与费用</button><section id="billingConfirm" hidden><p id="billingTarget"></p><p id="billingCost"></p><button id="confirmSend">确认导入</button><button id="cancelSend" class="secondary">取消</button></section><button id="download" class="secondary">下载 JSON 备用</button></section>
-<details><summary>修复已发布商品 554 的 SKU 配图</summary><p>在 CRMEB 商品 554 编辑页使用。仅填图片，不自动保存；核对后用商城原来的保存按钮提交。</p><label>选择最新采集 JSON<input id="merchantImagesFile" type="file" accept=".json,application/json"></label><button id="fillMerchant" class="secondary">填入商品 554 配图（不提交）</button></details><p><button id="diagnose" class="secondary">页面结构诊断</button></p><section id="diagnostics" hidden><label>诊断结果 <small>仅含字段名和节点类型，不含账号、Cookie 或字段值</small><textarea id="diagnosticText" rows="8" readonly></textarea></label><button id="downloadDiagnostic" class="secondary">下载诊断 JSON</button></section>
-<footer>试用版 0.1.16 · 图片保留原链接。不会发布商品或读取账号密码。</footer><script type="module" src="popup.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>商品采集到 OPS</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header class="popup-header"><div class="brand-row"><span class="brand-mark" aria-hidden="true">m<span>·</span></span><div><small>MAINAPIS · OPS</small><h1>商品采集助手</h1></div><button id="open" type="button" class="link-button">打开 OPS ↗</button></div><p>1688 / 淘宝 / 天猫 · 预览后保存到待整理</p></header>
+<ol class="steps" aria-label="采集流程"><li id="stepCollect" data-state="active" aria-current="step"><span>1</span>读取商品</li><li id="stepPreview"><span>2</span>核对资料</li><li id="stepImport"><span>3</span>确认导入</li></ol>
+<button id="collect" type="button" class="primary collect-button">读取当前商品</button>
+<p id="status" class="status" role="status" aria-live="polite">等待采集</p>
+<section id="preview" hidden>
+ <article class="preview-card"><div class="product-heading"><img id="productCover" hidden alt="商品首图预览" referrerpolicy="no-referrer"><div><span id="previewPlatform" class="platform-label">已采集</span><h2 id="title"></h2></div></div><div id="counts" class="preview-metrics" aria-label="采集资料数量"></div></article>
+ <details id="warningsPanel" class="review-panel"><summary>需要核对 <span id="warningCount" class="count-badge">0</span></summary><ul id="warnings"></ul></details>
+ <details class="content-panel"><summary>规格预览 <small>最多显示前5项</small></summary><div id="skuPreview"></div></details>
+ <details class="content-panel"><summary>产品参数 <small>已过滤平台供货信息</small></summary><p id="attributePreview" class="attribute-preview"></p></details>
+ <details class="content-panel json-panel"><summary>高级资料与备份 <small>JSON</small></summary><label>商品资料 JSON<small>可编辑；修改后导入以这里的内容为准。</small><textarea id="json" rows="8" spellcheck="false"></textarea></label><button id="download" type="button" class="secondary full-width">下载 JSON 备用</button></details>
+ <div class="import-bar"><button id="send" type="button" class="primary full-width">下一步：核对目标与费用</button><section id="billingConfirm" class="billing-confirm" hidden><strong>确认导入到当前空间</strong><p id="billingTarget"></p><p id="billingCost"></p><div class="confirmation-actions"><button id="confirmSend" type="button" class="primary">确认导入</button><button id="cancelSend" type="button" class="secondary">返回修改</button></div></section><small class="import-note">只保存到采集箱，审核发布在 OPS 完成。</small></div>
+</section>
+<details id="advancedTools" class="content-panel advanced-tools"><summary>更多工具 <small>诊断与历史修复</small></summary><p class="tool-hint">识别不完整时，先展开商品详情并等待图片加载，再重新读取。</p><button id="diagnose" type="button" class="secondary full-width">生成页面结构诊断</button><section id="diagnostics" hidden><label>诊断结果<small>仅含字段名和节点类型，不含账号、Cookie 或字段值。</small><textarea id="diagnosticText" rows="6" readonly></textarea></label><button id="downloadDiagnostic" type="button" class="secondary full-width">下载诊断 JSON</button></section><details><summary>修复已发布商品 554 的 SKU 配图</summary><p class="tool-hint">历史专用工具：在 CRMEB 商品 554 编辑页使用，仅填图片，不自动保存。</p><label>选择最新采集 JSON<input id="merchantImagesFile" type="file" accept=".json,application/json"></label><button id="fillMerchant" type="button" class="secondary full-width">填入商品 554 配图（不提交）</button></details></details>
+<footer>试用版 0.1.17 · 图片保留原链接，不会自动发布商品。</footer>
+<script type="module" src="popup.js"></script>
+</body></html>

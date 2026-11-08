@@ -44,6 +44,7 @@ await writeFile(join(destination,'popup.js'),js);
 let html=await readFile(join(source,'popup.html'),'utf8');
 html=html.replace(/<details><summary>修复已发布商品 554[\s\S]*?<\/details>/,'');
 html=html.replace(/试用版 [0-9.]+/,'Safari 测试版 '+safariCollectorVersion);
+html=html.replace('诊断与历史修复','识别异常诊断');
 html=html.replace('等待采集','请先允许此扩展访问 1688、淘宝、天猫和 OPS；在 Safari 打开商品详情页后点击读取。');
 await writeFile(join(destination,'popup.html'),html);
 const css=await readFile(join(source,'popup.css'),'utf8');
