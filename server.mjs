@@ -1,3 +1,4 @@
+import {RELEASE_NOTES} from './release-notes.mjs';
 import {userDirectory} from './users.mjs';
 import {workbookUploads,ossBrowserOrigin} from './oss-multipart.mjs';
 import {taskQueue,queueWorker} from './task-queue.mjs';
@@ -340,6 +341,7 @@ const handleRequest=async(req,res)=>{
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
+    if(path==='/api/releases'&&req.method==='GET')return json(res,200,{current:systemRelease,releases:RELEASE_NOTES});
     if(path==='/api/users'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理OPS用户'});
       if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('teams')?{teams:users.teams()}:q.has('sub')?users.detail(q.get('sub')):users.list(q.get('q')||'',q.get('page')||1,q.get('filter')||'all'));}

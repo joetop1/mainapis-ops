@@ -33,6 +33,7 @@ test('用户管理API仅系统管理员可访问，写操作需要CSRF，停用�
  for(const sub of ['root','normal'])db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(sub,JSON.stringify({user:{sub},csrf:'csrf'}),Date.now()+60000);
  const call=async(sub,path,method='GET',input={},csrf='csrf')=>{const req=Readable.from(method==='GET'?[]:[Buffer.from(JSON.stringify(input))]);Object.assign(req,{url:path,method,headers:{cookie:'ops_session='+sub,origin:'https://ops.mainapis.com','x-csrf-token':csrf,'content-type':'application/json'}});const res={headers:{},setHeader(k,v){this.headers[k]=v;},writeHead(status,headers={}){this.status=status;Object.assign(this.headers,headers);},end(data){this.data=data?JSON.parse(data):null;}};await handler(req,res);return res;};
  try{
+  assert.equal((await call('missing','/api/releases')).status,401);const releases=await call('normal','/api/releases');assert.equal(releases.status,200);assert.equal(releases.data.releases[0].version,releases.data.current.version);
   assert.equal((await call('normal','/api/users')).status,403);assert.equal((await call('normal','/api/users?sub=root')).status,403);assert.equal((await call('root','/api/users?sub=normal')).data.user.sub,'normal');assert.equal((await call('root','/api/users')).status,200);
   assert.equal((await call('root','/api/users','POST',{sub:'normal',action:'disable'},'wrong')).status,403);
   assert.equal((await call('root','/api/users','POST',{sub:'normal',action:'disable'})).status,200);assert.equal((await call('normal','/api/products')).status,401);
