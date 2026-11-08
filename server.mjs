@@ -359,7 +359,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/billing/cards'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可生成和作废卡密'});
       if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,q.has('batch')?billing.cardDetails(q.get('batch'),q.get('page')||1):billing.cardBatches(q.get('page')||1));}
-      if(req.method==='POST'){const input=await body(req);return json(res,201,billing.mintCards({actor:s.user.sub,label:input.label,amount:input.amount,quantity:input.quantity,expires:input.expires||'',key:input.key,kind:input.kind,storageGB:input.storageGB,storageDays:input.storageDays}));}
+      if(req.method==='POST'){const input=await body(req);if(input.kind==='storage'&&!db.prepare("SELECT 1 FROM billing_card_batches WHERE request_key=? AND actor=? AND kind='storage'").get(input.key,s.user.sub))throw Error('已停止新增单独OSS卡，请选择全能年度套餐');return json(res,201,billing.mintCards({actor:s.user.sub,label:input.label,amount:input.amount,quantity:input.quantity,expires:input.expires||'',key:input.key,kind:input.kind,storageGB:input.storageGB,storageDays:input.storageDays}));}
       if(req.method==='DELETE'){const input=await body(req);return json(res,200,billing.revokeCards({actor:s.user.sub,batchId:input.batchId,reason:input.reason}));}
       return json(res,405,{error:'请求方式不支持'});
     }
