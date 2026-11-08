@@ -14,6 +14,13 @@ export function userDirectory({db,allowed,isSystemAdmin}){
    const total=db.prepare('SELECT COUNT(*) n FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id '+where).get(...args).n;
    const items=db.prepare('SELECT u.*,m.team_id,m.role,m.active member_active,t.name team_name FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id '+where+' ORDER BY u.last_login DESC,u.sub LIMIT 20 OFFSET ?').all(...args,(page-1)*20).map(u=>({...u,system_admin:isSystemAdmin(u.sub),allowlisted:allowed.includes(u.sub)}));return {items,total,page,pageSize:20};
   },
+  detail(sub){
+   const user=db.prepare('SELECT u.*,m.team_id,m.role,m.active member_active,t.name team_name FROM ops_users u LEFT JOIN team_members m ON m.sub=u.sub LEFT JOIN teams t ON t.id=m.team_id WHERE u.sub=?').get(sub);if(!user)throw Error('用户不存在');
+   const sources=[...(allowed.includes(sub)?['部署允许名单']:[]),...(user.granted?['OPS管理员授权']:[]),...(user.team_id?['团队成员']:[])];let sessions=0;
+   for(const r of db.prepare('SELECT data FROM sessions WHERE expires>?').all(Date.now())){try{if(JSON.parse(r.data).user?.sub===sub)sessions++;}catch{}}
+   const events=db.prepare('SELECT e.actor,e.action,e.created,u.name actor_name FROM ops_user_events e LEFT JOIN ops_users u ON u.sub=e.actor WHERE e.subject=? ORDER BY e.created DESC,e.rowid DESC LIMIT 50').all(sub);
+   return {user:{...user,system_admin:isSystemAdmin(sub),sources,access:!user.active?'disabled':user.member_active===0?'team_disabled':sources.length?'enabled':'unauthorized',sessions},events};
+  },
   update(actor,input){
    const sub=input.sub;if(typeof sub!=='string'||!sub||sub.length>200||/[\u0000-\u0020]/.test(sub))throw Error('请填写准确的Casdoor用户ID（sub）');
    if(!['enable','disable','revoke_sessions','role'].includes(input.action))throw Error('用户操作无效');
