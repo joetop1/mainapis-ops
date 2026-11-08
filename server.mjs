@@ -1,3 +1,4 @@
+import {onboardingStatus} from './onboarding.mjs';
 import {storageQuota} from './storage-quota.mjs';
 import {billingStore} from './billing.mjs';
 import {offsiteBackups} from './offsite-backup.mjs';
@@ -410,6 +411,7 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/api/billing'&&req.method==='GET')return json(res,200,{...billing.view(owner,new URL(req.url,origin).searchParams.get('page')||1),storage:quota.status(owner)});
     malls.ensure(owner);
+    if(path==='/api/onboarding'&&req.method==='GET')return json(res,200,onboardingStatus({team,malls:malls.list(owner).map(m=>({configured:!demo&&connected(m.system,owner,m.id)})),productCount:db.prepare('SELECT COUNT(*) n FROM products WHERE owner=?').get(owner).n,publishedCount:db.prepare("SELECT COUNT(*) n FROM jobs WHERE owner=? AND status='succeeded' AND remote_id<>''").get(owner).n,billing:billing.view(owner),storage:quota.status(owner)}));
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
     if(path==='/api/image-storage/availability'&&req.method==='GET')return json(res,200,{malls:malls.list(owner).map(m=>({id:m.id,available:images.available(mallImageOrigin(m))}))});
     if(path==='/api/team'&&req.method==='GET')return json(res,200,{team,members:team?teams.list(team.id):[],events:team?db.prepare('SELECT actor,action,object_id,created FROM team_events WHERE team_id=? ORDER BY created DESC LIMIT 50').all(team.id):[]});
