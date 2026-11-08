@@ -1,3 +1,4 @@
+import {createCatalogRecents} from './catalog-recents.js';
 import {setupAssetPanel} from './assets.js';
 import {editorReadiness} from './editor-readiness.js';
 import {setupOperations} from './operations.js';
@@ -22,6 +23,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 let assetPanel;
 let me={},state={products:[],jobs:[],targets:[]},page='products',filter='all',editing=null,publishing=null,catalog=null,catalogRequest=0;
 const selectedMalls={},settingsRequests={};
+const catalogHistory=createCatalogRecents();
 const mergeSelected=new Set();let mergingProducts=[],mergeRequestId='',mergePreviewKey='',mergePending=null;
 let editingMappings=new Map(),activeMappingId='',publishResults=new Map(),publishUncertain=false;
 let productPage=1,productSize=20,jobPageNumber=1,jobSize=20,jobView={rows:[],page:1,pages:1,total:0,start:0,end:0},jobRequest=0,jobLoading=false;
@@ -306,7 +308,7 @@ async function loadCatalogOptions(p=null,force=false){
  $('#categorySelect').innerHTML=`<option value="${categoryId}">${esc(categoryId?(p?.category||'原分类')+'（等待校验）':'正在读取商城分类…')}</option>`;
  $('#brandSelect').innerHTML=`<option value="${brandId}">${esc(brandId?'原品牌（等待校验）':'不设置品牌')}</option>`;
  $('#categorySelect').disabled=$('#brandSelect').disabled=true;
- $('#catalogStatus').textContent='正在从所选商城读取分类和品牌…';
+ $('#catalogStatus').textContent='正在从所选商城读取分类和品牌…';renderCatalogRecents();
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
  try{
   const connectionId=p?.catalog_connection_id||$('#catalogMall').value;const data=await api('/api/catalog/'+target+'?connection_id='+encodeURIComponent(connectionId)+(force?'&refresh=1':''),'GET',undefined,controller.signal);if(request!==catalogRequest)return;catalog=data;
@@ -323,7 +325,7 @@ async function loadCatalogOptions(p=null,force=false){
    $('#brandSelect').value=String(brandId);$('#brandSelect').disabled=false;
   }
   $('#catalogStatus').textContent=[data.notice,data.categoryError,data.brandError,!data.categories.length&&!data.categoryError?'商城未返回可见分类。':'',!data.brands.length&&!data.brandError?'商城未返回可见品牌，可先不设置品牌。':'',!categoryId&&p?.category?'原分类：'+p.category+'，请从商城列表重新选择。':''].filter(Boolean).join(' ');
- }catch(e){if(request===catalogRequest){catalogLoadFailed('category',categoryId);catalogLoadFailed('brand',brandId);$('#catalogStatus').textContent='读取商城选项失败，请点刷新重试：'+(e.name==='AbortError'?'商城响应超时':e.message);}}finally{clearTimeout(timer);}
+ }catch(e){if(request===catalogRequest){catalogLoadFailed('category',categoryId);catalogLoadFailed('brand',brandId);$('#catalogStatus').textContent='读取商城选项失败，请点刷新重试：'+(e.name==='AbortError'?'商城响应超时':e.message);}}finally{clearTimeout(timer);if(request===catalogRequest)renderCatalogRecents();}
 }
 function filterCatalog(kind){
  const input=$('#'+kind+'Search'),select=$('#'+kind+'Select'),status=$('#'+kind+'Matches');
@@ -340,6 +342,12 @@ function filterCatalog(kind){
 for(const kind of ['category','brand']){
  $('#'+kind+'Search').oninput=()=>filterCatalog(kind);
  $('#'+kind+'Search').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#'+kind+'Select').focus();}};
+}
+function recentCatalogScope(){return [me.user?.sub||'',state.team?.id||me.user?.sub||'',activeMappingId];}
+function renderCatalogRecents(){for(const kind of ['category','brand']){const root=$('#'+kind+'Recent'),select=$('#'+kind+'Select'),rows=catalog?.[kind==='category'?'categories':'brands']||[],recent=select.disabled?[]:catalogHistory.list(recentCatalogScope(),kind,rows);root.replaceChildren();root.classList.toggle('hidden',!recent.length);if(!recent.length)continue;const caption=document.createElement('span');caption.textContent='最近选择';root.append(caption);for(const row of recent){const button=document.createElement('button');button.type='button';button.className='catalog-recent-choice';button.textContent=row.label;button.title=row.label+'（'+row.id+'）';button.dataset.recentId=row.id;button.setAttribute('aria-pressed',String(Number(select.value)===row.id));root.append(button);}const clear=document.createElement('button');clear.type='button';clear.className='text catalog-recents-clear';clear.textContent='清空';clear.dataset.clearRecent='1';clear.setAttribute('aria-label','清空此商城最近选择的'+(kind==='category'?'分类':'品牌'));root.append(clear);}}
+for(const kind of ['category','brand']){
+ $('#'+kind+'Select').addEventListener('change',()=>{const select=$('#'+kind+'Select');if(select.disabled)return;const row=catalog?.[kind==='category'?'categories':'brands']?.find(row=>Number(row.id)===Number(select.value));if(row)catalogHistory.remember(recentCatalogScope(),kind,row);rememberMapping();renderMappingSummary();renderCatalogRecents();});
+ $('#'+kind+'Recent').onclick=event=>{const button=event.target.closest('button');if(!button)return;if(button.dataset.clearRecent){catalogHistory.clear(recentCatalogScope(),kind);renderCatalogRecents();return;}const id=Number(button.dataset.recentId),select=$('#'+kind+'Select'),rows=catalog?.[kind==='category'?'categories':'brands'];if(select.disabled||!rows?.some(row=>Number(row.id)===id))return;$('#'+kind+'Search').value='';filterCatalog(kind);select.value=String(id);select.dispatchEvent(new Event('change',{bubbles:true}));};
 }
 function currentMapping(){
  const f=$('#productForm'),old=editingMappings.get(activeMappingId)||{},categoryId=Number(f.elements.category_id.value)||0,brandId=Number(f.elements.brand_id.value)||0;
@@ -733,6 +741,7 @@ function imageStorageInput(){return {enabled:$('#imageStorageEnabled').checked,b
 async function saveOrTestImageStorage(test){const controls=[...$('#imageStorageForm').querySelectorAll('input,textarea,button')];controls.forEach(x=>x.disabled=true);$('#imageStorageStatus').textContent=test?'正在上传测试图片并读取…':'正在保存…';try{const r=await api('/api/image-storage'+(test?'/test':''),'POST',imageStorageInput());if(!test)await loadImageStorage();$('#imageStorageStatus').textContent=test?r.message:'已保存，发布时仍默认不转存图片。';}catch(e){$('#imageStorageStatus').textContent=e.message;}finally{controls.forEach(x=>x.disabled=false);}}
 $('#imageStorageForm').onsubmit=e=>{e.preventDefault();saveOrTestImageStorage(false);};
 $('#imageStorageTest').onclick=()=>saveOrTestImageStorage(true);
+const sameStyleBody=$('#sameStyleBody'),sameStyleTop=$('#sameStyleBackToTop');sameStyleBody.addEventListener('scroll',()=>sameStyleTop.classList.toggle('hidden',sameStyleBody.scrollTop<240),{passive:true});sameStyleTop.onclick=()=>sameStyleBody.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
 setupSameStyle({$,esc,context:()=>({products:state.products,selected:mergeSelected}),api,load,edit,toast});
 $('#showStyleSources').onchange=()=>{productPage=1;render();};
 const operationPanel=setupOperations({$,api,isAdmin:()=>!!me.systemAdmin});

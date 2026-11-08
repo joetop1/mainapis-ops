@@ -238,3 +238,36 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 .billing-type-card strong,.billing-type-card small{display:block}.billing-type-card strong{font-size:15px;font-weight:600}.billing-type-card small{font-size:11px;color:#7b8f7f;line-height:1.6;margin-top:7px}
 .billing-type-card[aria-checked=true]{border-color:#548769;background:#edf5ee;box-shadow:inset 0 0 0 1px #548769}.billing-type-card[aria-checked=true] strong{color:#2f6544}
 @media(max-width:520px){.billing-type-cards{grid-template-columns:minmax(0,1fr)}.billing-type-card{padding:15px}}
+
+/* Same-style organization follows the product editor's grouped layout. */
+#sameStyleDialog{max-width:1120px;width:calc(100% - 40px)}
+#sameStyleBody{padding:0 24px 24px;background:#f4f7f4;scroll-padding-top:78px;scroll-behavior:smooth}
+#sameStyleBody>.notice{margin:0 0 18px;padding:14px 18px;font-size:11px}
+#sameStyleBody .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}
+#sameStyleBody .form-grid>*{min-width:0}
+#sameStyleBody .actions{max-width:none;flex-wrap:wrap;justify-content:flex-start;margin-bottom:16px}
+#sameStyleBody textarea{line-height:1.7}
+.same-style-tools{display:flex;align-items:end;gap:12px;flex-wrap:wrap;padding:14px 16px;background:#f4f8f2;border:1px solid #e0e8dd;border-radius:8px;margin-bottom:16px}
+.same-style-tools>label{width:min(300px,100%);margin:0}
+#sameStyleRows td{vertical-align:top;padding:12px 10px}
+#sameStyleRows td:first-child{min-width:240px;width:38%}
+#sameStyleRows td:nth-child(2){min-width:160px;width:24%}
+#sameStyleRows td:nth-child(3){min-width:240px;width:38%}
+#sameStyleRows small{line-height:1.7;margin-top:6px;font-size:11px}
+#sameStyleMedia .supplier-pictures{flex-wrap:wrap;margin-top:14px}
+#sameStyleMedia .supplier-pictures img{width:84px;height:84px;border:1px solid #e0e7df;border-radius:8px;background:#f7faf6}
+#same-style-media>label{max-width:360px}
+#sameStylePreview:empty:before{content:'完成规格对应后，点击下方“预览并检查”查看整理结果。';font-size:12px;color:#879883;line-height:1.8}
+#sameStyleForm>footer{gap:12px;flex-wrap:wrap}
+#sameStyleStatus{flex:1 1 320px;margin:0}
+.catalog-field-group{min-width:0;margin-bottom:16px}
+.catalog-field-group>.catalog-inline-field{margin-bottom:6px}
+.catalog-recents{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
+.catalog-recents>span{font-size:10px;color:#85967f;margin-right:2px}
+.catalog-recent-choice{font-size:11px;line-height:1.5;padding:5px 9px;background:#f1f6ef;border:1px solid #dfe8d9;border-radius:6px;color:#56744b;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.catalog-recent-choice:hover,.catalog-recent-choice[aria-pressed=true]{background:#e4efdf;border-color:#86a477;color:#365f30}
+.catalog-recents-clear{font-size:10px;color:#89957f}
+@media(max-width:760px){#sameStyleDialog{width:calc(100% - 16px)}#sameStyleBody{padding:0 12px 16px}#sameStyleBody .form-grid{grid-template-columns:minmax(0,1fr)}#sameStyleForm>footer{padding:14px 16px}#sameStyleStatus{flex-basis:100%}.catalog-recent-choice{max-width:180px}}
+@media(prefers-reduced-motion:reduce){#sameStyleBody{scroll-behavior:auto}}
+#sameStyleDialog{max-height:94vh;overflow:hidden}#sameStyleForm{display:flex;flex-direction:column;max-height:94vh;min-height:0}#sameStyleForm>.dialog-head,#sameStyleForm>footer{flex-shrink:0}#sameStyleBody{min-height:0;flex:1}
+.style-sku-metrics{display:flex;gap:7px 12px;flex-wrap:wrap;margin-top:9px;font-size:10px;color:#82937b}.style-sku-metrics span{display:flex;gap:5px;align-items:center}.style-sku-metrics b{font-size:11px;font-weight:550;color:#56734d;font-variant-numeric:tabular-nums}
