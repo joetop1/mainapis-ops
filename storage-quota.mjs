@@ -7,7 +7,7 @@ export function storageQuota({db,getPlan,isExempt,clock=()=>Date.now(),fetchImpl
  const tx=fn=>{db.exec('BEGIN IMMEDIATE');try{const r=fn();db.exec('COMMIT');return r;}catch(e){db.exec('ROLLBACK');throw e;}};
  const usage=owner=>db.prepare("SELECT COALESCE(SUM(CASE WHEN state='stored' THEN bytes ELSE 0 END),0) storedBytes,COALESCE(SUM(CASE WHEN state='reserved' THEN bytes ELSE 0 END),0) reservedBytes,COUNT(*) objects FROM storage_objects WHERE owner=?").get(owner);
  const status=owner=>{const plan=getPlan(owner),used=usage(owner),exempt=isExempt(owner);return {...plan,...used,exempt,availableBytes:exempt?null:Math.max(0,plan.limitBytes-used.storedBytes-used.reservedBytes),scope:'tracked_uploads',trafficMetered:false};};
- function access(owner){const s=status(owner);if(!s.exempt&&!s.active)throw Error('请先兑换含OSS的全能年度套餐；原有图片不会删除');return s;}
+ function access(owner){const s=status(owner);if(!s.exempt&&!s.active)throw Error('OSS套餐未生效，请先兑换开通或续期卡；原有图片不会删除');return s;}
  return {status,assertAccess:access,
   async upload(c,key,image,owner){
    if(key!==compactImageKey(owner,image.bytes,image.ext))throw Error('图片对象路径与工作空间不符');const destination=storageDestination(c),lease=randomUUID(),bytes=image.bytes.length,url=c.publicOrigin+'/'+key;

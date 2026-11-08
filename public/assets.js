@@ -1,6 +1,6 @@
 export function assetPresentation(data,now=Date.now()){
  const storage=data.storage||{},number=n=>Number.isFinite(n)?n.toLocaleString('zh-CN'):'—',size=n=>Number.isFinite(n)?(n/1024**3).toFixed(2)+' GB':'—';
- const expiry=Date.parse(storage.expires),remaining=Number.isFinite(expiry)?expiry-now:NaN,active=storage.active&&remaining>0;
+ const expiry=Date.parse(storage.expires||storage.previousExpires),remaining=Number.isFinite(expiry)?expiry-now:NaN,active=storage.active&&remaining>0;
  const plan=active?'剩余 '+Math.ceil(remaining/86400000)+' 天':storage.exempt?'免额度限制':Number.isFinite(expiry)&&remaining<=0?'套餐已到期':'无有效套餐';
  const planHint=active?'有效至 '+new Date(expiry).toLocaleDateString('zh-CN')+(storage.exempt?' · 内部免额度':''):storage.exempt?'内部空间，新增上传不受套餐限制':'外链图片可继续使用';
  const used=(storage.storedBytes||0)+(storage.reservedBytes||0),percent=storage.limitBytes>0?Math.min(100,Math.max(0,used/storage.limitBytes*100)):null;
