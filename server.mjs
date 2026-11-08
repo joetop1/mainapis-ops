@@ -1,3 +1,4 @@
+import {userDirectory} from './users.mjs';
 import {workbookUploads,ossBrowserOrigin} from './oss-multipart.mjs';
 import {taskQueue,queueWorker} from './task-queue.mjs';
 import {operations,readiness} from './operations.mjs';
@@ -93,6 +94,7 @@ const dataDir=process.env.DATA_DIR||join(root,'data'); await mkdir(dataDir,{recu
 const db=openStore(join(dataDir,'ops.sqlite'));
 const tasks=taskQueue(db);
 const teams=teamStore(db),actorContext=new AsyncLocalStorage();
+const users=userDirectory({db,allowed,isSystemAdmin});
 const branding=systemSettings(db);
 const collectors=productCollectors(db);
 const mergeProducts=productMerge({db,collectors,audit:(...args)=>audit(...args),actor:()=>({sub:actorContext.getStore()?.actor||'',name:actorContext.getStore()?.name||''})});
@@ -278,7 +280,8 @@ const handleRequest=async(req,res)=>{
       const meta=await discovery();
       const tokens=await remoteJSON(meta.token_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',client_id:client,client_secret:clientSecret,code:q.get('code'),redirect_uri:origin+'/auth/callback',code_verifier:pending.verifier})});
       const claims=verifyIdToken(tokens.id_token,await remoteJSON(meta.jwks_uri),{issuer,audience:client,nonce:pending.nonce});
-      if((teams.member(claims.sub)&&!teams.member(claims.sub).active)||(!allowed.includes(claims.sub)&&!teams.context(claims.sub)))return json(res,403,{error:'账号未获运营后台访问权限，请由管理员将 Casdoor 的 sub 加入 ALLOWED_SUBJECTS'});
+      if(users.blocked(claims.sub)||(teams.member(claims.sub)&&!teams.member(claims.sub).active)||(!allowed.includes(claims.sub)&&!teams.context(claims.sub)&&!users.granted(claims.sub)))return json(res,403,{error:'账号未获OPS访问权限或已停用，请联系系统管理员'});
+      users.seen(claims.sub,claims.name||claims.preferred_username||claims.sub);
       sessionSet(res,{user:{sub:claims.sub,name:claims.name||claims.preferred_username||claims.sub},csrf:secret()});audit(claims.sub,'login','');return redirect(res,'/');
     }
     if(path.startsWith('/api/callback/') && req.method==='POST') {
@@ -329,11 +332,18 @@ const handleRequest=async(req,res)=>{
       if(['succeeded','failed'].includes(job.status)){if(job.status!==b.status||job.remote_id!==remoteId)return json(res,409,{error:'终态结果冲突'});return json(res,200,{ok:true,duplicate:true});}
       db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);return json(res,200,{ok:true});
     }
+    if(path!=='/auth/logout'&&s?.user&&users.blocked(s.user.sub))return json(res,403,{error:'OPS账号已停用，请联系系统管理员'});
     if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
     if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,system:systemRelease,systemAdmin:!demo&&isSystemAdmin(s?.user?.sub),branding:branding.read(),authReady:demo||!!(client&&clientSecret&&allowed.length)});
     if(!s?.user)return json(res,401,{error:'请先登录'});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
+    }
+    if(path==='/api/users'){
+      if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可管理OPS用户'});
+      if(req.method==='GET'){const q=new URL(req.url,origin).searchParams;return json(res,200,users.list(q.get('q')||'',q.get('page')||1));}
+      if(req.method==='POST')return json(res,200,users.update(s.user.sub,await body(req)));
+      return json(res,405,{error:'请求方式不支持'});
     }
     if(['/api/image-storage','/api/image-storage/test'].includes(path)){
       if(!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可配置共享图片存储'});
