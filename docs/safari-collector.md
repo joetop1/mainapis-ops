@@ -1,4 +1,4 @@
-# MainAPIs Safari 采集助手 0.1.17（待真机验收）
+# MainAPIs Safari 采集助手 0.1.18（待真机验收）
 
 此包是 Safari Web Extension 资源包，不是可以直接安装的 IPA。需使用自己的 Apple Developer 账号签名、构建后，通过 TestFlight 安装。桌面 Chrome/Edge 采集插件保持原样。
 
@@ -49,3 +49,5 @@ node scripts/build-safari-collector.mjs
 0.1.16：加入detail.tmall.com天猫商品页支持；资源包需要重新打包安装并授予天猫域名访问权限，仍待真机验收。
 
 0.1.17：修复Safari browser.storage.local配额不足导致采集报错。草稿优先使用IndexedDB，仅保留当前一份，成功迁移后清理旧草稿缓存；编辑保存防抖并串行写入。若两种缓存均不可用，当前预览仍可直接导入或下载JSON，关闭窗口前请先导出。新增draft-cache.js必须加入扩展资源。
+
+0.1.18：加入导入目标与费用确认，确认后重新核对价格版本、余额和工作空间；重复来源不再次写入。需OPS >=0.20.1。脚本和弹窗资源已更新，未自动更新已安装的App Store/TestFlight应用；须重新生成资源、打包签名并由运营者发布，仍需Safari/iPad真机验收。收费开关仍关闭。

@@ -56,11 +56,11 @@ test('插件权限限于手动选中页面和OPS；脚本可独立注入',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../extensions/1688-collector/manifest.json',import.meta.url)));
  assert.deepEqual(manifest.host_permissions,['https://ops.mainapis.com/*']);assert.deepEqual(manifest.content_scripts,[{matches:['https://ops.mainapis.com/*'],js:['version-bridge.js'],run_at:'document_idle'}]);assert.equal(manifest.permissions.includes('cookies'),false);
  const source=readFileSync(new URL('../extensions/1688-collector/popup.js',import.meta.url),'utf8');
- const fn=source.slice(source.indexOf('export async function importIntoOps'),source.indexOf("\n$('#send')")).replace('export ','');
- const run=context=>vm.runInNewContext('('+fn+')({source_url:"https://detail.1688.com/offer/123.html"})',context);
+ const fn=source.slice(source.indexOf('export async function importIntoOps'),source.indexOf("\nlet pendingImport=")).replace('export ','');
+ const run=context=>vm.runInNewContext('('+fn+')({source_url:"https://detail.1688.com/offer/123.html"},{owner:"allowed",source_url:"https://detail.1688.com/offer/123.html",revision:1,due:0})',context);
  return (async()=>{
   let writes=0;const response=await run({location:{origin:'https://ops.mainapis.com'},AbortSignal,fetch:async()=>({ok:true,json:async()=>({user:null})})});assert.match(response.error,/登录/);
-  const out=await run({location:{origin:'https://ops.mainapis.com'},AbortSignal,fetch:async(url,options)=>{if(url==='/api/me')return {ok:true,json:async()=>({user:{sub:'allowed'},csrf:'csrf'})};writes++;assert.equal(options.headers['X-CSRF-Token'],'csrf');assert.equal(options.credentials,'same-origin');assert.equal(url,'/api/products');return {ok:true,json:async()=>({id:'draft-id'})};}});
+  const out=await run({location:{origin:'https://ops.mainapis.com'},AbortSignal,fetch:async(url,options)=>{if(url==='/api/me')return {ok:true,json:async()=>({user:{sub:'allowed'},csrf:'csrf'})};if(url==='/api/billing/quote')return {ok:true,json:async()=>({owner:'allowed',revision:1,due:0,available:0})};writes++;assert.equal(options.headers['X-CSRF-Token'],'csrf');assert.equal(options.credentials,'same-origin');assert.equal(url,'/api/products');return {ok:true,json:async()=>({id:'draft-id'})};}});
   assert.equal(writes,1);assert.equal(out.id,'draft-id');
   const wrong=await run({location:{origin:'https://evil.com'}});assert.ok(wrong.error);
  })();

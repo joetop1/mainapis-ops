@@ -24,30 +24,39 @@ $('#collect').onclick=e=>busy(e.currentTarget,async()=>{
  const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:collector});
  clearTimeout(draftTimer);preview(out.result);const cached=await drafts.save(out.result);status(cached.saved?'采集预览已生成，请核对后导入。':'采集成功，但浏览器未能缓存草稿。请保持窗口打开，直接导入或下载JSON；关闭后可能需要重新采集。');
 });
-// Runs in an isolated OPS tab. Existing login + CSRF apply; no server-side token or CORS exception.
-export async function importIntoOps(product){
+// Runs in an isolated OPS tab. Credentials and CSRF never leave that tab.
+export async function quoteIntoOps(product){
+ if(location.origin!=='https://ops.mainapis.com')return {error:'OPS 地址不匹配'};
+ try{const meResponse=await fetch('/api/me',{credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000)});if(!meResponse.ok)return {error:'无法读取OPS登录状态'};const me=await meResponse.json();if(!me.user||!me.csrf)return {error:'请先在OPS标签页登录，再返回插件。'};
+  const response=await fetch('/api/billing/quote',{method:'POST',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify({kind:'collect',quantity:1,source_url:product.source_url})});const quote=await response.json();if(!response.ok)return {error:quote.error||'费用预估失败，请更新OPS后重试'};
+  const owner=me.team?.id||me.user.sub;if(quote.owner!==owner||!Number.isSafeInteger(quote.due)||quote.due<0||!Number.isSafeInteger(quote.revision))return {error:'费用预估回执无效，请更新OPS后重试'};
+  return {quote:{...quote,source_url:product.source_url}};
+ }catch{return {error:'费用预估未完成，未导入或扣点，请检查OPS连接。'};}
+}
+export async function importIntoOps(product,confirmed){
  if(location.origin!=='https://ops.mainapis.com')return {error:'OPS 地址不匹配'};
  try{
-  const meResponse=await fetch('/api/me',{credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000)});
-  if(!meResponse.ok)return {error:'无法读取 OPS 登录状态'};const me=await meResponse.json();
-  if(!me.user||!me.csrf)return {error:'请先在 OPS 标签页完成 Casdoor 登录，再返回插件点击导入。'};
-  const res=await fetch('/api/products',{method:'POST',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify(product)});
-  const data=await res.json();return res.ok?{id:data.id}:{error:data.error||'导入失败'};
- }catch{return {error:'未确认导入结果，请先在 OPS 按来源链接查找；重复来源会被拦截。'};}
+  const meResponse=await fetch('/api/me',{credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000)});if(!meResponse.ok)return {error:'无法读取 OPS 登录状态'};const me=await meResponse.json();if(!me.user||!me.csrf)return {error:'请先在 OPS 标签页完成 Casdoor 登录，再返回插件点击导入。'};
+  const owner=me.team?.id||me.user.sub;if(!confirmed||confirmed.owner!==owner||confirmed.source_url!==product.source_url)return {error:'工作空间或商品已变化，请重新查看费用并确认'};
+  const quoteResponse=await fetch('/api/billing/quote',{method:'POST',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify({kind:'collect',quantity:1,source_url:product.source_url})});const quote=await quoteResponse.json();if(!quoteResponse.ok)return {error:quote.error||'费用核对失败，未导入'};
+  if(quote.owner!==owner)return {error:'工作空间已变化，请重新查看费用'};if(quote.existing?.id)return {id:quote.existing.id,duplicate:true};
+  if(!Number.isSafeInteger(quote.due)||quote.due<0||quote.due>confirmed.due||quote.due>0&&(quote.revision!==confirmed.revision||quote.due!==confirmed.due))return {error:'价格已变化，请重新查看费用并确认，未导入或扣点'};
+  if(quote.due>quote.available)return {error:'点数不足，请充值后重新查看费用'};
+  const res=await fetch('/api/products',{method:'POST',credentials:'same-origin',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:JSON.stringify({...product,billing_revision:quote.revision,billing_owner:owner})});const data=await res.json();return res.ok?{id:data.id}:{error:data.error||'导入失败'};
+ }catch{return {error:'未确认导入结果，请先在OPS按来源链接查找；保留原来源重试不会重复导入或扣点。'};}
 }
+let pendingImport=null,importing=false;
+function cancelImport(){pendingImport=null;$('#billingConfirm').hidden=true;$('#json').disabled=false;$('#collect').disabled=false;}
+$('#cancelSend').onclick=()=>{cancelImport();status('已取消导入，未扣点数。');};
 $('#send').onclick=e=>busy(e.currentTarget,async()=>{
- const data=JSON.parse($('#json').value);
- if(!Array.isArray(data.products)||data.products.length!==1)throw Error('当前仅支持一次导入 1 件商品。');
- const product=data.products[0];
- product.source_url=canonicalSourceURL(product?.source_url);
- if(JSON.stringify(product).length>1000000)throw Error('商品资料过大，请缩减到 1 MB 以内。');
- const tabs=await chrome.tabs.query({url:OPS+'/*'});
- const tab=tabs.find(t=>{try{return new URL(t.url).pathname==='/';}catch{return false;}});
- if(!tab){await chrome.tabs.create({url:OPS+'/'});throw Error('已打开 OPS。完成登录后，回到商品页打开插件，预览会保留，再点击导入。');}
- status('正在导入 OPS 待整理采集箱…');
- const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'ISOLATED',func:importIntoOps,args:[product]});
- if(out.result?.error)throw Error(out.result.error);if(!out.result?.id)throw Error('未收到导入结果，请在 OPS 检查。');
- status('已导入待整理采集箱。到 OPS 点击刷新，设置分类、售价和库存后审核。');
+ if(importing)throw Error('正在提交导入，请等待结果');try{cancelImport();const data=JSON.parse($('#json').value);if(!Array.isArray(data.products)||data.products.length!==1)throw Error('当前仅支持一次导入1件商品。');const product=data.products[0];product.source_url=canonicalSourceURL(product?.source_url);if(JSON.stringify(product).length>1000000)throw Error('商品资料过大，请缩减到1MB以内。');
+ const tabs=await chrome.tabs.query({url:OPS+'/*'}),tab=tabs.find(t=>{try{return new URL(t.url).pathname==='/';}catch{return false;}});if(!tab){await chrome.tabs.create({url:OPS+'/'});throw Error('已打开OPS。完成登录后，回到商品页再次查看导入费用。');}
+ $('#json').disabled=true;$('#collect').disabled=true;status('正在核对导入目标和费用…');const [out]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'ISOLATED',func:quoteIntoOps,args:[product]});if(out.result?.error)throw Error(out.result.error);const quote=out.result?.quote;if(!quote)throw Error('未取得费用回执，未导入');
+ if(quote.existing?.id){cancelImport();status('当前工作空间已经有这款来源商品，未重复导入或扣点，请到OPS查看。');return;}if(quote.due>quote.available)throw Error('需要'+quote.due+'点，可用'+quote.available+'点，请充值后重试。');
+ pendingImport={product,quote,tabId:tab.id};$('#billingTarget').textContent='导入目标：'+quote.workspace;$('#billingCost').textContent=!quote.enabled?'收费未启用，本次不扣点数':quote.exempt?'当前内部工作空间免计费':'本次新增1件商品，扣'+quote.due+'点；可用'+quote.available+'点';$('#confirmSend').textContent=quote.due?'确认导入，扣'+quote.due+'点':'确认导入，不扣点数';$('#billingConfirm').hidden=false;$('#json').disabled=true;$('#collect').disabled=true;status('请核对工作空间和费用后确认。');}catch(error){cancelImport();throw error;}
+});
+$('#confirmSend').onclick=e=>busy(e.currentTarget,async()=>{
+ if(!pendingImport)throw Error('请先查看费用');if(importing)throw Error('正在导入，请稍候');importing=true;$('#send').disabled=true;$('#cancelSend').disabled=true;const request=pendingImport;status('正在导入OPS待整理采集箱…');try{const [out]=await chrome.scripting.executeScript({target:{tabId:request.tabId},world:'ISOLATED',func:importIntoOps,args:[request.product,request.quote]});if(out.result?.error)throw Error(out.result.error);if(!out.result?.id)throw Error('未收到导入结果，请先在OPS核对。');status(out.result.duplicate?'当前工作空间已存在该商品，未重复导入或扣点。':'已导入待整理采集箱。请到OPS设置分类、售价和库存后审核。');}finally{importing=false;$('#send').disabled=false;$('#cancelSend').disabled=false;cancelImport();}
 });
 $('#download').onclick=()=>{try{const data=JSON.parse($('#json').value);const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ops-product.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{status('JSON 格式不正确，请检查预览内容。');}};
 $('#json').addEventListener('input',()=>{clearTimeout(draftTimer);draftTimer=setTimeout(async()=>{try{const data=JSON.parse($('#json').value);if(data.products?.length===1){const result=await drafts.save({product:data.products[0],warnings:['已恢复你编辑的采集草稿，请再次核对。']});if(!result.saved)status('修改保留在当前窗口，但未能缓存；请直接导入或下载JSON。');}}catch{}},600);});
