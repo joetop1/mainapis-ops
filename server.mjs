@@ -349,6 +349,9 @@ const handleRequest=async(req,res)=>{
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }
     if(path==='/api/releases'&&req.method==='GET')return json(res,200,{current:systemRelease,releases:RELEASE_NOTES});
+    if(path==='/api/billing/test'&&req.method==='POST'){
+      if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可启停工作空间收费测试'});const input=await body(req);if(typeof input.owner!=='string'||input.confirmOwner!==input.owner)throw Error('请确认测试工作空间');if(!db.prepare('SELECT 1 FROM teams WHERE id=? UNION SELECT 1 FROM ops_users WHERE sub=?').get(input.owner,input.owner))throw Error('目标工作空间不存在');return json(res,200,billing.setTest({owner:input.owner,actor:s.user.sub,enabled:input.enabled,storage:input.storage,collect:input.collect,publish:input.publish,revision:input.revision,reason:input.reason}));
+    }
     if(path==='/api/billing/rates'){
       if(demo||!isSystemAdmin(s.user.sub))return json(res,403,{error:'仅系统管理员可配置单价'});
       if(req.method==='GET')return json(res,200,billing.rates());if(req.method==='POST'){const input=await body(req);return json(res,200,billing.saveRates({actor:s.user.sub,collect:input.collect,publish:input.publish,revision:input.revision}));}return json(res,405,{error:'请求方式不支持'});
