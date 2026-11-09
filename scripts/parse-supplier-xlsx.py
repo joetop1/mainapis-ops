@@ -2,16 +2,17 @@
 import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 # Detect header-based catalogs; only explicit title rows become products.
-def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
+def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None):
  from datetime import datetime,timedelta
  from decimal import Decimal,InvalidOperation
  aliases={
   'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号'),
-  'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','销售价','售价','市场价'),
-  'barcode':('条形码','条码','商品条码'), 'images':('产品图片','商品图片','图片'),
+  'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','日常售价','销售价','售价','市场价'),
+  'barcode':('条形码','条码','商品条码','产品条码'), 'images':('产品图片','商品图片','图片'),
   'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量'),
   'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
-  'position':('定位','产品定位'), 'series_info':('系列特点','系列说明')}
+  'position':('定位','产品定位'), 'series_info':('系列特点','系列说明'),
+  'dimensions':('产品尺寸',), 'accessories':('产品配件',)}
  def normalize(text):return re.sub(r'[\s（）()¥￥]','',text).rstrip('元')
  lookup={normalize(label):key for key,labels in aliases.items() for label in labels}
  headers=[];by_row={}
@@ -21,7 +22,25 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
   for c,text in by_row[row]:
    key=lookup.get(normalize(text))
    if key and key not in columns:columns[key]=c;labels[key]=text
+  # Some suppliers split product fields and pricing fields across adjacent header rows.
+  if 'title' in columns and 'images' in columns and 'barcode' in columns:
+   lower={lookup.get(normalize(t)):(c,t) for c,t in by_row.get(row+1,[]) if normalize(t) in ('批发价','日常售价')}
+   if 'cost' in lower and 'price' in lower:
+    for key,(c,t) in lower.items():columns[key]=c;labels[key]=t
+    headers.append((row+1,columns,labels))
+    continue
   if 'title' in columns and ('cost' in columns or 'price' in columns) and len(columns)>=3:headers.append((row,columns,labels))
+ if mapping is not None:
+  columns=mapping.get('columns')
+  start=mapping.get('start_row')
+  end=mapping.get('end_row')
+  if (type(start) is not int or not 1<=start<=1048576
+      or (end is not None and (type(end) is not int or not start<=end<=1048576))
+      or not isinstance(columns,dict) or 'title' not in columns
+      or any(k not in aliases or type(v) is not int or not 1<=v<=16384 for k,v in columns.items())
+      or len(set(columns.values()))!=len(columns)):
+   raise ValueError('货盘列映射无效')
+  headers=[(start-2,{k:v-1 for k,v in columns.items()},{k:aliases[k][0] for k in columns})]
  if not headers:return None
  merges=[]
  def point(a):
@@ -41,15 +60,15 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
   return ''
  def money(raw):
   raw=raw.strip();raw=re.sub(r'^[¥￥]\s*','',raw);raw=re.sub(r'\s*元$','',raw)
-  if not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?',raw):return None
-  amount=float(raw.replace(',',''))
-  return amount if 0<=amount<=99999999 else None
+  if not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?',raw):return None
+  amount=Decimal(raw.replace(',','')); rounded=amount.quantize(Decimal('0.01'))
+  return float(rounded) if 0<=amount<=99999999 and abs(amount-rounded)<=Decimal('0.000000001') else None
  result=[];last=max((r for r,c in cells),default=0)+1
  row_numbers=sorted({r for r,c in cells})
  for index,(header,columns,labels) in enumerate(headers):
   end=headers[index+1][0] if index+1<len(headers) else last
   for row in row_numbers:
-   if not header<row<end:continue
+   if not header<row<end or (mapping is not None and mapping.get('end_row') is not None and row>=mapping['end_row']):continue
    title=cells.get((row,columns['title']),'').strip()
    if not title or title in ('合计','总计','小计','备注','说明'):continue
    get=lambda key:value(row,columns[key]) if key in columns else ''
@@ -67,7 +86,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
    if not barcodes:flags.append('无条码：使用系统SKU编码，条码保持空缺')
    if len(barcodes)>1:flags.append('多个条码：请逐项确认规格与条码对应关系')
    attributes=[]
-   for key in ('model','date','position','series_info'):
+   for key in ('model','date','position','series_info','dimensions','accessories'):
     text=get(key)
     if key=='date' and re.fullmatch(r'\d+(?:\.0+)?',text) and 1<=float(text)<=100000:
      text=((datetime(1904,1,1) if date1904 else datetime(1899,12,30))+timedelta(days=float(text))).strftime('%Y-%m-%d')
@@ -75,7 +94,9 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False):
    result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':get('model')})
  return result
 
-def parse(path,out):
+def parse(path,out,mapping=None):
+ if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or 'images' not in mapping.get('columns',{})):
+  raise ValueError('请指定工作表和图片列')
  z=zipfile.ZipFile(path);infos=z.infolist()
  if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>768*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
  for x in infos:
@@ -95,6 +116,7 @@ def parse(path,out):
   return v-1
  products=[];assets={};warnings=[];books=rels('xl/workbook.xml');workbook=xml('xl/workbook.xml');properties=workbook.find('s:workbookPr',N);date1904=properties is not None and properties.get('date1904') in ('1','true')
  for sheet in xml('xl/workbook.xml').findall('s:sheets/s:sheet',N):
+  if mapping is not None and sheet.get('name')!=mapping['sheet']:continue
   name=books.get(sheet.get('{'+N['r']+'}id'))
   if not name:continue
   root=xml(name);cells={}
@@ -123,7 +145,7 @@ def parse(path,out):
     if asset not in assets:
      filename=asset+'.bin';open(os.path.join(out,filename),'wb').write(data);assets[asset]={'id':asset,'file':filename,'bytes':len(data)}
     pictures.append((int(origin.find('d:row',N).text),int(origin.find('d:col',N).text),asset))
-  tabular=table_products(cells,pictures,[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)],sheet.get('name'),date1904)
+  tabular=table_products(cells,pictures,[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)],sheet.get('name'),date1904,mapping)
   if tabular is not None:
    products.extend(tabular);continue
   for r,c in starts:
@@ -159,6 +181,6 @@ def parse(path,out):
  return {'products':products,'assets':list(assets.values()),'warnings':warnings}
 if __name__=='__main__':
  try:
-  result=parse(sys.argv[1],sys.argv[2]);print(json.dumps(result,ensure_ascii=False))
+  result=parse(sys.argv[1],sys.argv[2],json.loads(sys.argv[3]) if len(sys.argv)>3 else None);print(json.dumps(result,ensure_ascii=False))
  except Exception as e:
   print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)
