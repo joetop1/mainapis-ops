@@ -91,8 +91,9 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    });
    const plan=JSON.stringify(items);if(r.plan&&r.plan!==plan)throw Error('此批次已开始导入，重试请保持原选择和内容；可重新上传文件建立新预览');if(r.destination&&r.destination!==storageDestination(c))throw Error('存储目标已变化，请恢复原存储配置再重试');
    const rate=r.billing_rate?JSON.parse(r.billing_rate):prepareCharge?.(owner,input.billing_revision,true);
-   db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing',billing_rate=? WHERE id=?").run(plan,storageDestination(c),JSON.stringify(rate||null),id);active.add(id);
-   setImmediate(async()=>{let results=JSON.parse(r.results);try{
+   const completed=JSON.parse(r.results).filter(x=>x.ok);
+   db.prepare("UPDATE supplier_batches SET plan=?,destination=?,state='processing',billing_rate=?,results=? WHERE id=?").run(plan,storageDestination(c),JSON.stringify(rate||null),JSON.stringify(completed),id);active.add(id);
+   setImmediate(async()=>{let results=completed;try{
     for(const item of items){if(results.some(x=>x.key===item.key&&x.ok))continue;const original=data.products.find(p=>p.key===item.key);let result;
      try{
       const current=getStorage();if(!current?.enabled||!allowedStorage(owner,current)||storageDestination(current)!==storageDestination(c))throw Error('存储配置或授权已变化');
