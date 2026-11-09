@@ -30,7 +30,7 @@ test('请求处理链路：登录隔离、CSRF、商品导入、审核、编辑�
   assert.equal((await call(`/api/products/${id}/publish`,'POST',{target:'crmeb-pro',revision:1})).status,503);
   assert.equal((await call(`/api/products/${id}`,'PUT',{...p,title:'修改后的标题',revision:1})).status,200);
   assert.equal((await call(`/api/products/${id}`,'PUT',{...p,revision:1})).status,409);
-  r=await call('/api/state');assert.equal(r.data.products[0].revision,2);assert.equal(r.data.products[0].status,'draft');assert.equal(r.data.jobs.length,0);
+  r=await call('/api/state');assert.equal(r.data.products[0].revision,2);assert.equal(r.data.products[0].status,'pending_review');assert.equal(r.data.jobs.length,0);
   r=await call('/api/import','POST',{products:[p,{source_url:'https://evil.com'}]});assert.deepEqual(r.data.results.map(x=>x.ok),[false,false]);
   r=await call('/api/import','POST',{table:'商品标题\t宝贝ID\t价格\t代发价\n官方导出测试\t456\t3.98\t4.98'});assert.equal(r.data.results[0].ok,true);
   const imported=(await call('/api/state')).data.products.find(x=>x.source_url.includes('/456.html'));assert.equal(imported.status,'draft');assert.equal(imported.sourcing.purchase_price,'3.98');assert.equal(imported.skus.length,0);

@@ -631,7 +631,7 @@ const handleRequest=async(req,res)=>{
           candidate.mall_mappings=p.mall_mappings.filter(m=>m.catalog_connection_id!==active.id).map(m=>({...m}));candidate.mall_mappings.push({catalog_connection_id:active.id,catalog_target:active.system,category_id:candidate.category_id||0,category:candidate.category||'',brand_ids:candidate.brand_ids,tag_ids:candidate.tag_ids,...(active.system==='crmeb-store'?{applicable_type:candidate.applicable_type??0}:{})});
         }
         const validated=await validateCatalog(candidate,owner);const v=await repairSavedImageUrls(validated,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});if(v.source_url!==p.source_url)throw Error('来源链接不能修改');
-        const result=db.prepare("UPDATE products SET data=?,status='draft',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
+        const result=db.prepare("UPDATE products SET data=?,status='pending_review',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
         if(!result.changes)return json(res,409,{error:'商品已被更新，请刷新后重试'});
         audit(owner,'product.edit',r.id);return json(res,200,{ok:true});
       }
