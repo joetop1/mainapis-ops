@@ -94,8 +94,8 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
    result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':get('model')})
  return result
 
-def parse(path,out,mapping=None):
- if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or 'images' not in mapping.get('columns',{})):
+def parse(path,out,mapping=None,inspect=False):
+ if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or not isinstance(mapping.get('columns'),dict) or 'images' not in mapping['columns']):
   raise ValueError('请指定工作表和图片列')
  z=zipfile.ZipFile(path);infos=z.infolist()
  if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>768*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
@@ -114,7 +114,7 @@ def parse(path,out,mapping=None):
   v=0
   for c in s:v=v*26+ord(c)-64
   return v-1
- products=[];assets={};warnings=[];books=rels('xl/workbook.xml');workbook=xml('xl/workbook.xml');properties=workbook.find('s:workbookPr',N);date1904=properties is not None and properties.get('date1904') in ('1','true')
+ products=[];assets={};warnings=[];layouts=[];books=rels('xl/workbook.xml');workbook=xml('xl/workbook.xml');properties=workbook.find('s:workbookPr',N);date1904=properties is not None and properties.get('date1904') in ('1','true')
  for sheet in xml('xl/workbook.xml').findall('s:sheets/s:sheet',N):
   if mapping is not None and sheet.get('name')!=mapping['sheet']:continue
   name=books.get(sheet.get('{'+N['r']+'}id'))
@@ -128,6 +128,12 @@ def parse(path,out,mapping=None):
    # Formula results must be explicitly reviewed, never execute cached formulas.
    if c.find('s:f',N) is not None:value=''
    cells[(int(m[2])-1,col(m[1]))]=value.strip()
+  if inspect:
+   rows={}
+   for (r,c),v in cells.items():
+    if r<30 and c<100 and v:rows.setdefault(r+1,{})[c+1]=v[:100]
+   layouts.append({'sheet':sheet.get('name'),'rows':rows})
+   continue
   starts=sorted((r,c) for (r,c),v in cells.items() if v in ('产品名称','商品名称'))
   sheetrels=rels(name);pictures=[]
   for draw in root.findall('s:drawing',N):
@@ -176,11 +182,13 @@ def parse(path,out,mapping=None):
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
    if not title:continue
    products.append({'key':sheet.get('name')+':'+str(r+1)+':'+str(c+1),'title':title,'category_hint':section,'barcodes':barcodes,'cost':price('批发价') if price('批发价') is not None else price('供货价'),'price':price('零售价'),'description':'\n'.join(fields.get('描述',[])),'attributes':[{'name':label,'value':' / '.join(fields[label])} for label in ('产品成分','产品参数') if fields.get(label)],'packaging':' / '.join(fields.get('箱规',[])),'images':list(dict.fromkeys(pics)),'warnings':flags,'sheet':sheet.get('name'),'row':r+1})
+ if inspect:return layouts
  if not products:raise ValueError('未识别到商品卡片；支持左右排列商品卡片，或含“品名/产品名称、批发价/售价”等表头的一行一商品清单')
  if len(products)>100:raise ValueError('每批最多100个商品卡片，请拆分文件')
  return {'products':products,'assets':list(assets.values()),'warnings':warnings}
 if __name__=='__main__':
  try:
-  result=parse(sys.argv[1],sys.argv[2],json.loads(sys.argv[3]) if len(sys.argv)>3 else None);print(json.dumps(result,ensure_ascii=False))
+  arg=sys.argv[3] if len(sys.argv)>3 else None
+  result=parse(sys.argv[1],sys.argv[2],None if arg in (None,'inspect') else json.loads(arg),arg=='inspect');print(json.dumps(result,ensure_ascii=False))
  except Exception as e:
   print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)

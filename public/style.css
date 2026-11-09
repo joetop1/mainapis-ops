@@ -271,3 +271,16 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 @media(prefers-reduced-motion:reduce){#sameStyleBody{scroll-behavior:auto}}
 #sameStyleDialog{max-height:94vh;overflow:hidden}#sameStyleForm{display:flex;flex-direction:column;max-height:94vh;min-height:0}#sameStyleForm>.dialog-head,#sameStyleForm>footer{flex-shrink:0}#sameStyleBody{min-height:0;flex:1}
 .style-sku-metrics{display:flex;gap:7px 12px;flex-wrap:wrap;margin-top:9px;font-size:10px;color:#82937b}.style-sku-metrics span{display:flex;gap:5px;align-items:center}.style-sku-metrics b{font-size:11px;font-weight:550;color:#56734d;font-variant-numeric:tabular-nums}
+
+/* Compact workbook preview; expand only the rows that need review. */
+.supplier-selection{position:sticky;top:0;z-index:3;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:9px 12px;background:#f1f7f3;border:1px solid #dce6dc;border-radius:8px}
+.supplier-selection[hidden],.supplier-card[hidden]{display:none}
+.supplier-selection label,.supplier-card .supplier-card-choice{display:flex;align-items:center;gap:8px}
+.supplier-card .supplier-card-choice{flex-wrap:wrap;cursor:pointer;min-height:28px}
+.supplier-card-choice span{flex:1;min-width:12ch;overflow-wrap:anywhere}
+.supplier-card-choice input,.supplier-selection input{width:auto;margin:0;flex:none}
+.supplier-card{padding:8px 12px;margin:6px 0}
+.supplier-card:has([data-confirm]:checked){border-color:#a5c7b0;background:#f6faf7}
+.supplier-card-detail>summary{cursor:pointer;font-size:.875rem;color:#365c49;padding:4px 0}
+.supplier-card-detail[open]>summary{margin-bottom:8px}
+.supplier-card-detail .supplier-pictures img{width:72px;height:72px}

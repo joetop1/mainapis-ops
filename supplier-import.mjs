@@ -25,7 +25,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
   }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
-  finally{parsing--;await rm(join(dir,'input.xlsx'),{force:true});if(r.remote_source){try{const remote=JSON.parse(r.remote_source),c=getStorage();if(c&&storageDestination(c)===remote.destination){const response=await ossRequest(c,remote.key,'DELETE',{}, {},undefined,fetchImpl);await response.body?.cancel();db.prepare("UPDATE supplier_batches SET remote_source='' WHERE id=?").run(r.id);}}catch{console.error('supplier_private_cleanup_pending');}}}
+  finally{parsing--;if(r.remote_source){try{const remote=JSON.parse(r.remote_source),c=getStorage();if(c&&storageDestination(c)===remote.destination){const response=await ossRequest(c,remote.key,'DELETE',{}, {},undefined,fetchImpl);await response.body?.cancel();db.prepare("UPDATE supplier_batches SET remote_source='' WHERE id=?").run(r.id);}}catch{console.error('supplier_private_cleanup_pending');}}}
 
  }
  async function tick(){
@@ -60,6 +60,22 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    db.prepare('INSERT INTO supplier_batches(id,owner,supplier,filename,data,created,state,parse_started) VALUES(?,?,?,?,?,?,?,?)').run(id,owner,supplier,filename,JSON.stringify({products:[],assets:[]}),Date.now(),background?'queued':'parsing',background?0:Date.now());audit(owner,'supplier.preview',id);
    if(!background)await parseBatch(batch(owner,id));
    const result=view(batch(owner,id));if(!background&&result.state==='parse_failed')throw Error(result.error);return result;
+  },
+  async layout(owner,id){
+   const r=batch(owner,id);if(r.plan||!['ready','parse_failed'].includes(r.state)||active.has(id))throw Error('当前批次不能修改列映射');
+   const dir=join(directory,id);
+   const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'inspect'],{timeout:15000,maxBuffer:1024*1024}).catch(()=>{throw Error('无法读取表格结构，请重新上传原表');});
+   return JSON.parse(stdout);
+  },
+  async remap(owner,id,mapping){
+   const r=batch(owner,id);if(r.plan||!['ready','parse_failed'].includes(r.state)||active.has(id)||parsing>=2)throw Error('当前批次不能修改列映射');
+   const dir=join(directory,id);active.add(id);parsing++;
+   try{
+    const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024}).catch(e=>{let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'无法读取映射，请检查列和行号');});
+    const data=JSON.parse(stdout);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=?").run(JSON.stringify(data),id);
+   }finally{active.delete(id);parsing--;}
+   return view(batch(owner,id));
   },
   get(owner,id){return view(batch(owner,id));},
   async asset(owner,id,asset){const r=batch(owner,id),a=JSON.parse(r.data).assets.find(a=>a.id===asset);if(!a)throw Error('图片不存在');const bytes=await readFile(join(directory,id,a.file));return {bytes,...imageType(bytes)};},
