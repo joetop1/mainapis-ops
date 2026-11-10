@@ -18,6 +18,27 @@ import {detailImagesFromJSON,detailHTML} from './detail-images.js';
 import {batchPrices,batchCosts} from './pricing.js';
 import {matchSkuImages} from './sku-images.js';
 const $=s=>document.querySelector(s);
+const pageBuild=$('meta[name="ops-build"]')?.content;
+if(pageBuild){
+ let checking=false;
+ const checkRelease=async()=>{
+  if(checking||document.hidden||!$('#opsUpdate').hidden)return;
+  checking=true;
+  try{
+   const response=await fetch('/api/system-release',{cache:'no-store',signal:AbortSignal.timeout(8000)});
+   if(!response.ok)return;
+   const release=await response.json();
+   if(/^[a-f0-9]{12}$/.test(release.build)&&release.build!==pageBuild){
+    $('#opsUpdateMessage').textContent='已发布新版本，请在保存当前操作后刷新体验。';
+    $('#opsUpdate').hidden=false;
+   }
+  }catch{}finally{checking=false;}
+ };
+ $('#opsReload').onclick=()=>{if(document.querySelector('dialog[open]'))return;location.reload();};
+ document.addEventListener('visibilitychange',checkRelease);
+ setInterval(checkRelease,60000);
+ checkRelease();
+}
 const actions=actionDialogs({$});
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let assetPanel;

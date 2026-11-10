@@ -297,3 +297,7 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 #editor #storeScopeField label{display:flex;align-items:center;gap:8px;min-height:34px;margin:0;cursor:pointer}
 #editor #storeScopeField input{width:auto;margin:0;flex:none}
 @media(max-width:760px){#editor .catalog-scope-row{grid-template-columns:minmax(0,1fr)}}
+
+.ops-update{position:fixed;z-index:12;top:12px;right:12px;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 24px);padding:8px 12px;border:1px solid #a5c7b0;border-radius:10px;background:#f1f7f3;box-shadow:0 4px 18px #173a2926}
+.ops-update[hidden]{display:none}
+.ops-update button{flex:none}
