@@ -16,5 +16,10 @@ export function jobPage(db,owner,page,pageSize,filters={}){
  p.data AS product_data,s.claimed,s.product AS snapshot_data,i.sub AS initiated_by,i.name AS initiator_name
  FROM jobs j ${join} LEFT JOIN products p ON p.id=j.product_id AND p.owner=j.owner LEFT JOIN job_snapshots s ON s.job_id=j.id
  WHERE ${where} ORDER BY j.created DESC,j.id DESC LIMIT ? OFFSET ?`).all(...params,info.pageSize,info.offset);
- return {...info,summary,rows:rows.map(({product_data,snapshot_data,...row})=>({...row,claimed:!!row.claimed,marker:'OPS-'+row.id.replaceAll('-',''),product_title:product_data?JSON.parse(product_data).title||'商品记录':'商品记录',fx:row.target==='tigshop'&&snapshot_data?JSON.parse(snapshot_data).tigshop?.fx:null}))};
+ return {...info,summary,rows:rows.map(({product_data,snapshot_data,...row})=>{
+  const current=product_data?JSON.parse(product_data):null,snapshot=snapshot_data?JSON.parse(snapshot_data):null;
+  const image=snapshot?.images?.[0]||current?.images?.[0];
+  return {...row,claimed:!!row.claimed,marker:'OPS-'+row.id.replaceAll('-',''),product_title:snapshot?.title||current?.title||'商品记录',
+   product_image:typeof image==='string'&&image.startsWith('https://')?image:'',fx:row.target==='tigshop'?snapshot?.tigshop?.fx??null:null};
+ })};
 }
