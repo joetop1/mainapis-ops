@@ -141,7 +141,12 @@ function render(){
  $('#collectionScope').classList.toggle('hidden',!state.team);
  renderStats();
  const mergeUsage=mergeUsages(state.products),usedStyleSources=new Set(mergeUsage.keys()),showStyleSources=$('#showStyleSources').checked;
- const search=$('#search').value.toLowerCase(),products=state.products.filter(p=>(showStyleSources||!usedStyleSources.has(p.id))&&(filter==='all'||p.status===filter)&&`${p.title} ${p.source_url} ${(p.skus||[]).map(s=>s.source?.url||'').join(' ')}`.toLowerCase().includes(search));
+ const source=$('#collectionSource').value,supplierField=$('#collectionSupplierField'),supplierSelect=$('#collectionSupplier'),previousSupplier=supplierSelect.value;
+ supplierField.hidden=source!=='supplier';
+ const suppliers=[...new Set(state.products.map(p=>p.supplier_import?.supplier).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+ supplierSelect.replaceChildren(new Option('全部供应商',''),...suppliers.map(name=>new Option(name,name)));supplierSelect.value=suppliers.includes(previousSupplier)?previousSupplier:'';
+ const sourceOf=p=>p.supplier_import?'supplier':p.source_url.startsWith('https://detail.tmall.com/')?'tmall':p.source_url.startsWith('https://item.taobao.com/')?'taobao':p.source_url.startsWith('https://detail.1688.com/')?'1688':'';
+ const search=$('#search').value.trim().toLowerCase(),products=state.products.filter(p=>(!source||sourceOf(p)===source)&&(source!=='supplier'||!supplierSelect.value||p.supplier_import?.supplier===supplierSelect.value)&&((showStyleSources||!usedStyleSources.has(p.id))&&(filter==='all'||p.status===filter)&&`${p.title} ${p.source_url} ${(p.skus||[]).map(s=>s.source?.url||'').join(' ')}`.toLowerCase().includes(search)));
  const productPaging=pageInfo(products.length,productPage,productSize);productPage=productPaging.page;
  $('#count').textContent=`第 ${productPaging.start}–${productPaging.end} 件 / 筛选结果 ${products.length} 件（已加载 ${state.products.length} 件，最多 1000 件）`;
  $('#productPageInfo').textContent=productPaging.page+' / '+productPaging.pages+' 页';$('#productPrev').disabled=productPage<=1;$('#productNext').disabled=productPage>=productPaging.pages;
@@ -615,6 +620,12 @@ $('#yunzhongTest').onclick=()=>saveYunzhongConnection(true);
 function updateYunzhongMode(){$('#yunzhongCategoryModeField').classList.toggle('hidden',$('#yunzhongMode').value==='bridge');}
 $('#yunzhongMode').onchange=updateYunzhongMode;
 
+$('#collectionSource').onchange=()=>{$('#collectionSupplier').value='';productPage=1;render();};
+$('#collectionSupplier').onchange=()=>{productPage=1;render();};
+$('#resetCollectionFilters').onclick=()=>{
+ $('#collectionSource').value='';$('#collectionSupplier').value='';$('#search').value='';$('#showStyleSources').checked=false;
+ document.querySelector('[data-filter="all"]').click();
+};
 $('#collectionScope').onchange=async()=>{mergeSelected.clear();productPage=1;try{await load();}catch(e){toast(e.message);}};
 $('#productPrev').onclick=()=>{productPage--;render();$('#products').scrollIntoView({block:'start'});};
 $('#productNext').onclick=()=>{productPage++;render();$('#products').scrollIntoView({block:'start'});};
