@@ -291,4 +291,9 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 .collection-filters label{display:flex;align-items:center;gap:6px}
 .collection-filters label[hidden]{display:none}
 
-#editor #storeScopeField select[name="applicable_type"]{width:min(100%, 17rem)}
+#editor .catalog-scope-row{grid-template-columns:minmax(0,9rem) minmax(0,1fr);align-items:start}
+#editor #storeScopeField{margin:0;padding:0;border:0;min-inline-size:0}
+#editor #storeScopeField legend{padding:0;margin-bottom:8px}
+#editor #storeScopeField label{display:flex;align-items:center;gap:8px;min-height:34px;margin:0;cursor:pointer}
+#editor #storeScopeField input{width:auto;margin:0;flex:none}
+@media(max-width:760px){#editor .catalog-scope-row{grid-template-columns:minmax(0,1fr)}}
