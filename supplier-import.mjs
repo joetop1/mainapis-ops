@@ -36,7 +36,14 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   await parseBatch(r);
  }
  function batch(owner,id){const r=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('货盘预览不存在或不属于当前空间');return r;}
- function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products,assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
+ const sourceFor=(supplier,p)=>'supplier:'+hash(supplier.toLowerCase()+'|'+(p.barcodes.length?p.barcodes.join('|'):p.title));
+ function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(p=>{
+  const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(r.owner,sourceFor(r.supplier,p));
+  if(!existing)return p;
+  const publications=db.prepare("SELECT target,mall_connection_id,remote_id,revision FROM jobs WHERE owner=? AND product_id=? AND status='succeeded' ORDER BY created DESC,id DESC").all(r.owner,existing.id);
+  const seen=new Set();
+  return {...p,existing_product:{id:existing.id,publications:publications.filter(j=>{const key=JSON.stringify([j.target,j.mall_connection_id]);if(seen.has(key))return false;seen.add(key);return true;})}};
+ }),assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
  async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
   prune,tick,
@@ -97,7 +104,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
     for(const item of items){if(results.some(x=>x.key===item.key&&x.ok))continue;const original=data.products.find(p=>p.key===item.key);let result;
      try{
       const current=getStorage();if(!current?.enabled||!allowedStorage(owner,current)||storageDestination(current)!==storageDestination(c))throw Error('存储配置或授权已变化');
-      const source='supplier:'+hash(r.supplier.toLowerCase()+'|'+(original.barcodes.length?original.barcodes.join('|'):original.title));
+      const source=sourceFor(r.supplier,original);
       const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(owner,source);
       if(existing){result={key:item.key,ok:true,id:existing.id,duplicate:true};}
       else{
