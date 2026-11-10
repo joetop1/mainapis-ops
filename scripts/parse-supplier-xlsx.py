@@ -95,8 +95,8 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
  return result
 
 def parse(path,out,mapping=None,inspect=False):
- if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or not isinstance(mapping.get('columns'),dict) or 'images' not in mapping['columns']):
-  raise ValueError('请指定工作表和图片列')
+ if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or not isinstance(mapping.get('columns'),dict)):
+  raise ValueError('请指定工作表和商品名称列')
  z=zipfile.ZipFile(path);infos=z.infolist()
  if len(infos)>3000 or len({x.filename for x in infos})!=len(infos) or sum(x.file_size for x in infos)>768*1024*1024:raise ValueError('表格解压内容过大或包含重复条目')
  for x in infos:
@@ -184,7 +184,7 @@ def parse(path,out,mapping=None,inspect=False):
    products.append({'key':sheet.get('name')+':'+str(r+1)+':'+str(c+1),'title':title,'category_hint':section,'barcodes':barcodes,'cost':price('批发价') if price('批发价') is not None else price('供货价'),'price':price('零售价'),'description':'\n'.join(fields.get('描述',[])),'attributes':[{'name':label,'value':' / '.join(fields[label])} for label in ('产品成分','产品参数') if fields.get(label)],'packaging':' / '.join(fields.get('箱规',[])),'images':list(dict.fromkeys(pics)),'warnings':flags,'sheet':sheet.get('name'),'row':r+1})
  if inspect:return layouts
  if not products:raise ValueError('未识别到商品卡片；支持左右排列商品卡片，或含“品名/产品名称、批发价/售价”等表头的一行一商品清单')
- if len(products)>100:raise ValueError('每批最多100个商品卡片，请拆分文件')
+ if len(products)>500:raise ValueError(f'已识别 {len(products)} 件商品，超过单份货盘 500 件上限，未生成预览。')
  return {'products':products,'assets':list(assets.values()),'warnings':warnings}
 if __name__=='__main__':
  try:

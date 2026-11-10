@@ -17,11 +17,33 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
  for(const [name,type] of [['billing_rate',"TEXT NOT NULL DEFAULT ''"],['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
  db.exec("UPDATE supplier_batches SET billing_rate='{\"due\":0,\"legacy\":true}' WHERE plan IS NOT NULL AND billing_rate=''");
+ db.exec("CREATE TABLE IF NOT EXISTS supplier_layouts(owner TEXT NOT NULL,supplier TEXT NOT NULL,signature TEXT NOT NULL,mapping TEXT NOT NULL,PRIMARY KEY(owner,supplier,signature))");
+ async function inspectWorkbook(dir){
+  const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'inspect'],{timeout:15000,maxBuffer:4*1024*1024});
+  return JSON.parse(stdout);
+ }
+ function layoutSignature(layouts,mapping){
+  const rows=layouts.find(layout=>layout.sheet===mapping.sheet)?.rows;
+  const header=rows?.[mapping.start_row-1];
+  if(!header?.[mapping.columns.title]||Object.keys(header).length<2)return null;
+  return hash(JSON.stringify([mapping.sheet,mapping.start_row,Object.entries(header).sort(([a],[b])=>Number(a)-Number(b))]));
+ }
+ async function retryKnownLayout(r,dir){
+  const templates=db.prepare('SELECT signature,mapping FROM supplier_layouts WHERE owner=? AND supplier=?').all(r.owner,r.supplier);
+  if(!templates.length)return null;
+  const layouts=await inspectWorkbook(dir);
+  for(const template of templates){
+   const mapping=JSON.parse(template.mapping);
+   if(layoutSignature(layouts,mapping)!==template.signature)continue;
+   return execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024});
+  }
+  return null;
+ }
  async function parseBatch(r){
   const dir=join(directory,r.id);parsing++;
   try{
    if(r.remote_source){const remote=JSON.parse(r.remote_source),c=getStorage();if(!c?.enabled||!allowedStorage(r.owner,c)||storageDestination(c)!==remote.destination)throw Error('OSS配置或授权发生变化');const free=await statfs(dataDir);if(free.bavail*free.bsize<remote.size+1024*1024*1024)throw Error('解析所需磁盘空间不足，请先清理');const response=await ossRequest(c,remote.key,'GET',{}, {},undefined,fetchImpl);let size=0;await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,encoding,callback){size+=chunk.length;callback(size>remote.size||size>MAX_WORKBOOK_BYTES?Error('OSS文件大小异常'):null,chunk);}}),createWriteStream(join(dir,'input.xlsx'),{mode:0o600}));if(size!==remote.size)throw Error('OSS文件不完整');}
-   let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
+   let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}if(message?.startsWith('未识别到商品'))out=await retryKnownLayout(r,dir).catch(()=>null);if(!out)throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
   }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
@@ -95,6 +117,11 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
     const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024}).catch(e=>{let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'无法读取映射，请检查列和行号');});
     const data=JSON.parse(stdout);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
     db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=?").run(JSON.stringify(data),id);
+    if(!mapping.end_row){
+     const layouts=await inspectWorkbook(dir).catch(()=>[]);
+     const signature=layoutSignature(layouts,mapping);
+     if(signature)db.prepare('INSERT OR REPLACE INTO supplier_layouts(owner,supplier,signature,mapping) VALUES(?,?,?,?)').run(r.owner,r.supplier,signature,JSON.stringify(mapping));
+    }
    }finally{active.delete(id);parsing--;}
    return view(batch(owner,id));
   },
@@ -103,7 +130,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   async remove(owner,id){batch(owner,id);if(active.has(id)||batch(owner,id).state==='parsing')throw Error('正在处理，不能删除');await rm(join(directory,id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(id);return {ok:true};},
   start(owner,id,input){
    const r=batch(owner,id);if(!['ready','partial','done','processing'].includes(r.state))throw Error('请等待解析完成后再导入');if(active.has(id))return view(r);if(active.size>=2)throw Error('已有2个货盘正在导入，请稍后重试');const data=JSON.parse(r.data),c=getStorage();if(!c?.enabled||!allowedStorage(owner,c))throw Error('请先启用共享OSS，并将当前空间至少一个商城域名加入允许列表');
-   if(!Array.isArray(input.items)||!input.items.length||input.items.length>100)throw Error('请选择1至100件商品');
+   if(!Array.isArray(input.items)||!input.items.length||input.items.length>500)throw Error('请选择1至500件商品');
    const keys=new Set();const items=input.items.map(item=>{
     const original=data.products.find(p=>p.key===item.key);if(!original||keys.has(item.key)||item.confirmed!==true)throw Error('请逐件确认商品及规格对应关系');keys.add(item.key);
     if(!String(item.title||'').trim()||!Array.isArray(item.skus)||!item.skus.length||item.skus.length>50)throw Error('标题或SKU无效');

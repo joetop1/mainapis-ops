@@ -11,11 +11,12 @@ import {supplierImports} from '../supplier-import.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),python=process.env.PYTHON_BIN||'python3';
 const config={enabled:true,bucket:'examplebucket',region:'cn-hangzhou',publicOrigin:'https://images.example.com',allowedOrigins:['https://mall.example.com'],accessKeyId:'exampleAccessKeyID',accessKeySecret:'exampleSecretForTestsOnly'};
 // Synthetic fixture only: never commit supplier product data or artwork.
-function createFixture(path,withImage=false){execFileSync(python,['-c',`import zipfile,sys
+function createFixture(path,withImage=false,table=false){execFileSync(python,['-c',`import zipfile,sys
 z=zipfile.ZipFile(sys.argv[1],'w')
 z.writestr('xl/workbook.xml','<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="测试" r:id="rId1"/></sheets></workbook>')
 z.writestr('xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
 rows={3:{'C':'产品名称','D':'测试产品','I':'产品名称','J':'多规格产品'},4:{'C':'条码','D':'6977880050002','I':'条码','J':'6977880050040、6977880050033'},5:{'C':'产品成分','D':'棉'},6:{'C':'产品参数','D':'10cm'},7:{'C':'箱规','D':'10/箱'},8:{'C':'描述','D':'产品说明'},10:{'C':'零售价','D':'59元','E':'批发价','F':'29元','I':'零售价','J':'99元','K':'批发价','L':'39元'}}
+if sys.argv[3]=='1': rows={1:{'A':'货品叫法','B':'拿货金额'},2:{'A':'测试商品','B':'35'}}
 data=''.join('<row r="%s">'%r+''.join('<c r="%s%s" t="inlineStr"><is><t>%s</t></is></c>'%(c,r,v) for c,v in cs.items())+'</row>' for r,cs in rows.items())
 extra='<drawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="drawing"/>' if sys.argv[2]=='1' else ''
 z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+data+'</sheetData>'+extra+'</worksheet>')
@@ -25,7 +26,7 @@ if extra:
  z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><twoCellAnchor><from><row>4</row><col>0</col></from><pic><a:blip r:embed="image"/></pic></twoCellAnchor></wsDr>')
  z.writestr('xl/drawings/_rels/drawing1.xml.rels','<Relationships><Relationship Id="image" Target="../media/image.png"/></Relationships>')
  z.writestr('xl/media/image.png',base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhWQAAAAASUVORK5CYII='))
-z.close()`,path,withImage?'1':'0']);}
+z.close()`,path,withImage?'1':'0',table?'1':'0']);}
 async function wait(service,owner,id){for(let i=0;i<100;i++){const v=service.get(owner,id);if(v.state!=='processing')return v;await delay(5);}throw Error('worker timeout');}
 test('货盘卡片提取、预览隔离、库存必填、多SKU确认、导入幂等、无1688链接编辑支持',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ops-supplier-test-')),db=openStore(join(dir,'test.sqlite'));const path=join(dir,'test.xlsx');createFixture(path);const audits=[],collectors=[];
@@ -83,5 +84,26 @@ test('私有OSS货盘按大小流式下载、解析后删除原件且不自动�
   const input={supplier:'私有货盘',filename:'报价.xlsx',key:'ops-private/workbooks/test/file.xlsx',size:bytes.length,destination:storageDestination(config)};
   const queued=await service.enqueueRemote('alice',input);assert.equal((await service.enqueueRemote('alice',input)).id,queued.id);await service.tick();assert.equal(service.get('alice',queued.id).state,'ready');assert.equal(service.get('alice',queued.id).products.length,2);assert.deepEqual(calls,['GET','DELETE']);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);
   const bad=await service.enqueueRemote('alice',{...input,key:'ops-private/workbooks/test/bad.xlsx',size:bytes.length+1});await service.tick();assert.equal(service.get('alice',bad.id).state,'parse_failed');assert.match(service.get('alice',bad.id).error,/不完整/);
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('陌生表头首次点选成功后，同账号同供应商可自动复用',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-layout-'));
+ const db=openStore(join(dir,'test.sqlite')),path=join(dir,'table.xlsx');
+ try{
+  createFixture(path,false,true);
+  const input={supplier:'测试供应商',filename:'报价.xlsx',bytes:await readFile(path)};
+  const service=supplierImports({db,dataDir:dir,root,python,audit:()=>{}});
+  const first=await service.enqueue('alice',input);
+  await service.tick();
+  assert.equal(service.get('alice',first.id).state,'parse_failed');
+  const mapped=await service.remap('alice',first.id,{sheet:'测试',start_row:2,columns:{title:1,cost:2}});
+  assert.equal(mapped.products[0].cost,35);
+  const next=await service.enqueue('alice',input);
+  await service.tick();
+  assert.equal(service.get('alice',next.id).products[0].title,'测试商品');
+  const other=await service.enqueue('bob',input);
+  await service.tick();
+  assert.equal(service.get('bob',other.id).state,'parse_failed');
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
