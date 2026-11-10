@@ -8,8 +8,8 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
  aliases={
   'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号'),
   'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','日常售价','销售价','售价','市场价'),
-  'barcode':('条形码','条码','商品条码','产品条码'), 'images':('产品图片','商品图片','图片'),
-  'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量'),
+  'barcode':('条形码','条码','商品条码','产品条码','颜色/编号'), 'images':('产品图片','商品图片','图片'),
+  'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量','装箱数'),
   'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
   'position':('定位','产品定位'), 'series_info':('系列特点','系列说明'),
   'dimensions':('产品尺寸',), 'accessories':('产品配件',)}
@@ -40,7 +40,15 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
       or any(k not in aliases or type(v) is not int or not 1<=v<=16384 for k,v in columns.items())
       or len(set(columns.values()))!=len(columns)):
    raise ValueError('货盘列映射无效')
-  headers=[(start-2,{k:v-1 for k,v in columns.items()},{k:aliases[k][0] for k in columns})]
+  columns={k:v-1 for k,v in columns.items()}
+  labels={k:aliases[k][0] for k in columns}
+  manual_blocks=mapping.get('grouping')=='repeated_header'
+  if manual_blocks:
+   first=start-2
+   signature={c:normalize(cells.get((first,c),'')) for c in columns.values() if cells.get((first,c))}
+   if columns['title'] not in signature or len(signature)<2:raise ValueError('请选择重复表头下一行作为首个商品行，至少映射两列表头')
+   headers=[(r,columns,labels) for r in sorted(by_row) if first<=r and (end is None or r<end) and all(normalize(cells.get((r,c),''))==v for c,v in signature.items())]
+  else:headers=[(start-2,columns,labels)]
  if not headers:return None
  merges=[]
  def point(a):
@@ -67,20 +75,38 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
  row_numbers=sorted({r for r,c in cells})
  for index,(header,columns,labels) in enumerate(headers):
   end=headers[index+1][0] if index+1<len(headers) else last
-  for row in row_numbers:
+  if mapping is not None and mapping.get('end_row') is not None:end=min(end,mapping['end_row'])
+  block_rows=[r for r in row_numbers if header<r<end]
+  def block_values(key):
+   return list(dict.fromkeys(v for r in block_rows if (v:=cells.get((r,columns[key]),'')))) if key in columns else []
+  titles=block_values('title')
+  costs={money(v) for v in block_values('cost')}-{None}
+  prices={money(v) for v in block_values('price')}-{None}
+  repeated=sum(other==columns for _,other,_ in headers)>1
+  block=(mapping is not None and manual_blocks) or (mapping is None and repeated and {'title','barcode','cost','price','description'}<=columns.keys() and (len(titles)>1 or len(block_rows)>4) and len(costs)<=1 and len(prices)<=1 and bool(costs or prices))
+  title_row=next((r for r in block_rows if cells.get((r,columns['title']))),None)
+  for row in ([title_row] if block and title_row is not None else block_rows):
    if not header<row<end or (mapping is not None and mapping.get('end_row') is not None and row>=mapping['end_row']):continue
    title=cells.get((row,columns['title']),'').strip()
    if not title or title in ('合计','总计','小计','备注','说明'):continue
    get=lambda key:value(row,columns[key]) if key in columns else ''
+   if block:
+    def get(key):
+     values=block_values(key)
+     if key in ('cost','price'):
+      amounts=costs if key=='cost' else prices
+      return str(next(iter(amounts))) if len(amounts)==1 else ''
+     return '\n'.join(values)
    raw_barcode=get('barcode')
    if re.fullmatch(r'\d+(?:\.\d+)?[eE][+-]?\d+',raw_barcode):
     try:raw_barcode=format(Decimal(raw_barcode),'f').split('.')[0]
     except InvalidOperation:pass
    barcodes=list(dict.fromkeys(re.findall(r'(?<!\d)\d{8,14}(?!\d)',raw_barcode)))
-   pics=list(dict.fromkeys(aid for pr,pc,aid in pictures if pr==row and ('images' not in columns or pc==columns['images'])))
+   pics=list(dict.fromkeys(aid for pr,pc,aid in pictures if (header<=pr<end if block else pr==row) and (pc==columns['images'] if 'images' in columns else not block or pc<columns['title'])))
    cost,price=money(get('cost')),money(get('price'));flags=[]
    if cost is None:flags.append('采购成本未识别，请人工填写；不使用其他行价格')
    if price is None:flags.append('售价未识别，请人工填写；赠品等文字不自动转成0元')
+   if block and len(titles)>1:flags.append('商品块含多行名称或文案，暂取首行作为名称，请核对')
    if get('images'):flags.append('图片栏备注：'+get('images'))
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
    if not barcodes:flags.append('无条码：使用系统SKU编码，条码保持空缺')

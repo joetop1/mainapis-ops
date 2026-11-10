@@ -785,7 +785,7 @@ $('#supplierReadLayout').onclick=async()=>{
  button.disabled=true;
  try{
   const sheets=await api('/api/supplier-imports/'+id+'/layout');if(supplierBatch?.id!==id)return;
-  fields.innerHTML='<label>工作表<select data-layout-sheet>'+sheets.map((s,i)=>'<option value="'+i+'">'+esc(s.sheet)+'</option>').join('')+'</select></label><label>首个商品行<input type="number" min="1" max="1048576" value="2" data-layout-start></label><label>最后一个商品行（可留空）<input type="number" min="1" max="1048576" data-layout-end></label><div data-layout-cols></div><button type="button" data-layout-apply>按所选列重新预览</button>';
+  fields.innerHTML='<label>工作表<select data-layout-sheet>'+sheets.map((s,i)=>'<option value="'+i+'">'+esc(s.sheet)+'</option>').join('')+'</select></label><label>首个商品行<input type="number" min="1" max="1048576" value="2" data-layout-start></label><label>最后一个商品行（可留空）<input type="number" min="1" max="1048576" data-layout-end></label><label>商品排列<select data-layout-grouping><option value="">一行一个商品</option><option value="repeated_header">多行一个商品（重复表头分组）</option></select></label><div data-layout-cols></div><button type="button" data-layout-template>套用已存模板</button><label><input type="checkbox" data-layout-remember>预览成功后保存为此供应商的模板</label><button type="button" data-layout-ai>AI 推荐列</button><button type="button" data-layout-apply>按所选列重新预览</button>';
   const sheet=()=>sheets[Number(fields.querySelector('[data-layout-sheet]').value)];
   const draw=()=>{
    const start=Number(fields.querySelector('[data-layout-start]').value),rows=Object.entries(sheet()?.rows||{}),letters=n=>n>26?'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor((n-1)/26)-1]+'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[(n-1)%26]:'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[n-1];
@@ -793,13 +793,53 @@ $('#supplierReadLayout').onclick=async()=>{
    fields.querySelector('[data-layout-cols]').innerHTML=Object.entries(supplierColumns).map(([key,label])=>'<label>'+label+'<select data-layout-field="'+key+'"><option value="">不选择</option>'+options+'</select></label>').join('');
   };
   fields.querySelector('[data-layout-sheet]').onchange=draw;fields.querySelector('[data-layout-start]').onchange=draw;draw();
+  const templateKey='ops-supplier-template:'+JSON.stringify([me.user?.sub,state.team?.id||'',supplierBatch.supplier.trim().toLowerCase()]);
+  const signature=(tab,start)=>{
+   if(!tab||!Number.isInteger(start)||start<2||start>31)return '';
+   const rows=Object.entries(tab.rows).filter(([r])=>Number(r)<start).slice(-3);
+   return rows.length?JSON.stringify(rows):'';
+  };
+  fields.querySelector('[data-layout-template]').onclick=()=>{
+   try{
+    const saved=JSON.parse(localStorage.getItem(templateKey)||'null');
+    if(!saved)throw Error('此供应商在当前浏览器还没有保存模板。');
+    const tab=sheet(),match=signature(tab,saved.start_row);
+    if(!match||match!==saved.signature)throw Error('当前工作表的表头和模板不同，请重新核对并选列。');
+    fields.querySelector('[data-layout-start]').value=saved.start_row;
+    fields.querySelector('[data-layout-grouping]').value=saved.grouping;draw();
+    for(const select of fields.querySelectorAll('[data-layout-field]'))select.value=String(saved.columns[select.dataset.layoutField]??'');
+    supplierFeedback('已套用模板，请检查最后一个商品行并重新预览。');
+   }catch(error){supplierFeedback(error.message,true);}
+  };
+  fields.querySelector('[data-layout-ai]').onclick=async e=>{
+   const ai=e.currentTarget,start=fields.querySelector('[data-layout-start]'),start_row=Number(start.value),name=sheet()?.sheet;
+   if(!await actions.confirm('将首个商品行前最多三行的文字表头发给已配置的 AI，生成列推荐。请先确认这些行都是表头。'))return;
+   ai.disabled=true;
+   try{
+    const {columns}=await api('/api/supplier-imports/'+id+'/recommend','POST',{sheet:name,start_row});
+    if(supplierBatch?.id!==id||sheet()?.sheet!==name||Number(start.value)!==start_row||!ai.isConnected)return;
+    for(const [field,col] of Object.entries(columns)){const select=fields.querySelector('[data-layout-field="'+field+'"]');if(select)select.value=String(col);}
+    supplierFeedback(Object.keys(columns).length?'已填入推荐列，请逐项核对后重新预览。':'AI 未找到明确映射，请手动选列。');
+   }catch(error){supplierFeedback(error.message,true);}finally{ai.disabled=false;}
+  };
   fields.querySelector('[data-layout-apply]').onclick=async e=>{
    const columns=Object.fromEntries([...fields.querySelectorAll('[data-layout-field]')].filter(el=>el.value).map(el=>[el.dataset.layoutField,Number(el.value)]));
    if(!columns.title)return supplierFeedback('请根据样例选择商品名称列。',true);
    if(supplierBatch?.id!==id)return;
    const start_row=Number(fields.querySelector('[data-layout-start]').value),end_row=Number(fields.querySelector('[data-layout-end]').value)||undefined;
    e.currentTarget.disabled=true;const apply=e.currentTarget;
-   try{supplierFeedback('正在按所选列重新解析…');const batch=await api('/api/supplier-imports/'+id+'/mapping','POST',{sheet:sheet().sheet,start_row,end_row,columns});if(supplierBatch?.id===id){supplierDraftMappings=new Map();supplierRender(batch);}}catch(error){supplierFeedback(error.message,true);}finally{apply.disabled=false;}
+   const grouping=fields.querySelector('[data-layout-grouping]').value,remember=fields.querySelector('[data-layout-remember]').checked,tab=sheet(),header=signature(tab,start_row);
+   try{
+    supplierFeedback('正在按所选列重新解析…');
+    const batch=await api('/api/supplier-imports/'+id+'/mapping','POST',{sheet:tab.sheet,start_row,end_row,columns,grouping});
+    if(supplierBatch?.id===id){
+     supplierDraftMappings=new Map();supplierRender(batch);
+     if(remember){
+      try{if(!header)throw Error();localStorage.setItem(templateKey,JSON.stringify({signature:header,start_row,columns,grouping}));supplierFeedback('预览已更新，模板已保存在当前浏览器。');}
+      catch{supplierFeedback('预览已更新，但未能保存模板；请确认表头在前 30 行且浏览器允许本地存储。',true);}
+     }
+    }
+   }catch(error){supplierFeedback(error.message,true);}finally{apply.disabled=false;}
   };
  }catch(error){supplierFeedback(error.message,true);}finally{button.disabled=false;}
 };
