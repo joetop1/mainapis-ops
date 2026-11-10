@@ -37,9 +37,23 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
  }
  function batch(owner,id){const r=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('货盘预览不存在或不属于当前空间');return r;}
  const sourceFor=(supplier,p)=>'supplier:'+hash(supplier.toLowerCase()+'|'+(p.barcodes.length?p.barcodes.join('|'):p.title));
- function view(r){const d=JSON.parse(r.data);return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(p=>{
+ function view(r){const d=JSON.parse(r.data);
+ const wanted=new Set(d.products.flatMap(p=>p.barcodes||[])),matches=new Map();
+ if(wanted.size){
+  for(const row of db.prepare("SELECT p.id,p.data FROM products p WHERE p.owner=? AND EXISTS (SELECT 1 FROM jobs j WHERE j.owner=p.owner AND j.product_id=p.id AND j.status='succeeded')").iterate(r.owner)){
+   const product=JSON.parse(row.data);
+   for(const code of new Set((product.skus||[]).map(s=>s.sku).filter(code=>wanted.has(code)))){
+    const ids=matches.get(code)||new Map();if(ids.size<6)ids.set(row.id,{id:row.id,title:product.title});matches.set(code,ids);
+   }
+  }
+ }
+ return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(p=>{
   const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(r.owner,sourceFor(r.supplier,p));
-  if(!existing)return p;
+  if(!existing){
+   const candidates=new Map();
+   for(const code of p.barcodes||[])for(const [id,match] of matches.get(code)||[])if(candidates.size<5)candidates.set(id,match);
+   return candidates.size?{...p,publication_candidates:[...candidates.values()]}:p;
+  }
   const publications=db.prepare("SELECT target,mall_connection_id,remote_id,revision FROM jobs WHERE owner=? AND product_id=? AND status='succeeded' ORDER BY created DESC,id DESC").all(r.owner,existing.id);
   const seen=new Set();
   return {...p,existing_product:{id:existing.id,publications:publications.filter(j=>{const key=JSON.stringify([j.target,j.mall_connection_id]);if(seen.has(key))return false;seen.add(key);return true;})}};
