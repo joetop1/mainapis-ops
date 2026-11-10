@@ -9,26 +9,28 @@ export function setupSameStyle({$,esc,context,api,load,edit,toast,clipboard=glob
  const feedback=text=>{$('#sameStyleStatus').textContent=text;};
  const invalidate=()=>{if(busy)return;previewKey='';$('#confirmSameStyle').disabled=true;feedback('设置已变化，请重新预览。');};
  function drawRows(){
-  reference=context().products.find(p=>p.id===$('#sameStyleReference').value);if(!reference)return;
+  const stockOnly=!$('#sameStyleReference').value;
+  reference=stockOnly?stocks.find(p=>p.id===$('#sameStyleMain').value):context().products.find(p=>p.id===$('#sameStyleReference').value);if(!reference)return;
   $('#sameStyleReferenceTitle').value=reference.title||'';
   $('#sameStyleMedia').innerHTML='<p>资料商品：'+esc(reference.title)+' · '+reference.images.length+'张主图 · '+(reference.detail_images||[]).length+'张详情图</p><div class="supplier-pictures">'+reference.images.slice(0,6).map(url=>'<img loading="lazy" referrerpolicy="no-referrer" src="'+esc(url)+'" alt="采集主图参考">').join('')+'</div>';
-  $('#sameStyleRows').innerHTML=stocks.flatMap(p=>p.skus.map(s=>{const matched=suggestedStyleMatch(s,reference);return '<tr data-style-product="'+esc(p.id)+'" data-style-sku="'+esc(s.sku)+'"><td>'+(s.image||p.images[0]?'<img class="thumb" loading="lazy" src="'+esc(s.image||p.images[0])+'" alt="货盘配图">':'')+esc(p.title)+'<small>条码 / 编码：'+esc(s.sku)+'</small><div class="style-sku-metrics"><span>成本 <b>¥'+esc(s.cost)+'</b></span><span>售价 <b>¥'+esc(s.price)+'</b></span><span>库存 <b>'+esc(s.stock)+'</b></span></div></td><td><input data-style-value maxlength="100" required value="'+esc(matched?reference.skus.find(r=>r.sku===matched).spec:s.spec&& !['默认','默认规格'].includes(s.spec)?s.spec:p.title)+'"></td><td><select data-style-match><option value="">不对应，保留货盘配图</option>'+reference.skus.map(r=>'<option value="'+esc(r.sku)+'" '+(r.sku===matched?'selected':'')+'>'+esc(r.spec||r.sku)+'</option>').join('')+'</select></td></tr>';})).join('');
+  $('#sameStyleRows').innerHTML=stocks.flatMap(p=>p.skus.map(s=>{const matched=stockOnly?'':suggestedStyleMatch(s,reference);return '<tr data-style-product="'+esc(p.id)+'" data-style-sku="'+esc(s.sku)+'"><td>'+(s.image||p.images[0]?'<img class="thumb" loading="lazy" src="'+esc(s.image||p.images[0])+'" alt="货盘配图">':'')+esc(p.title)+'<small>条码 / 编码：'+esc(s.sku)+'</small><div class="style-sku-metrics"><span>成本 <b>¥'+esc(s.cost)+'</b></span><span>售价 <b>¥'+esc(s.price)+'</b></span><span>库存 <b>'+esc(s.stock)+'</b></span></div></td><td><input data-style-value maxlength="100" required value="'+esc(matched?reference.skus.find(r=>r.sku===matched).spec:s.spec&& !['默认','默认规格'].includes(s.spec)?s.spec:p.title)+'"></td><td><select data-style-match><option value="">不对应，保留货盘配图</option>'+(stockOnly?[]:reference.skus).map(r=>'<option value="'+esc(r.sku)+'" '+(r.sku===matched?'selected':'')+'>'+esc(r.spec||r.sku)+'</option>').join('')+'</select></td></tr>';})).join('');
   invalidate();
  }
- function input(){return {mode:'same-style',products:[...stocks,reference].map(p=>({id:p.id,revision:p.revision})),reference_id:reference.id,main_id:$('#sameStyleMain').value,title:$('#sameStyleTitle').value,dimension:$('#sameStyleDimension').value,images:$('#sameStyleImages').value,rows:[...$('#sameStyleRows').querySelectorAll('[data-style-product]')].map(row=>({product_id:row.dataset.styleProduct,original_sku:row.dataset.styleSku,value:row.querySelector('[data-style-value]').value,reference_sku:row.querySelector('[data-style-match]').value}))};}
+ function input(){const stockOnly=!$('#sameStyleReference').value;return {mode:'same-style',products:(stockOnly?stocks:[...stocks,reference]).map(p=>({id:p.id,revision:p.revision})),reference_id:stockOnly?'':reference.id,main_id:$('#sameStyleMain').value,title:$('#sameStyleTitle').value,dimension:$('#sameStyleDimension').value,images:$('#sameStyleImages').value,rows:[...$('#sameStyleRows').querySelectorAll('[data-style-product]')].map(row=>({product_id:row.dataset.styleProduct,original_sku:row.dataset.styleSku,value:row.querySelector('[data-style-value]').value,reference_sku:row.querySelector('[data-style-match]').value}))};}
  function lock(value){busy=value;$('#sameStyleForm').querySelectorAll('input,select,button').forEach(el=>el.disabled=value);$('#confirmSameStyle').disabled=value||!previewKey;}
  $('#sameStyleProducts').onclick=()=>{try{
   const {products,selected}=context();stocks=products.filter(p=>selected.has(p.id)&&p.supplier_import);
   if(!stocks.length||stocks.length>19||stocks.some(p=>!p.skus?.length)||stocks.reduce((n,p)=>n+p.skus.length,0)>500)throw Error('请勾选1至19条已录入SKU的同款货盘商品，合计最多500个SKU');
   const references=products.filter(p=>!p.supplier_import&&!stocks.includes(p)&&p.skus?.length&&!p.same_style);
-  if(!references.length)throw Error('请先将对应的1688、淘宝或天猫商品采集到采集箱，再打开同款整理');
+  if(!references.length&&stocks.length<2)throw Error('请先将对应的1688、淘宝或天猫商品采集到采集箱，再打开同款整理');
   generation++;requestId=crypto.randomUUID();previewKey='';pending=null;lock(false);
-  $('#sameStyleReference').innerHTML=references.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+'</option>').join('');
+  $('#sameStyleReference').innerHTML=(stocks.length>=2?'<option value="" selected>仅合并货盘规格（沿用主商品图文）</option>':'')+references.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+'</option>').join('');
   const selectedReference=references.filter(p=>selected.has(p.id));if(selectedReference.length===1)$('#sameStyleReference').value=selectedReference[0].id;
   $('#sameStyleMain').innerHTML=stocks.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+'</option>').join('');
   $('#sameStyleTitle').value=stocks[0].title;$('#sameStyleDimension').value='规格';$('#sameStyleImages').value='reference';$('#sameStylePreview').replaceChildren();drawRows();feedback('请逐行确认规格对应关系。条码、成本、售价和库存来自货盘，不采用采集商品的数据。');$('#sameStyleDialog').showModal();$('#sameStyleBody')?.scrollTo({top:0});$('#sameStyleBackToTop')?.classList.add('hidden');
  }catch(e){toast(e.message,{error:true});}};
  $('#sameStyleReference').onchange=drawRows;
+ $('#sameStyleMain').onchange=()=>{if(!$('#sameStyleReference').value)drawRows();};
  $('#copySameStyleTitle').onclick=async()=>{if(busy||pending)return;const field=$('#sameStyleReferenceTitle');try{if(!clipboard?.writeText)throw Error('clipboard unavailable');await clipboard.writeText(field.value);feedback('采集标题已复制。');}catch{field.focus();field.select();feedback('请按系统复制快捷键，或长按已选中的标题复制。');}};
  $('#useSameStyleTitle').onclick=()=>{if(busy||pending||!reference)return;$('#sameStyleTitle').value=reference.title||'';invalidate();feedback('已采用采集标题，可以继续编辑；请重新预览后生成。');};
  $('#sameStyleForm').addEventListener('input',invalidate);$('#sameStyleForm').addEventListener('change',invalidate);

@@ -34,3 +34,14 @@ test('同款生成隔离空间、保护版本、事务回滚、幂等重试且�
 test('仅唯一且明确同名规格建议匹配，模糊标题和默认值不猜测',()=>{
  const {products}=fixtures(),ref=products[2];assert.equal(suggestedStyleMatch({spec:' 50 ml '},ref),'REF50');assert.equal(suggestedStyleMatch({spec:'默认'},ref),'');assert.equal(suggestedStyleMatch({spec:'5ml'},ref),'');ref.skus.push({...ref.skus[0],sku:'duplicate'});assert.equal(suggestedStyleMatch({spec:'50ml'},ref),'');
 });
+
+test('仅合并货盘：沿用所选主商品图文并保留各 SKU 的商业数据',()=>{
+ const {products,input}=fixtures(),stocks=products.slice(0,2);
+ stocks[1].description='主商品说明';
+ stocks[1].images=['https://img.example.com/main.png'];
+ const {product}=buildSameStyleProduct(stocks,{...input,main_id:'s1',reference_id:'',rows:input.rows.map(row=>({...row,reference_sku:''}))});
+ assert.equal(product.description,'主商品说明');
+ assert.deepEqual(product.images,stocks[1].images);
+ assert.equal(product.source_url,stocks[1].source_url);
+ assert.deepEqual(product.skus.map(s=>[s.sku,s.cost,s.price,s.stock,s.image]),[['BAR0',10,20,8,stocks[0].images[0]],['BAR1',11,21,9,stocks[1].images[0]]]);
+});
