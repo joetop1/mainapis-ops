@@ -57,7 +57,7 @@ function toast(message,{error=false}={}){
  const global=$('#toast');clearTimeout(toast.timer);global.textContent=message;global.classList.toggle('is-error',error);global.setAttribute('role',error?'alert':'status');global.classList.remove('hidden');
  if(global.showPopover){if(!global.matches(':popover-open'))global.showPopover();}
  else{const dialog=[...document.querySelectorAll('dialog[open]')].at(-1);if(dialog)dialog.append(global);else document.body.append(global);}
- toast.timer=setTimeout(()=>{if(global.hidePopover&&global.matches(':popover-open'))global.hidePopover();global.classList.add('hidden');},error?6500:4500);
+ toast.timer=setTimeout(()=>{if(global.hidePopover&&global.matches(':popover-open'))global.hidePopover();global.classList.add('hidden');},error?6500:2000);
 }
 document.addEventListener('close',event=>{if(event.target.tagName==='DIALOG')clearDialogFeedback(event.target);},true);
 async function api(path,method='GET',body,signal){
