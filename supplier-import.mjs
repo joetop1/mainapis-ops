@@ -152,6 +152,9 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
  async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
   prune,tick,
+  list(owner){
+   return db.prepare('SELECT id,supplier,filename,state,created,remote_source FROM supplier_batches WHERE owner=? ORDER BY created DESC').all(owner).map(({remote_source,...row})=>({...row,deletable:!remote_source&&!active.has(row.id)&&['ready','parse_failed','done','partial'].includes(row.state)}));
+  },
   async enqueueRemote(owner,input){
    if(input.uploadId){const existing=db.prepare('SELECT * FROM supplier_batches WHERE id=? AND owner=?').get(input.uploadId,owner);if(existing)return view(existing);}
    await prune();if(db.prepare('SELECT COUNT(*) n FROM supplier_batches WHERE owner=?').get(owner).n>=5)throw Error('最多保留5份货盘预览，请删除旧预览');
@@ -278,7 +281,15 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   },
   get(owner,id){return view(batch(owner,id));},
   async asset(owner,id,asset){const r=batch(owner,id),a=JSON.parse(r.data).assets.find(a=>a.id===asset);if(!a)throw Error('图片不存在');const bytes=await readFile(join(directory,id,a.file));return {bytes,...imageType(bytes)};},
-  async remove(owner,id){batch(owner,id);if(active.has(id)||batch(owner,id).state==='parsing')throw Error('正在处理，不能删除');await rm(join(directory,id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(id);return {ok:true};},
+  async remove(owner,id){
+   batch(owner,id);
+   if(active.has(id))throw Error('正在处理，不能删除');
+   const deleted=db.prepare("DELETE FROM supplier_batches WHERE id=? AND owner=? AND remote_source='' AND state IN ('ready','parse_failed','done','partial')").run(id,owner);
+   if(!deleted.changes)throw Error('此预览正在处理或清理上传文件，暂不能删除');
+   db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(id);
+   await rm(join(directory,id),{recursive:true,force:true}).catch(()=>console.error('supplier_preview_cleanup_failed'));
+   return {ok:true};
+  },
   start(owner,id,input){
    const r=batch(owner,id);if(!['ready','partial','done','processing'].includes(r.state))throw Error('请等待解析完成后再导入');if(active.has(id))return view(r);if(active.size>=2)throw Error('已有2个货盘正在导入，请稍后重试');const data=JSON.parse(r.data),c=getStorage();if(!c?.enabled||!allowedStorage(owner,c))throw Error('请先启用共享OSS，并将当前空间至少一个商城域名加入允许列表');
    if(!Array.isArray(input.items)||!input.items.length||input.items.length>500)throw Error('请选择1至500件商品');
