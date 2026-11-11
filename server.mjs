@@ -626,7 +626,13 @@ const handleRequest=async(req,res)=>{
     if(uploadRoute){if(demo)throw Error('演示模式不上传货盘');const [,id,action]=uploadRoute;if(req.method==='POST'&&action==='sign')return json(res,200,supplierUploads.sign(owner,id,(await body(req)).part));if(req.method==='POST'&&action==='complete')return json(res,202,await supplierUploads.complete(owner,id,await body(req)));if(req.method==='DELETE'&&!action)return json(res,200,await supplierUploads.cancel(owner,id));}
     if(path==='/api/supplier-imports'&&req.method==='GET')return json(res,200,{previews:supplierImport.list(owner),limit:5});
     if(path==='/api/supplier-imports'&&req.method==='POST'){if(demo)throw Error('演示模式不导入货盘');quota.assertAccess(owner);let input;if((req.headers['content-type']||'').startsWith('application/octet-stream')){const params=new URL(req.url,origin).searchParams,chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>100*1024*1024)throw Error('文件超过100MB');chunks.push(chunk);}input={supplier:params.get('supplier'),filename:params.get('filename'),bytes:Buffer.concat(chunks)};}else input=await body(req,140*1024*1024);return json(res,202,await supplierImport.enqueue(owner,input));}
-    const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|layout|mapping|recommend|recognize-block|workbuddy|assets\/[a-f0-9]{64}))?$/);
+    const supplierRoute=path.match(/^\/api\/supplier-imports\/([a-f0-9-]{36})(?:\/(commit|layout|mapping|ai-retry|recommend|recognize-block|workbuddy|assets\/[a-f0-9]{64}))?$/);
+    if(supplierRoute?.[2]==='ai-retry'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不调用 AI');
+      quota.assertAccess(owner);
+      const input=await body(req,128000);
+      return json(res,202,supplierImport.retryAI(owner,supplierRoute[1],input.keys));
+    }
     if(['recommend','recognize-block'].includes(supplierRoute?.[2])&&req.method==='POST'){
       if(demo)throw Error('演示模式不调用 AI');
       const {sheet,start_row,end_row}=await body(req,8192),config=supplierAI.get();

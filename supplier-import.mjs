@@ -19,7 +19,7 @@ const workbuddyRevision=data=>hash(JSON.stringify(data.products.map(({key,bounds
 function applySupplierReview(p,review){
  if(!review)return p;
  const {values,refs,issues}=review;
- const title=[...new Set([...(values.title_en||[]),...(values.title_zh||[])])].join(' / ');
+ const title=[...new Set(values.title_lines?.length?values.title_lines:[...(values.title_en||[]),...(values.title_zh||[])])].join(' / ');
  const warnings=[...p.warnings.filter(w=>!title||!w.includes('暂取首行作为名称')),...issues.map(v=>(review.origin||'WorkBuddy')+' 待核对：'+v)];
  const description=[...new Set([p.description,...(values.notes||[])].filter(Boolean))].join('\n\n');
  const attributes=[...p.attributes];
@@ -29,7 +29,7 @@ function applySupplierReview(p,review){
 export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,prepareCharge,chargeProduct,storeImage,fetchImpl=fetch,aiConfig=supplierAIConfig(),getAIConfig=()=>aiConfig,logAI=entry=>console.info(JSON.stringify(entry)),python=process.env.PYTHON_BIN||'python3'}){
  const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
- for(const [name,type] of [['billing_rate',"TEXT NOT NULL DEFAULT ''"],['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
+ for(const [name,type] of [['billing_rate',"TEXT NOT NULL DEFAULT ''"],['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0'],['ai_retry',"TEXT NOT NULL DEFAULT ''"]])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
  db.exec("UPDATE supplier_batches SET billing_rate='{\"due\":0,\"legacy\":true}' WHERE plan IS NOT NULL AND billing_rate=''");
  db.exec("CREATE TABLE IF NOT EXISTS supplier_layouts(owner TEXT NOT NULL,supplier TEXT NOT NULL,signature TEXT NOT NULL,mapping TEXT NOT NULL,PRIMARY KEY(owner,supplier,signature))");
  async function inspectWorkbook(dir){
@@ -54,7 +54,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   return null;
  }
  async function enrichWithAI(data,dir,r,metrics,trackedFetch){
-  const candidates=data.products.filter(p=>p.needs_ai&&p.bounds);
+  const selected=new Set(data.ai_retry_keys||[]);delete data.ai_retry_keys;
+  const candidates=data.products.filter(p=>p.bounds&&(selected.size?selected.has(p.key):p.needs_ai));
   metrics.candidates=candidates.length;
   if(!candidates.length){metrics.reason='local_parse_sufficient';return;}
   let aiConfig;try{aiConfig=getAIConfig();}catch{metrics.reason='configuration_error';return;}
@@ -68,7 +69,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'ai-blocks',file],{timeout:25000,maxBuffer:20*1024*1024});
    const {review,recognized,unresolved,diagnostics}=await recognizeSupplierBlocks(candidates,JSON.parse(stdout),aiConfig,trackedFetch);
    metrics.ai_diagnostics=diagnostics;
-   data.ai={recognized,unresolved,local:data.products.length-candidates.length};data.ai_review=review;
+   data.ai={recognized,unresolved,local:data.products.length-candidates.length};data.ai_review={...data.ai_review};
+   for(const [key,result] of Object.entries(review))if(Object.keys(result.values).length||result.image||!data.ai_review[key])data.ai_review[key]=result;
   }catch{
    data.ai={recognized:0,unresolved:candidates.length,local:data.products.length-candidates.length};
   }finally{await rm(file,{force:true}).catch(()=>{});}
@@ -87,41 +89,41 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   parsing++;
   try{
    if(r.remote_source){const remote=JSON.parse(r.remote_source),c=getStorage();if(!c?.enabled||!allowedStorage(r.owner,c)||storageDestination(c)!==remote.destination)throw Error('OSS配置或授权发生变化');const free=await statfs(dataDir);if(free.bavail*free.bsize<remote.size+1024*1024*1024)throw Error('解析所需磁盘空间不足，请先清理');const response=await ossRequest(c,remote.key,'GET',{}, {},undefined,fetchImpl);let size=0;await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,encoding,callback){size+=chunk.length;callback(size>remote.size||size>MAX_WORKBOOK_BYTES?Error('OSS文件大小异常'):null,chunk);}}),createWriteStream(join(dir,'input.xlsx'),{mode:0o600}));if(size!==remote.size)throw Error('OSS文件不完整');}
-   let out,aiLayout=false;
-   try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}
-   catch(e){
-    let message;try{message=JSON.parse(e.stdout).error;}catch{}
-    if(message?.startsWith('未识别到商品')){
-     out=await retryKnownLayout(r,dir).catch(()=>null);
-     if(!out)try{
-      const config=getAIConfig();
-      if(config){
-       metrics.reason='layout_fallback';
-       const mapping=await suggestSupplierLayout(await inspectWorkbook(dir),config,trackedFetch);
-       if(mapping){
-        out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:60000,maxBuffer:4*1024*1024});
-        aiLayout=true;
-       }
-      }else metrics.reason='ai_disabled';
-     }catch{}
+   let data;
+   if(r.ai_retry==='ready'){
+    data=JSON.parse(r.data);
+    await enrichWithAI(data,dir,r,metrics,trackedFetch);
+    if(!data.ai||!metrics.requests)throw Error('AI 未执行，请检查配置或原表，已保留原预览');
+   }else{
+    let out;
+    if(r.ai_retry==='parse_failed'){
+     const config=getAIConfig();if(!config)throw Error('未启用货盘 AI');
+     metrics.reason='layout_fallback';
+     const mapping=await suggestSupplierLayout(await inspectWorkbook(dir),config,trackedFetch);
+     if(!mapping)throw Error('AI 未找到可用表头，请手动指定表格列');
+     out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:60000,maxBuffer:4*1024*1024});
+    }else try{
+     out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});
+    }catch(e){
+     let message;try{message=JSON.parse(e.stdout).error;}catch{}
+     if(message?.startsWith('未识别到商品'))out=await retryKnownLayout(r,dir).catch(()=>null);
+     if(!out)throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');
     }
-    if(!out)throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');
+    data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+    metrics.candidates=data.products.filter(p=>p.needs_ai&&p.bounds).length;
+    if(r.ai_retry){data.ai={layout:true};for(const p of data.products)p.warnings.push('使用 AI 建议列生成，请核对字段与价格');}
+    else metrics.reason=metrics.candidates?'local_review_needed':'local_parse_sufficient';
    }
-   const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
-   if(aiLayout){
-    data.ai={layout:true};
-    for(const p of data.products)p.warnings.push('使用 AI 建议列生成，请核对字段与价格');
-   }else await enrichWithAI(data,dir,r,metrics,trackedFetch);
    metrics.products=data.products.length;metrics.recognized=data.ai?.recognized||0;metrics.unresolved=data.ai?.unresolved||0;
-   db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
+   db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='',ai_retry='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
    metrics.outcome='ready';
-  }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
+  }catch(e){db.prepare("UPDATE supplier_batches SET state=?,parse_error=?,ai_retry='' WHERE id=? AND state='parsing'").run(r.ai_retry==='ready'?'ready':'parse_failed',String(e.message).slice(0,500),r.id);}
   finally{parsing--;try{logAI({...metrics,duration_ms:Date.now()-started});}catch{}if(r.remote_source){try{const remote=JSON.parse(r.remote_source),c=getStorage();if(c&&storageDestination(c)===remote.destination){const response=await ossRequest(c,remote.key,'DELETE',{}, {},undefined,fetchImpl);await response.body?.cancel();db.prepare("UPDATE supplier_batches SET remote_source='' WHERE id=?").run(r.id);}}catch{console.error('supplier_private_cleanup_pending');}}}
 
  }
  async function tick(){
   if(parsing)return;
-  db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error='解析进程中断，请删除此预览后重新上传' WHERE state='parsing' AND parse_started<?").run(Date.now()-300000);
+  db.prepare("UPDATE supplier_batches SET state=CASE WHEN ai_retry='ready' THEN 'ready' ELSE 'parse_failed' END,ai_retry='',parse_error='解析进程中断，请检查原预览或重试' WHERE state='parsing' AND parse_started<?").run(Date.now()-300000);
   const r=db.prepare("SELECT * FROM supplier_batches WHERE state='queued' ORDER BY created LIMIT 1").get();if(!r)return;
   if(!db.prepare("UPDATE supplier_batches SET state='parsing',parse_started=? WHERE id=? AND state='queued'").run(Date.now(),r.id).changes)return;
   await parseBatch(r);
@@ -138,7 +140,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    }
   }
  }
- return {id:r.id,supplier:r.supplier,filename:r.filename,ai:d.ai||null,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(original=>{
+ return {id:r.id,supplier:r.supplier,filename:r.filename,ai:d.ai||null,ai_retry:!!r.ai_retry,ai_candidates:d.products.filter(p=>p.needs_ai&&p.bounds).length,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(original=>{
   const p=applySupplierReview(original,d.workbuddy?.[original.key]||d.ai_review?.[original.key]);
   const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(r.owner,sourceFor(r.supplier,original));
   if(!existing){
@@ -153,6 +155,19 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
  async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
   prune,tick,
+  retryAI(owner,id,keys=[]){
+   const r=batch(owner,id);
+   if(!getAIConfig())throw Error('请先在系统设置启用货盘 AI');
+   if(active.has(id)||r.plan||r.remote_source||!['ready','parse_failed'].includes(r.state))throw Error('此预览当前不能使用 AI 重试');
+   const data=JSON.parse(r.data);
+   if(!Array.isArray(keys)||keys.length>500||new Set(keys).size!==keys.length||keys.some(key=>typeof key!=='string'||!data.products.some(p=>p.key===key&&p.bounds)))throw Error('所选商品无效或缺少原表位置');
+   if(r.state==='ready'&&!keys.length&&!data.products.some(p=>p.needs_ai&&p.bounds))throw Error('请先勾选需要 AI 复核的商品');
+   data.ai_retry_keys=keys;
+   const queued=db.prepare("UPDATE supplier_batches SET state='queued',ai_retry=?,parse_error='',data=? WHERE id=? AND owner=? AND state=? AND plan IS NULL AND remote_source='' AND data=?").run(r.state,JSON.stringify(data),id,owner,r.state,r.data);
+   if(!queued.changes)throw Error('预览状态已变化，请刷新');
+   audit(owner,'supplier.ai_retry',id);
+   return view(batch(owner,id));
+  },
   list(owner){
    return db.prepare('SELECT id,supplier,filename,state,created,remote_source FROM supplier_batches WHERE owner=? ORDER BY created DESC').all(owner).map(({remote_source,...row})=>({...row,deletable:!remote_source&&!active.has(row.id)&&['ready','parse_failed','done','partial'].includes(row.state)}));
   },

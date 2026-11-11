@@ -10,7 +10,7 @@ test('货盘提交对未勾选、缺库存、服务端错误即时显示反馈�
  const nodes={supplierPreview:{querySelectorAll:()=>[card]},supplierStatus:{textContent:'',classList:{toggle(){}}},commitSupplier:{disabled:false,textContent:''}};
  const context=vm.createContext({refreshPublishQuote(){},confirmBilling:async()=>1,$:s=>nodes[s.slice(1)],api:async()=>{calls++;if(fail)throw Error('OSS未启用');return {state:'processing'};},supplierRender:b=>{context.supplierBatch=b;}});
  vm.runInContext("var supplierDraftMappings=new Map(),supplierBatch={id:'batch',products:[{key:'card'}]};",context);
- vm.runInContext(source.slice(source.indexOf('function supplierFeedback('),source.indexOf("$('#discardSupplier').onclick=")),context);
+ vm.runInContext(source.slice(source.indexOf('function supplierFeedback('),source.indexOf("$('#retrySupplierAI').onclick=")),context);
  await nodes.commitSupplier.onclick();assert.match(nodes.supplierStatus.textContent,/勾选/);assert.equal(calls,0);assert.equal(nodes.commitSupplier.disabled,false);
  selected=true;await nodes.commitSupplier.onclick();assert.match(nodes.supplierStatus.textContent,/库存.*未填写/);assert.equal(focused,true);assert.equal(calls,0);
  fields.stock.value='3';fail=true;await nodes.commitSupplier.onclick();assert.match(nodes.supplierStatus.textContent,/OSS未启用/);assert.equal(nodes.commitSupplier.disabled,false);

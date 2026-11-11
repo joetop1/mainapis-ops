@@ -141,7 +141,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
       elif re.fullmatch(r'(?:(?:浅|深|亮|哑光)?(?:红|粉|蓝|绿|黄|紫|黑|白|灰|橙|棕|银|金)色|透明|red|pink|blue|green|yellow|purple|black|white|gray|grey|orange|brown|silver|gold|clear)',text,re.I):colors.append(text)
      colors=list(dict.fromkeys(colors))
      if len(colors)==1:spec_hint=colors[0]
-   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'needs_ai':needs_ai,**({'original_title':original_title} if title!=original_title else {}),'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
+   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'needs_ai':needs_ai,'field_headers':{str(columns[k]+1):label for k,label in labels.items()},'title_column':columns['title']+1,**({'original_title':original_title} if title!=original_title else {}),'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
  return result
 
 def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_blocks=None):
@@ -238,7 +238,7 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_bloc
    layouts.append({'sheet':sheet.get('name'),'rows':rows})
    continue
   starts=sorted((r,c) for (r,c),v in cells.items() if v in ('产品名称','商品名称'))
-  sheetrels=rels(name);pictures=[]
+  sheetrels=rels(name);pictures=[];image_spans={}
   for draw in root.findall('s:drawing',N):
    dname=sheetrels.get(draw.get('{'+N['r']+'}id'))
    if not dname:continue
@@ -253,11 +253,19 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_bloc
     asset=hashlib.sha256(data).hexdigest()
     if asset not in assets:
      filename=asset+'.bin';open(os.path.join(out,filename),'wb').write(data);assets[asset]={'id':asset,'file':filename,'bytes':len(data)}
-    pictures.append((int(origin.find('d:row',N).text),int(origin.find('d:col',N).text),asset))
-  tabular=table_products(cells,pictures,[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)],sheet.get('name'),date1904,mapping)
+    pr,pc=int(origin.find('d:row',N).text),int(origin.find('d:col',N).text)
+    pictures.append((pr,pc,asset))
+    end_node=anchor.find('d:to',N)
+    if end_node is not None:
+     er,ec=end_node.find('d:row',N),end_node.find('d:col',N)
+     if er is not None and ec is not None:image_spans[coordinate(pr,pc)]=coordinate(pr,pc)+':'+coordinate(int(er.text),int(ec.text))
+  merge_refs=[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)]
+  tabular=table_products(cells,pictures,merge_refs,sheet.get('name'),date1904,mapping)
   def anchors(product):
    first,last,left,right=product['bounds']
    product['image_anchors']={coordinate(pr,pc):aid for pr,pc,aid in pictures if first<=pr+1<=last and left<=pc+1<=right and aid in product['images']}
+   product['image_spans']={ref:image_spans[ref] for ref in product['image_anchors'] if ref in image_spans}
+   product['merged_ranges']=[ref for ref in merge_refs if (m:=re.fullmatch(r'([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)',ref)) and int(m[2])<=last and int(m[4])>=first and col(m[1])+1<=right and col(m[3])+1>=left][:40]
   if tabular is not None:
    for product in tabular:anchors(product)
    products.extend(tabular);continue

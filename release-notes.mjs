@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.17',title:'货盘本地预览与 AI 手动复核',changes:['上传 Excel 默认不调用 AI；在原预览点击「用 AI 重试」才会调用。','识别参考图片范围、合并区域和表头，名称按原表顺序合并。']},
  {version:'0.24.16',title:'货盘识别避免思考耗尽输出',changes:['DeepSeek Flash / V4 货盘识别关闭思考模式，保持原请求上限。']},
  {version:'0.24.15',title:'货盘 AI 响应诊断',changes:['细分 AI 响应问题，统计双语标题，兼容绝对坐标写法。']},
  {version:'0.24.14',title:'货盘预览管理',changes:['达到预览上限时，可从货盘窗口查看并删除旧批次。']},
