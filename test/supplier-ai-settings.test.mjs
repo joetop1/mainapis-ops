@@ -43,9 +43,16 @@ test('AI 兼容可核对的坐标写法并记录响应诊断，不记录响应�
  const products=[{key:'a',barcodes:[]},{key:'b',barcodes:[]}];
  const source={a:{A1:'原名',B1:'Original'},b:{A2:'另一件'}};
  const config={endpoint:'https://example.com',key:'test',model:'test'};
- const run=content=>recognizeSupplierBlocks(products,source,config,async()=>Response.json({choices:[{finish_reason:'length',message:{content}}]}));
+ const run=(content,model='test')=>recognizeSupplierBlocks(products,source,{...config,model},async(_,request)=>{
+  const payload=JSON.parse(request.body);
+  assert.deepEqual(payload.thinking,model==='deepseek-flash'?{type:'disabled'}:undefined);
+  assert.equal(payload.max_tokens,1800);
+  return Response.json({choices:[{finish_reason:'length',message:{content,reasoning_content:'reasoning text'}}]});
+ });
  const good=await run(JSON.stringify({items:[{id:'0',fields:{title_zh:'$a$1',title_en:['B1'],spec:['A2']}}]}));
  assert.equal(good.recognized,1);assert.equal(good.diagnostics.bilingual_titles,1);assert.equal(good.diagnostics.invalid_fields,1);assert.equal(good.diagnostics.missing_items,1);
+ const empty=await run('', 'deepseek-flash');
+ assert.equal(empty.diagnostics.reasoning_without_content,1);
  const bad=await run('{"items":[');
  assert.equal(bad.unresolved,2);assert.equal(bad.diagnostics.invalid_json,1);assert.equal(bad.diagnostics.length_limited,1);
 });
