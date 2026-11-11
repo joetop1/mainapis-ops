@@ -46,8 +46,8 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
   if(!['wecom','ding'].includes(channel)||channel==='ding'&&mall.system!=='tigshop')throw Error('通知渠道无效');
   const webhook=input.webhook?(channel==='ding'?dingWebhook(input.webhook).href:wecomWebhook(input.webhook)):channel===oldChannel?old?.webhook:null;
   if(!webhook)throw Error('请填写所选渠道的群机器人 Webhook');
-  const dingSecret=channel==='ding'?(input.dingSecret|| (oldChannel==='ding'?old?.dingSecret:'')||''):'';
-  if(channel==='ding'&&(typeof dingSecret!=='string'||!/^SEC[A-Za-z0-9_-]{16,200}$/.test(dingSecret)))throw Error('请填写钉钉机器人的加签密钥');
+  const dingSecret=channel==='ding'?(input.dingSecret|| (oldChannel==='ding'&&webhook===old?.webhook?old?.dingSecret:'')||''):'';
+  if(channel==='ding'&&dingSecret&&(typeof dingSecret!=='string'||!/^SEC[A-Za-z0-9_-]{16,200}$/.test(dingSecret)))throw Error('请填写钉钉机器人的加签密钥');
   if(old?.webhook&&webhook!==old.webhook&&db.prepare("SELECT 1 FROM notification_outbox WHERE mall_id=? AND status IN ('pending','paused','sending','uncertain') LIMIT 1").get(mall.id))throw Error('仍有未完成通知，请先处理通知记录后再更换接收群');
   if(old?.webhook&&webhook!==old.webhook&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='notification_native_inbox'").get()&&db.prepare("SELECT 1 FROM notification_native_inbox WHERE mall_id=? AND status IN ('pending','working','failed') LIMIT 1").get(mall.id))throw Error('仍有原生通知未处理，请先核对接收记录后再更换接收群');
   const settings=mall.system==='tigshop'?tigshopNotificationSettings({currency:input.currency??old?.currency,timeZone:input.timeZone??old?.timeZone}):{};
@@ -81,7 +81,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
     if(!db.prepare("UPDATE notification_outbox SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'").run(row.id).changes)continue;
     lastAttempt=clock();
     try{
-     const response=await fetcher(c.channel==='ding'?signedDingWebhook(c.webhook,c.dingSecret,clock()):wecomWebhook(c.webhook),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msgtype:'text',text:{content:boundedText(notificationText(mall,row.kind,JSON.parse(row.fact),row.id))}}),redirect:'error',signal:AbortSignal.timeout(10000)});
+     const response=await fetcher(c.channel==='ding'?(c.dingSecret?signedDingWebhook(c.webhook,c.dingSecret,clock()):dingWebhook(c.webhook).href):wecomWebhook(c.webhook),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msgtype:'text',text:{content:boundedText(notificationText(mall,row.kind,JSON.parse(row.fact),row.id))}}),redirect:'error',signal:AbortSignal.timeout(10000)});
      const raw=await response.text();if(raw.length>10000)throw Error('invalid_response');let data;try{data=JSON.parse(raw);}catch{throw Error('invalid_response');}
      if(!response.ok||typeof data.errcode!=='number')throw Error('invalid_response');
      if(data.errcode!==0){const attempts=row.attempts+1;db.prepare("UPDATE notification_outbox SET status=?,next_at=?,error=? WHERE id=?").run(attempts>=5?'failed':'pending',clock()+Math.min(3600000,30000*2**attempts),(c.channel==='ding'?'钉钉':'企业微信')+'拒绝发送，错误码 '+data.errcode,row.id);}

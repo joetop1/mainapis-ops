@@ -918,7 +918,7 @@ function renderNotifications(data,type='crmeb-pro'){
  node('notificationWebhook').placeholder=data.hasWebhook?'已加密保存，留空保留当前接收群':'粘贴企业微信消息推送Webhook';
  for(const [id,key] of Object.entries({notificationTokenUrl:'tokenUrl',notificationPushAccount:'pushAccount',notificationPushPassword:'pushPassword',notificationPaidUrl:'paidUrl',notificationRefundUrl:'refundUrl',notificationIgnoreUrl:'ignoreUrl',notificationRelayPaidUrl:'relayPaidUrl',notificationRelayRefundUrl:'relayRefundUrl',notificationRelayPaidTemplate:'relayPaidTemplate',notificationRelayRefundTemplate:'relayRefundTemplate'}))if(node(id))node(id).value=data[key]||'';
  node('notificationTest').disabled=!data.enabled;
- if(type==='tigshop'){node('notificationChannel').value=data.channel||'wecom';node('notificationDingField').hidden=data.channel!=='ding';node('notificationDingSecret').value='';node('notificationDingSecret').placeholder=data.hasDingSecret?'已保存，留空保留':'填写钉钉加签密钥';node('notificationCurrency').value=data.currency||'';node('notificationTimeZone').value=data.timeZone||'';}
+ if(type==='tigshop'){node('notificationChannel').value=data.channel||'wecom';node('notificationDingField').hidden=data.channel!=='ding';node('notificationDingSecret').value='';node('notificationDingSecret').placeholder=data.hasDingSecret?'已保存，留空保留':'未开启加签可留空';node('notificationCurrency').value=data.currency||'';node('notificationTimeZone').value=data.timeZone||'';}
  const poll=data.refundPoll;node('notificationRefundStatus').textContent=poll?.error?'退款检查失败：'+poll.error:poll?.enabled?'退款补拉已启用，每分钟检查'+(poll.last_success?'；最近成功：'+date(poll.last_success):'；正在建立首次检查记录'):'退款补拉尚未启用，请点击检查按钮。';
  if(type==='crmeb-store'){
   node('notificationRefundStatus').textContent='多门店使用原生事件转接；请复制下方地址和模板到商城通知设置。无需启用旧退款补拉。';
