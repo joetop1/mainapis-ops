@@ -45,7 +45,6 @@ export function setupCampaign({$,esc,products,mallName}){
   options($('#campaignCategory'),'全部类目',new Map(rows.filter(r=>r.category).map(r=>[r.category,r.category])));
   $('#campaignSearch').value='';draw();
  }
- $('#campaignButton').onclick=()=>document.querySelector('[data-page="campaign"]').click();
  $('#campaignMobileSummary').onclick=()=>{
   const expanded=$('#campaign').classList.toggle('campaign-expanded');
   $('#campaignMobileSummary').setAttribute('aria-expanded',String(expanded));

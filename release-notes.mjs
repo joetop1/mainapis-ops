@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.13',title:'简化货盘和选品入口',changes:['货盘只需点击读取并预览，自动按需使用 AI；移除 WorkBuddy 和手动 AI 按钮。','中英文原名同属一件商品时，识别后合并标题；选品台仅从侧栏进入。']},
  {version:'0.24.12',title:'货盘 AI 按需调用',changes:['普通货盘仅本地解析；有多行候选名称的商品块才交给 AI 补全。','单工作表本地无法识别且无已保存映射时，尝试一次 AI 表头推荐。','后台日志记录调用原因、次数和识别结果。']},
  {version:'0.24.11',title:'上传货盘后自动识别',changes:['可在系统设置配置 NewAPI、获取模型列表和测试。启用后，上传 Excel 自动识别标题、规格、属性、补充说明和主图位置，结果直接进入预览。','识别失败时保留原解析结果。']},
  {version:'0.24.10',title:'兼容 WorkBuddy 整理结果',changes:['接受单个坐标和 Excel 绝对坐标写法。','字段格式或坐标数量不符时保留原值，把该字段列为待核对，继续应用其余有效字段。超长规格或标题也只标记对应字段。']},

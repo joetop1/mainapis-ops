@@ -347,5 +347,3 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 .campaign-card-values{font-size:12px}
 .campaign-card-select{display:flex;align-items:center;gap:6px}
 .campaign-card-select input{width:auto;margin:0}
-.supplier-block-review>div{min-width:0;max-height:380px;overflow:auto;overflow-wrap:anywhere}
-.supplier-block-review dd{margin:0 0 8px;white-space:pre-wrap}
