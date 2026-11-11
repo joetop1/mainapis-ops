@@ -109,7 +109,14 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
    cost,price=money(get('cost')),money(get('price'));flags=[]
    if cost is None:flags.append('采购成本未识别，请人工填写；不使用其他行价格')
    if price is None:flags.append('售价未识别，请人工填写；赠品等文字不自动转成0元')
-   needs_ai=bool(block and len(titles)>1)
+   original_title=title
+   # The verified template uses the whole name column within each repeated-header block.
+   orgie_block=bool(block and sheet_name=='Orgie奥姬' and normalize(labels['title'])=='产品名称' and normalize(labels.get('barcode',''))=='颜色/编号' and columns['title']==1)
+   needs_ai=bool(block and len(titles)>1 and not orgie_block)
+   if orgie_block:
+    combined=' / '.join(dict.fromkeys(' '.join(text.split()) for text in titles))
+    if len(combined)<=200:title=combined
+    else:flags.append('原表完整名称超过200字，保留首行，请核对')
    if needs_ai:flags.append('商品块含多行名称或文案，暂取首行作为名称，请核对')
    if get('images'):flags.append('图片栏备注：'+get('images'))
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
@@ -125,7 +132,16 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
    if not spec_hint and normalize(labels.get('barcode',''))=='颜色/编号':
     capacities=list(dict.fromkeys(re.findall(r'(?im)^\s*(\d+(?:\.\d+)?\s*(?:ml|毫升|g|克|l|升))\s*$',raw_barcode)))
     if len(capacities)==1 and len(barcodes)<=1:spec_hint=capacities[0]
-   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'needs_ai':needs_ai,'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
+    if orgie_block and len(barcodes)==1 and not spec_hint:
+     colors=[]
+     for line in raw_barcode.splitlines():
+      text=line.strip()
+      match=re.fullmatch(r'(?:颜色|色号|colou?r)\s*[:：]\s*(.{1,30})',text,re.I)
+      if match:colors.append(match[1].strip())
+      elif re.fullmatch(r'(?:(?:浅|深|亮|哑光)?(?:红|粉|蓝|绿|黄|紫|黑|白|灰|橙|棕|银|金)色|透明|red|pink|blue|green|yellow|purple|black|white|gray|grey|orange|brown|silver|gold|clear)',text,re.I):colors.append(text)
+     colors=list(dict.fromkeys(colors))
+     if len(colors)==1:spec_hint=colors[0]
+   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'needs_ai':needs_ai,**({'original_title':original_title} if title!=original_title else {}),'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
  return result
 
 def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_blocks=None):

@@ -127,7 +127,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   await parseBatch(r);
  }
  function batch(owner,id){const r=db.prepare('SELECT * FROM supplier_batches WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('货盘预览不存在或不属于当前空间');return r;}
- const sourceFor=(supplier,p)=>'supplier:'+hash(supplier.toLowerCase()+'|'+(p.barcodes.length?p.barcodes.join('|'):p.title));
+ const sourceFor=(supplier,p)=>'supplier:'+hash(supplier.toLowerCase()+'|'+(p.barcodes.length?p.barcodes.join('|'):(p.original_title||p.title)));
  function view(r){const d=JSON.parse(r.data);
  const wanted=new Set(d.products.flatMap(p=>p.barcodes||[])),matches=new Map();
  if(wanted.size){
