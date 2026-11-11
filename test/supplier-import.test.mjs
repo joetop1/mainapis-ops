@@ -196,7 +196,7 @@ test('上传货盘自动调用 NewAPI，采用原文及已提取图片，拒绝�
   const queued=await service.enqueue('alice',input);await service.tick();
   const result=service.get('alice',queued.id);
   assert.equal(calls,1);
-  assert.deepEqual(result.ai,{recognized:2,unresolved:0});
+  assert.deepEqual(result.ai,{recognized:2,unresolved:0,local:0});
   assert.equal(result.products[0].title,'Example Alpha / 样品甲');
   assert.equal(result.products[0].spec_hint,'100ml');
   assert.equal(result.products[0].cost,89);
@@ -209,7 +209,30 @@ test('上传货盘自动调用 NewAPI，采用原文及已提取图片，拒绝�
   const retry=await service.enqueue('alice',input);await service.tick();
   const fallback=service.get('alice',retry.id);
   assert.equal(calls,2);assert.equal(fallback.state,'ready');
-  assert.deepEqual(fallback.ai,{recognized:0,unresolved:2});
+  assert.deepEqual(fallback.ai,{recognized:0,unresolved:2,local:0});
   assert.equal(fallback.products[0].title,'Example Alpha');
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('可本地解析的货盘不调用模型，未知单表才请求一次列映射',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-ai-fallback-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'catalog.xlsx');
+ try{
+  let calls=0;const logs=[];
+  const service=supplierImports({db,dataDir:dir,root,audit(){},python,logAI:entry=>logs.push(entry),aiConfig:{endpoint:new URL('https://example.com/v1/chat/completions'),key:'test-key',model:'test-model'},fetchImpl:async(_,options)=>{
+   calls++;
+   const request=JSON.parse(options.body);
+   assert.deepEqual(JSON.parse(request.messages[1].content),{'1':{'1':'货品叫法','2':'拿货金额'}});
+   return Response.json({choices:[{message:{content:JSON.stringify({header:1,columns:{title:1,cost:2}})}}]});
+  }});
+  const upload=async()=>{const b=await service.enqueue('alice',{supplier:'测试供应商',filename:'catalog.xlsx',bytes:await readFile(path)});await service.tick();return service.get('alice',b.id);};
+  createFixture(path);const local=await upload();
+  assert.equal(local.state,'ready');assert.equal(local.ai,null);assert.equal(calls,0);
+  createFixture(path,false,true);const fallback=await upload();
+  assert.equal(calls,1);assert.equal(fallback.state,'ready');assert.deepEqual(fallback.ai,{layout:true});
+  assert.equal(fallback.products[0].title,'测试商品');assert.equal(fallback.products[0].cost,35);
+  assert.match(fallback.products[0].warnings.join(' '),/AI 建议列/);
+  assert.deepEqual(logs.map(l=>[l.reason,l.requests,l.outcome]),[['local_parse_sufficient',0,'ready'],['layout_fallback',1,'ready']]);
+  assert.deepEqual(logs[1].http_statuses,{200:1});
+  assert.doesNotMatch(JSON.stringify(logs),/test-key|测试商品|货品叫法/);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
