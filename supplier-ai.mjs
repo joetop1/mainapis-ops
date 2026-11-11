@@ -83,6 +83,7 @@ export async function recognizeSupplierBlocks(products,source,config,fetchImpl=f
  if(group.length)groups.push(group);
  const deadline=Date.now()+90000;
  let next=0,recognized=0,unresolved=0;
+ const diagnostics={empty_content:0,invalid_json:0,invalid_shape:0,length_limited:0,missing_items:0,invalid_fields:0,bilingual_titles:0};
  await Promise.all(Array.from({length:Math.min(groups.length,6)},async()=>{
   while(next<groups.length&&Date.now()<deadline){
    const input=groups[next++];
@@ -90,18 +91,32 @@ export async function recognizeSupplierBlocks(products,source,config,fetchImpl=f
    try{
     const response=await fetchImpl(config.endpoint,{method:'POST',redirect:'error',dispatcher:config.dispatcher,signal:AbortSignal.timeout(Math.max(1,Math.min(18000,deadline-Date.now()))),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json'},body:JSON.stringify({model:config.model,messages:[{role:'system',content:prompt},{role:'user',content:JSON.stringify(input)}],max_tokens:1800})});
     if(response.ok){
-     const content=(await response.json()).choices?.[0]?.message?.content;
-     if(typeof content==='string'&&content.length<=30000)result=JSON.parse(content.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
+     try{
+      const choice=(await response.json()).choices?.[0],content=choice?.message?.content;
+      if(choice?.finish_reason==='length')diagnostics.length_limited++;
+      if(typeof content!=='string'||!content.trim())diagnostics.empty_content++;
+      else if(content.length>30000)diagnostics.invalid_shape++;
+      else{
+       result=JSON.parse(content.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
+       if(!Array.isArray(result?.items))diagnostics.invalid_shape++;
+      }
+     }catch{diagnostics.invalid_json++;}
     }
    }catch{}
    const suggestions=new Map(),duplicates=new Set();
-   if(Array.isArray(result?.items))for(const row of result.items){if(suggestions.has(row?.id))duplicates.add(row.id);else suggestions.set(row?.id,row);}
+   if(Array.isArray(result?.items))for(const row of result.items){
+    const id=typeof row?.id==='string'&&/^\d{1,3}$/.test(row.id)?Number(row.id):row?.id;
+    if(!input.some(block=>block.id===id))continue;
+    if(suggestions.has(id))duplicates.add(id);else suggestions.set(id,row);
+   }
    for(const block of input){
     const p=products[block.id],row=!duplicates.has(block.id)&&suggestions.get(block.id),values={},refs={},issues=[];
+    if(!row&&Array.isArray(result?.items))diagnostics.missing_items++;
     if(row){
      for(const [field,limit] of Object.entries(fields)){
-      const list=row.fields?.[field];if(list===undefined)continue;
-      if(!Array.isArray(list)||list.length>limit||list.some(ref=>typeof ref!=='string'||!Object.hasOwn(block.cells,ref))){issues.push('无法核对 '+field+' 的原表坐标，已保留原值');continue;}
+      const raw=row.fields?.[field];if(raw==null)continue;
+      const list=(typeof raw==='string'?[raw]:Array.isArray(raw)?raw:null)?.map(ref=>typeof ref==='string'?ref.trim().toUpperCase().replace(/^\$?([A-Z]{1,3})\$?(\d+)$/,'$1$2'):ref);
+      if(!Array.isArray(list)||list.length>limit||list.some(ref=>typeof ref!=='string'||!Object.hasOwn(block.cells,ref))){diagnostics.invalid_fields++;issues.push('无法核对 '+field+' 的原表坐标，已保留原值');continue;}
       if(!list.length)continue;
       refs[field]=[...new Set(list)];values[field]=refs[field].map(ref=>block.cells[ref]);
      }
@@ -110,6 +125,7 @@ export async function recognizeSupplierBlocks(products,source,config,fetchImpl=f
     }
     const image=typeof row?.image==='string'&&block.image_anchors.includes(row.image)?p.image_anchors[row.image]:null;
     if(row?.image&&!image)issues.push('主图坐标未匹配，已保留原图片');
+    if(values.title_en?.length&&values.title_zh?.length)diagnostics.bilingual_titles++;
     if(Object.keys(values).length||image)recognized++;
     else{unresolved++;issues.push('未识别到可应用字段，已保留原预览');}
     review[p.key]={values,refs,issues,image,origin:'AI'};
@@ -119,5 +135,5 @@ export async function recognizeSupplierBlocks(products,source,config,fetchImpl=f
  for(const p of products)if(!Object.hasOwn(review,p.key)){
   unresolved++;review[p.key]={values:{},refs:{},issues:['AI 未在时限内处理，已保留原预览'],origin:'AI'};
  }
- return {review,recognized,unresolved};
+ return {review,recognized,unresolved,diagnostics};
 }

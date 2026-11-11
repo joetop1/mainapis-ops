@@ -37,3 +37,15 @@ test('后台获取模型并测试聊天补全，不保存未提交的令牌',asy
  assert.equal(calls[0][1].method,'GET');assert.equal(JSON.parse(calls[1][1].body).model,'text-model');
  assert.equal(stored,undefined);
 });
+
+test('AI 兼容可核对的坐标写法并记录响应诊断，不记录响应正文',async()=>{
+ const {recognizeSupplierBlocks}=await import('../supplier-ai.mjs');
+ const products=[{key:'a',barcodes:[]},{key:'b',barcodes:[]}];
+ const source={a:{A1:'原名',B1:'Original'},b:{A2:'另一件'}};
+ const config={endpoint:'https://example.com',key:'test',model:'test'};
+ const run=content=>recognizeSupplierBlocks(products,source,config,async()=>Response.json({choices:[{finish_reason:'length',message:{content}}]}));
+ const good=await run(JSON.stringify({items:[{id:'0',fields:{title_zh:'$a$1',title_en:['B1'],spec:['A2']}}]}));
+ assert.equal(good.recognized,1);assert.equal(good.diagnostics.bilingual_titles,1);assert.equal(good.diagnostics.invalid_fields,1);assert.equal(good.diagnostics.missing_items,1);
+ const bad=await run('{"items":[');
+ assert.equal(bad.unresolved,2);assert.equal(bad.diagnostics.invalid_json,1);assert.equal(bad.diagnostics.length_limited,1);
+});

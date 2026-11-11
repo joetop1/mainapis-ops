@@ -66,7 +66,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    db.prepare("UPDATE supplier_batches SET parse_error='正在调用 NewAPI 识别商品字段和图片位置' WHERE id=? AND state='parsing'").run(r.id);
    await writeFile(file,JSON.stringify(groups),{mode:0o600,flag:'wx'});
    const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'ai-blocks',file],{timeout:25000,maxBuffer:20*1024*1024});
-   const {review,recognized,unresolved}=await recognizeSupplierBlocks(candidates,JSON.parse(stdout),aiConfig,trackedFetch);
+   const {review,recognized,unresolved,diagnostics}=await recognizeSupplierBlocks(candidates,JSON.parse(stdout),aiConfig,trackedFetch);
+   metrics.ai_diagnostics=diagnostics;
    data.ai={recognized,unresolved,local:data.products.length-candidates.length};data.ai_review=review;
   }catch{
    data.ai={recognized:0,unresolved:candidates.length,local:data.products.length-candidates.length};

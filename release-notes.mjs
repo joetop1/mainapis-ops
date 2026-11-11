@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.15',title:'货盘 AI 响应诊断',changes:['细分 AI 响应问题，统计双语标题，兼容绝对坐标写法。']},
  {version:'0.24.14',title:'货盘预览管理',changes:['达到预览上限时，可从货盘窗口查看并删除旧批次。']},
  {version:'0.24.13',title:'简化货盘和选品入口',changes:['货盘只需点击读取并预览，自动按需使用 AI；移除 WorkBuddy 和手动 AI 按钮。','中英文原名同属一件商品时，识别后合并标题；选品台仅从侧栏进入。']},
  {version:'0.24.12',title:'货盘 AI 按需调用',changes:['普通货盘仅本地解析；有多行候选名称的商品块才交给 AI 补全。','单工作表本地无法识别且无已保存映射时，尝试一次 AI 表头推荐。','后台日志记录调用原因、次数和识别结果。']},
