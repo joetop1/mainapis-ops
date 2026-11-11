@@ -41,3 +41,18 @@ test('发送端明确拒绝最多尝试5次，记录失败；业务未完成时�
 });
 
 test('会员与多门店可使用同一群但鉴权和记录隔离，不继承会员Webhook',()=>{const t=setup();try{t.other.system='crmeb-store';assert.equal(t.service.publicConfig(t.other).configured,false);const c=t.service.save(t.other,{webhook,enabled:true,paid:true,refund:true});assert.notEqual(c.pushPassword,t.c.pushPassword);const token=t.service.issueToken(t.other.id,{push_account:c.pushAccount,push_password:c.pushPassword}).token;assert.throws(()=>t.service.receive('mall2','paid',t.token,order));t.service.receive('mall1','paid',t.token,order);t.service.receive('mall2','paid',token,order);assert.equal(t.service.publicConfig(t.mall).records.length,1);assert.equal(t.service.publicConfig(t.other).records.length,1);}finally{t.db.close();}});
+
+test('Tigshop 钉钉渠道发送加签订单摘要，不返回密钥',async()=>{
+ const db=openStore(':memory:'),values=new Map(),mall={id:'tig1',system:'tigshop',name:'椰购'};
+ const sent=[],clock=()=>1720000000000;
+ const service=mallNotifications({db,store:{get:k=>values.get(k),set:(k,v)=>values.set(k,v)},findMall:()=>mall,clock,fetcher:async(url,options)=>{sent.push([new URL(url),JSON.parse(options.body)]);return {ok:true,text:async()=>'{"errcode":0}'};}});
+ try{
+  const dingSecret='SECabcdefghijklmnopqrst',saved=service.save(mall,{enabled:true,paid:true,refund:false,channel:'ding',currency:'EUR',timeZone:'Asia/Shanghai',webhook:'https://oapi.dingtalk.com/robot/send?access_token=abcdefghijklmnop',dingSecret});
+  assert.equal(saved.hasDingSecret,true);assert.ok(!JSON.stringify(saved).includes(dingSecret));
+  service.enqueueTigshop(mall.id,'paid',order,'EUR');await service.tick();
+  assert.equal(sent.length,1);
+  const [[url,payload]]=sent;
+  assert.equal(url.origin,'https://oapi.dingtalk.com');assert.equal(url.searchParams.get('timestamp'),String(clock()));assert.ok(url.searchParams.get('sign'));
+  assert.match(payload.text.content,/蓝色/);assert.match(payload.text.content,/EUR/);assert.doesNotMatch(payload.text.content,/13812345678|完整私人地址/);
+ }finally{db.close();}
+});
