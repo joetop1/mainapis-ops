@@ -8,7 +8,7 @@ export function campaignQuote(items,price,fixed,rate){
  return {cost,profit,margin:profit/price*100,breakEven:rate===100?null:Math.ceil(expense/(1-rate/100))/100};
 }
 export function setupCampaign({$,esc,products,mallName}){
- const selected=new Map(),money=n=>n.toFixed(2);let rows=[],limit=50;
+ const selected=new Map(),money=n=>n.toFixed(2);let rows=[],limit=50,view='list';
  const costLabel=r=>knownCost(r.cost)?money(r.cost):'待核对';
  const quote=()=>campaignQuote([...selected.values()],Number($('#campaignPrice').value),Number($('#campaignFixed').value),Number($('#campaignRate').value));
  function totals(){
@@ -23,7 +23,14 @@ export function setupCampaign({$,esc,products,mallName}){
   const category=$('#campaignCategory').value,sort=$('#campaignSort').value,known=$('#campaignKnownOnly').checked;
   const filtered=rows.filter(r=>(!category||r.category===category)&&(!known||knownCost(r.cost))&&(!supplier||r.supplier===supplier)&&(!mall||r.channels.some(j=>j.id===mall))&&[r.title,r.sku,r.spec].join(' ').toLowerCase().includes(term));
   if(sort)filtered.sort((a,b)=>Number(knownCost(b.cost))-Number(knownCost(a.cost))||(knownCost(a.cost)&&knownCost(b.cost)?(sort==='asc'?1:-1)*(a.cost-b.cost):0));
-  $('#campaignRows').innerHTML=filtered.slice(0,limit).map(r=>'<tr><td><input type="checkbox" data-campaign-row="'+r.id+'" aria-label="'+esc('选择 '+r.title+' '+r.spec)+'" '+(selected.has(r.id)?'checked':'')+'></td><td>'+esc(r.title)+'<small>'+esc(r.spec+' · '+r.sku)+'</small></td><td>'+costLabel(r)+'</td><td>'+esc(r.price)+'</td><td>'+esc(r.stock)+'</td></tr>').join('');
+  const visible=filtered.slice(0,limit),grid=view==='grid';
+  const checkbox=r=>'<input type="checkbox" data-campaign-row="'+r.id+'" aria-label="'+esc('选择 '+r.title+' '+r.spec)+'" '+(selected.has(r.id)?'checked':'')+'>';
+  const image=r=>'<div class="campaign-image"><span aria-hidden="true">▧</span>'+(r.image?'<img loading="lazy" decoding="async" referrerpolicy="no-referrer" src="'+esc(r.image)+'" alt="">':'')+'</div>';
+  const title=r=>'<div class="campaign-product-name"><strong>'+esc(r.title)+'</strong><small>'+esc(r.spec+' · '+r.sku)+'</small></div>';
+  $('#campaignTable').hidden=grid;$('#campaignCards').hidden=!grid;
+  $('#campaignListView').setAttribute('aria-pressed',String(!grid));$('#campaignGridView').setAttribute('aria-pressed',String(grid));
+  $('#campaignRows').innerHTML=grid?'':visible.map(r=>'<tr><td>'+checkbox(r)+'</td><td><div class="campaign-row-product">'+image(r)+title(r)+'</div></td><td>'+costLabel(r)+'</td><td>'+esc(r.price)+'</td><td>'+esc(r.stock)+'</td></tr>').join('');
+  $('#campaignCards').innerHTML=grid?visible.map(r=>'<label class="campaign-card">'+image(r)+title(r)+'<span class="campaign-card-values">成本 '+costLabel(r)+' · 售价 '+esc(r.price)+' · 库存 '+esc(r.stock)+'</span><span class="campaign-card-select">'+checkbox(r)+' 选择规格</span></label>').join(''):'';
   $('#campaignCount').textContent='已选 '+selected.size+' 个 SKU · 当前显示 '+Math.min(limit,filtered.length)+' / '+filtered.length+' 个';
   $('#campaignMore').hidden=limit>=filtered.length;
   $('#campaignSelected').innerHTML=[...selected.values()].map(r=>'<div class="campaign-item"><span>'+esc(r.title+' · '+r.spec)+'（成本 '+costLabel(r)+'）</span><label>每套数量<input type="number" min="1" max="999" step="1" data-campaign-qty="'+r.id+'" value="'+esc(r.quantity)+'"></label><button class="text" type="button" data-campaign-remove="'+r.id+'">移除</button></div>').join('');
@@ -31,7 +38,7 @@ export function setupCampaign({$,esc,products,mallName}){
  }
  function open(){
   selected.clear();limit=50;
-  rows=products().flatMap(p=>(p.skus||[]).map(s=>({...s,title:p.title,category:p.category||'',supplier:p.supplier_import?.supplier||'',channels:(p.publications||[]).filter(j=>j.status==='succeeded').map(j=>({id:j.mall_connection_id||j.target,name:mallName(j.mall_connection_id,j.target),remote:j.remote_id}))}))).map((r,id)=>({...r,id}));
+  rows=products().flatMap(p=>(p.skus||[]).map(s=>({...s,title:p.title,image:[s.image,p.images?.[0]].find(url=>typeof url==='string'&&url.startsWith('https://'))||'',category:p.category||'',supplier:p.supplier_import?.supplier||'',channels:(p.publications||[]).filter(j=>j.status==='succeeded').map(j=>({id:j.mall_connection_id||j.target,name:mallName(j.mall_connection_id,j.target),remote:j.remote_id}))}))).map((r,id)=>({...r,id}));
   const options=(node,label,entries)=>node.replaceChildren(new Option(label,''),...Array.from(entries,([id,name])=>new Option(name,id)));
   options($('#campaignSupplier'),'全部供应商',new Map(rows.filter(r=>r.supplier).map(r=>[r.supplier,r.supplier])));
   options($('#campaignMall'),'全部商城',new Map(rows.flatMap(r=>r.channels.map(j=>[j.id,j.name]))));
@@ -46,7 +53,10 @@ export function setupCampaign({$,esc,products,mallName}){
  for(const id of ['campaignSearch','campaignSupplier','campaignMall','campaignCategory','campaignSort','campaignKnownOnly'])$('#'+id).oninput=()=>{limit=50;draw();};
  for(const id of ['campaignPrice','campaignFixed','campaignRate'])$('#'+id).oninput=totals;
  $('#campaignMore').onclick=()=>{limit+=50;draw();};
- $('#campaignRows').onchange=e=>{const id=e.target.dataset.campaignRow;if(id===undefined)return;const r=rows[Number(id)];if(e.target.checked)selected.set(r.id,{...r,quantity:1});else selected.delete(r.id);draw();};
+ $('#campaignListView').onclick=()=>{view='list';draw();};
+ $('#campaignGridView').onclick=()=>{view='grid';draw();};
+ $('#campaignRows').onchange=$('#campaignCards').onchange=e=>{const id=e.target.dataset.campaignRow;if(id===undefined)return;const r=rows[Number(id)];if(e.target.checked)selected.set(r.id,{...r,quantity:1});else selected.delete(r.id);draw();};
+ for(const id of ['campaignRows','campaignCards'])$('#'+id).addEventListener('error',event=>{if(event.target.matches('.campaign-image img'))event.target.remove();},true);
  $('#campaignSelected').oninput=e=>{const r=selected.get(Number(e.target.dataset.campaignQty));if(r){r.quantity=Number(e.target.value);totals();}};
  $('#campaignSelected').onclick=e=>{const id=e.target.dataset.campaignRemove;if(id!==undefined){selected.delete(Number(id));draw();}};
  $('#campaignExport').onclick=()=>{
