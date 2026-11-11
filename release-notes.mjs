@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.9',title:'货盘支持 WorkBuddy 整理',changes:['下载货盘清单交给 WorkBuddy，上传 JSON 后按原表坐标补全名称、规格、属性和补充说明。','原有图片、条码和价格保持不变，可筛选待核对商品，确认后再导入。']},
  {version:'0.24.8',title:'货盘识别与商城群通知',changes:['货盘支持 AI 推荐列、多行商品分组和浏览器内供应商模板。','Tigshop 可向钉钉群发送付款和退款申请摘要；未开启加签时密钥可留空。','钉钉和企业微信群消息隐藏内部事件编号，保留订单号与售后单号。']},
  {version:'0.24.7',title:'货盘容量与失败提示',changes:['单份货盘可预览并提交最多500件商品。超限时显示实际识别件数。']},
  {version:'0.24.6',title:'近期后台体验更新',changes:['发布任务列表展示商品缩略图。','保存及审核完成后先显示成功反馈，再刷新列表。','成功提示约两秒消失，显示期间模糊背景。']},

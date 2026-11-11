@@ -17,6 +17,11 @@ z.writestr('xl/workbook.xml','<workbook xmlns="http://schemas.openxmlformats.org
 z.writestr('xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
 rows={3:{'C':'产品名称','D':'测试产品','I':'产品名称','J':'多规格产品'},4:{'C':'条码','D':'6977880050002','I':'条码','J':'6977880050040、6977880050033'},5:{'C':'产品成分','D':'棉'},6:{'C':'产品参数','D':'10cm'},7:{'C':'箱规','D':'10/箱'},8:{'C':'描述','D':'产品说明'},10:{'C':'零售价','D':'59元','E':'批发价','F':'29元','I':'零售价','J':'99元','K':'批发价','L':'39元'}}
 if sys.argv[3]=='1': rows={1:{'A':'货品叫法','B':'拿货金额'},2:{'A':'测试商品','B':'35'}}
+if sys.argv[3]=='2':
+ h={'B':'产品名称','C':'颜色/编号','D':'零售价（元）','E':'批发价（元）','I':'描述'}
+ rows={11:h,13:{'B':'Example Alpha'},15:{'B':'样品甲','C':'100ml'},16:{'C':'6977880050002','D':'199','E':'89','I':'原商品描述'},21:{'B':'甲补充说明'},
+ 23:h,25:{'B':'样品乙','C':'6977880050040'},26:{'B':'Example Beta','D':'239','E':'99'},30:{'C':'15ml'},31:{'I':'乙补充说明'}}
+
 data=''.join('<row r="%s">'%r+''.join('<c r="%s%s" t="inlineStr"><is><t>%s</t></is></c>'%(c,r,v) for c,v in cs.items())+'</row>' for r,cs in rows.items())
 extra='<drawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="drawing"/>' if sys.argv[2]=='1' else ''
 z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+data+'</sheetData>'+extra+'</worksheet>')
@@ -26,7 +31,7 @@ if extra:
  z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><twoCellAnchor><from><row>4</row><col>0</col></from><pic><a:blip r:embed="image"/></pic></twoCellAnchor></wsDr>')
  z.writestr('xl/drawings/_rels/drawing1.xml.rels','<Relationships><Relationship Id="image" Target="../media/image.png"/></Relationships>')
  z.writestr('xl/media/image.png',base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhWQAAAAASUVORK5CYII='))
-z.close()`,path,withImage?'1':'0',table?'1':'0']);}
+z.close()`,path,withImage?'1':'0',table==='mixed'?'2':table?'1':'0']);}
 async function wait(service,owner,id){for(let i=0;i<100;i++){const v=service.get(owner,id);if(v.state!=='processing')return v;await delay(5);}throw Error('worker timeout');}
 test('货盘卡片提取、预览隔离、库存必填、多SKU确认、导入幂等、无1688链接编辑支持',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ops-supplier-test-')),db=openStore(join(dir,'test.sqlite'));const path=join(dir,'test.xlsx');createFixture(path);const audits=[],collectors=[];
@@ -105,5 +110,55 @@ test('陌生表头首次点选成功后，同账号同供应商可自动复用',
   const other=await service.enqueue('bob',input);
   await service.tick();
   assert.equal(service.get('bob',other.id).state,'parse_failed');
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('WorkBuddy 清单按商品块取原表值，拒绝串款并保留原图、价格和条码',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-workbuddy-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'test.xlsx');
+ try{
+  createFixture(path,true);
+  const service=supplierImports({db,dataDir:dir,root,getStorage:()=>config,allowedStorage:()=>true,recordCollector(){},audit(){},storeImage:async()=>config.publicOrigin+'/test.png',python});
+  const b=await service.preview('alice',{supplier:'供应商',filename:'报价.xlsx',data:(await readFile(path)).toString('base64')});
+  const manifest=service.workbuddyTemplate('alice',b.id);
+  assert.throws(()=>service.workbuddyTemplate('bob',b.id),/不属于/);
+  const {format,batch_id,revision}=manifest,key=manifest.items[0].key;
+  const payload=fields=>({format,batch_id,revision,items:[{key,fields,issues:['复核说明']}]});
+  await assert.rejects(service.importWorkbuddy('alice',b.id,payload({title_zh:['J3']})),/超出/);
+  await assert.rejects(service.importWorkbuddy('alice',b.id,payload({title_zh:['D9']})),/空白/);
+  const result=await service.importWorkbuddy('alice',b.id,payload({title_zh:['D3'],spec:['D6'],attributes:['D5'],notes:['D7']}));
+  const [p,other]=result.products;
+  assert.equal(p.spec_hint,'10cm');assert.equal(p.title,'测试产品');assert.match(p.description,/10\/箱/);assert.deepEqual(p.review_refs.spec,['D6']);assert.match(p.warnings.join(' '),/复核说明/);
+  for(const field of ['images','barcodes','cost','price'])assert.deepEqual(p[field],b.products[0][field]);
+  assert.deepEqual(other,b.products[1]);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);
+  service.start('alice',b.id,{items:[{key,confirmed:true,title:p.title,skus:[{spec:p.spec_hint,cost:p.cost,price:p.price,stock:2}]}]});
+  assert.equal((await wait(service,'alice',b.id)).state,'done');
+  const saved=JSON.parse(db.prepare('SELECT data FROM products').get().data);
+  assert.match(saved.description,/10\/箱/);assert.deepEqual(saved.attributes.find(a=>a.name==='产品属性'),{name:'产品属性',value:'棉'});
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('WorkBuddy 同表商品采用不同字段行：按各自坐标补全双语标题、规格及说明',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-mixed-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'mixed.xlsx');
+ try{
+  createFixture(path,false,'mixed');
+  const service=supplierImports({db,dataDir:dir,root,audit(){},python});
+  const queued=await service.enqueue('alice',{supplier:'测试供应商',filename:'mixed.xlsx',bytes:await readFile(path)});
+  await service.tick();
+  const b=service.get('alice',queued.id),manifest=service.workbuddyTemplate('alice',b.id);
+  assert.equal(b.products.length,2);
+  const [a,c]=manifest.items;
+  assert.deepEqual(a.bounds.slice(0,2),[12,22]);assert.deepEqual(c.bounds.slice(0,2),[24,31]);
+  const apply=items=>service.importWorkbuddy('alice',b.id,{format:manifest.format,batch_id:b.id,revision:manifest.revision,items});
+  await assert.rejects(apply([{key:a.key,fields:{spec:['C30']}}]),/超出/);
+  const result=await apply([
+   {key:a.key,fields:{title_en:['B13'],title_zh:['B15'],spec:['C15'],notes:['B21']}},
+   {key:c.key,fields:{title_zh:['B25'],title_en:['B26'],spec:['C30'],notes:['I31']}},
+  ]);
+  assert.deepEqual(result.products.map(p=>[p.title,p.spec_hint,p.cost,p.price]),[
+   ['Example Alpha / 样品甲','100ml',89,199],['Example Beta / 样品乙','15ml',99,239],
+  ]);
+  assert.equal(result.products[0].description,'原商品描述\n\n甲补充说明');
+  assert.equal(result.products[1].description,'乙补充说明');
+  assert.deepEqual(service.get('alice',b.id).products,result.products);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
