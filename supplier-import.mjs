@@ -1,3 +1,4 @@
+import {supplierAIConfig,recognizeSupplierBlocks} from './supplier-ai.mjs';
 import {ossRequest,MAX_WORKBOOK_BYTES} from './oss-multipart.mjs';
 import {createWriteStream} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
@@ -19,13 +20,13 @@ function applySupplierReview(p,review){
  if(!review)return p;
  const {values,refs,issues}=review;
  const title=[...new Set([...(values.title_en||[]),...(values.title_zh||[])])].join(' / ');
- const warnings=[...p.warnings.filter(w=>!title||!w.includes('暂取首行作为名称')),...issues.map(v=>'WorkBuddy 待核对：'+v)];
+ const warnings=[...p.warnings.filter(w=>!title||!w.includes('暂取首行作为名称')),...issues.map(v=>(review.origin||'WorkBuddy')+' 待核对：'+v)];
  const description=[...new Set([p.description,...(values.notes||[])].filter(Boolean))].join('\n\n');
  const attributes=[...p.attributes];
  if(values.attributes?.length)attributes.push({name:'产品属性',value:values.attributes.join(' / ').slice(0,1000)});
- return {...p,title:title||p.title,spec_hint:p.barcodes.length<=1&&values.spec?.[0]||p.spec_hint,description,attributes,warnings,review_refs:refs};
+ return {...p,images:review.image&&p.images.includes(review.image)?[review.image,...p.images.filter(id=>id!==review.image)]:p.images,title:title||p.title,spec_hint:p.barcodes.length<=1&&values.spec?.[0]||p.spec_hint,description,attributes,warnings,review_refs:refs};
 }
-export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,prepareCharge,chargeProduct,storeImage,fetchImpl=fetch,python=process.env.PYTHON_BIN||'python3'}){
+export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recordCollector,audit,prepareCharge,chargeProduct,storeImage,fetchImpl=fetch,aiConfig=supplierAIConfig(),getAIConfig=()=>aiConfig,python=process.env.PYTHON_BIN||'python3'}){
  const directory=join(dataDir,'supplier-previews'),active=new Set();let parsing=0;
  db.exec("CREATE TABLE IF NOT EXISTS supplier_batches(id TEXT PRIMARY KEY,owner TEXT NOT NULL,supplier TEXT NOT NULL,filename TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'ready',plan TEXT,results TEXT NOT NULL DEFAULT '[]',destination TEXT);CREATE TABLE IF NOT EXISTS supplier_uploaded(batch_id TEXT NOT NULL,asset TEXT NOT NULL,url TEXT NOT NULL,PRIMARY KEY(batch_id,asset));");
  for(const [name,type] of [['billing_rate',"TEXT NOT NULL DEFAULT ''"],['remote_source',"TEXT NOT NULL DEFAULT ''"],['parse_error',"TEXT NOT NULL DEFAULT ''"],['parse_started','INTEGER NOT NULL DEFAULT 0']])if(!db.prepare('PRAGMA table_info(supplier_batches)').all().some(c=>c.name===name))db.exec('ALTER TABLE supplier_batches ADD COLUMN '+name+' '+type);
@@ -52,12 +53,28 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   }
   return null;
  }
+ async function enrichWithAI(data,dir,r){
+  let aiConfig;try{aiConfig=getAIConfig();}catch{data.ai={recognized:0,unresolved:data.products.length};return;}
+  if(!aiConfig)return;
+  const groups=Object.create(null),file=join(dir,'ai-'+randomUUID()+'.json');
+  for(const p of data.products)if(p.bounds)(groups[p.sheet]??=[]).push({key:p.key,bounds:p.bounds});
+  try{
+   db.prepare("UPDATE supplier_batches SET parse_error='正在调用 NewAPI 识别商品字段和图片位置' WHERE id=? AND state='parsing'").run(r.id);
+   await writeFile(file,JSON.stringify(groups),{mode:0o600,flag:'wx'});
+   const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'ai-blocks',file],{timeout:25000,maxBuffer:20*1024*1024});
+   const {review,recognized,unresolved}=await recognizeSupplierBlocks(data.products,JSON.parse(stdout),aiConfig,fetchImpl);
+   data.ai={recognized,unresolved};data.ai_review=review;
+  }catch{
+   data.ai={recognized:0,unresolved:data.products.length};
+  }finally{await rm(file,{force:true}).catch(()=>{});}
+ }
  async function parseBatch(r){
   const dir=join(directory,r.id);parsing++;
   try{
    if(r.remote_source){const remote=JSON.parse(r.remote_source),c=getStorage();if(!c?.enabled||!allowedStorage(r.owner,c)||storageDestination(c)!==remote.destination)throw Error('OSS配置或授权发生变化');const free=await statfs(dataDir);if(free.bavail*free.bsize<remote.size+1024*1024*1024)throw Error('解析所需磁盘空间不足，请先清理');const response=await ossRequest(c,remote.key,'GET',{}, {},undefined,fetchImpl);let size=0;await pipeline(Readable.fromWeb(response.body),new Transform({transform(chunk,encoding,callback){size+=chunk.length;callback(size>remote.size||size>MAX_WORKBOOK_BYTES?Error('OSS文件大小异常'):null,chunk);}}),createWriteStream(join(dir,'input.xlsx'),{mode:0o600}));if(size!==remote.size)throw Error('OSS文件不完整');}
    let out;try{out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});}catch(e){let message;try{message=JSON.parse(e.stdout).error;}catch{}if(message?.startsWith('未识别到商品'))out=await retryKnownLayout(r,dir).catch(()=>null);if(!out)throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');}
    const data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+   await enrichWithAI(data,dir,r);
    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=? AND state='parsing'").run(JSON.stringify(data),r.id);
   }catch(e){db.prepare("UPDATE supplier_batches SET state='parse_failed',parse_error=? WHERE id=? AND state='parsing'").run(String(e.message).slice(0,500),r.id);}
   finally{parsing--;if(r.remote_source){try{const remote=JSON.parse(r.remote_source),c=getStorage();if(c&&storageDestination(c)===remote.destination){const response=await ossRequest(c,remote.key,'DELETE',{}, {},undefined,fetchImpl);await response.body?.cancel();db.prepare("UPDATE supplier_batches SET remote_source='' WHERE id=?").run(r.id);}}catch{console.error('supplier_private_cleanup_pending');}}}
@@ -82,8 +99,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    }
   }
  }
- return {id:r.id,supplier:r.supplier,filename:r.filename,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(original=>{
-  const p=applySupplierReview(original,d.workbuddy?.[original.key]);
+ return {id:r.id,supplier:r.supplier,filename:r.filename,ai:d.ai||null,state:active.has(r.id)?'processing':r.state,error:r.parse_error||'',products:d.products.map(original=>{
+  const p=applySupplierReview(original,d.workbuddy?.[original.key]||d.ai_review?.[original.key]);
   const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(r.owner,sourceFor(r.supplier,original));
   if(!existing){
    const candidates=new Map();
@@ -129,7 +146,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    if(r.state!=='ready'||r.plan||active.has(id))throw Error('仅可整理尚未导入的货盘预览');
    if(data.products.some(p=>!p.bounds))throw Error('此预览由旧版本生成，请重新读取原 Excel 后下载清单');
    return {format:workbuddyFormat,batch_id:id,revision:workbuddyRevision(data),workbook:r.filename,
-    instructions:'读取同一份原始 Excel，按 items 中每个商品的 sheet 和 bounds（起始行、结束行、起始列、结束列，均从1起且包含端点）提取字段。返回 JSON，只保留 format、batch_id、revision、items。每条 items 返回 key、fields、issues。fields 可含 title_zh、title_en、spec（各用原表单元格坐标数组，规格只选一个格）、attributes、notes。使用有文字的合并单元格锚点，不猜测；拿不准则省略字段并在 issues 用简短中文说明。不要改图、条码、价格或库存，不重排原表；尽量覆盖所有商品。',
+    instructions:'读取同一份原始 Excel，按 items 中每个商品的 sheet 和 bounds（起始行、结束行、起始列、结束列，均从1起且包含端点）提取字段。返回 JSON，只保留 format、batch_id、revision、items。每条 items 返回 key、fields、issues。fields 只允许这五个键：title_zh（最多2格）、title_en（最多2格）、spec（最多1格）、attributes（最多4格）、notes（最多4格）。每个值是 A1 坐标字符串数组，例如 {"title_en":["B13"],"title_zh":["B15"],"spec":["C14"]}，不要输出实际文字、坐标范围或其他键。使用有文字的合并单元格锚点，不猜测；拿不准则省略字段并在 issues 用简短中文说明。不要改图、条码、价格或库存，不重排原表；尽量覆盖所有商品。',
     items:data.products.map(p=>({key:p.key,sheet:p.sheet,bounds:p.bounds,current_title:p.title,fields:{},issues:[]}))};
   },
   async importWorkbuddy(owner,id,input){
@@ -143,17 +160,31 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
     seen.add(row.key);
     const refs={},issues=row.issues??[];
     if(!Array.isArray(issues)||issues.length>5||issues.some(x=>typeof x!=='string'||x.length>180))throw Error('每款商品最多填5条待核对说明，每条不超过180字');
-    for(const [field,list] of Object.entries(row.fields)){
-     if(!Object.hasOwn(workbuddyFields,field)||!Array.isArray(list)||list.length>workbuddyFields[field])throw Error('整理结果字段或坐标数量不正确');
-     refs[field]=[...new Set(list)];
+    const fieldIssues=[];
+    for(const [field,raw] of Object.entries(row.fields)){
+     if(!Object.hasOwn(workbuddyFields,field)){
+      if(fieldIssues.length<5)fieldIssues.push('不支持字段「'+field.slice(0,40)+'」，已保留原预览');
+      continue;
+     }
+     if(raw===null)continue;
+     const list=typeof raw==='string'?[raw]:raw;
+     const limit=workbuddyFields[field];
+     if(!Array.isArray(list)||list.some(v=>typeof v!=='string')){
+      fieldIssues.push(field+' 需要原表坐标数组，已保留原预览');continue;
+     }
+     const coordinates=[...new Set(list.map(ref=>ref.trim().toUpperCase().replace(/^\$([A-Z]{1,3})\$?([1-9][0-9]*)$/,'$1$2').replace(/^([A-Z]{1,3})\$([1-9][0-9]*)$/,'$1$2')).filter(Boolean))];
+     if(coordinates.length>limit||coordinates.some(ref=>!/^[A-Z]{1,3}[1-9][0-9]{0,6}$/.test(ref))){
+      fieldIssues.push(field+' 需填写不超过 '+limit+' 个单元格坐标，已保留原预览');continue;
+     }
+     refs[field]=coordinates;
      for(const ref of refs[field]){
       const m=typeof ref==='string'&&/^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(ref),col=m&&[...m[1]].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
       const [first,last,left,right]=p.bounds;
-      if(!m||+m[2]<first||+m[2]>last||col<left||col>right)throw Error('商品「'+p.title+'」的坐标超出原表商品块');
+      if(!m||+m[2]<first||+m[2]>last||col<left||col>right)throw Error('商品「'+p.title+'」的 '+field+' 坐标 '+ref+' 超出原表商品块');
       (references[p.sheet]??=new Set()).add(ref);
      }
     }
-    pending.push({p,refs,issues:issues.map(x=>x.trim()).filter(Boolean)});
+    pending.push({p,refs,issues:[...issues.map(x=>x.trim()).filter(Boolean),...fieldIssues]});
    }
    const dir=join(directory,id),file=join(dir,'review-'+randomUUID()+'.json');
    active.add(id);
@@ -165,12 +196,18 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
      const values={};
      for(const [field,list] of Object.entries(refs)){
       values[field]=list.map(ref=>source[p.sheet]?.[ref]);
-      if(values[field].some(v=>typeof v!=='string'||!v.trim()))throw Error('商品「'+p.title+'」引用了空白或公式单元格');
+      if(values[field].some(v=>typeof v!=='string'||!v.trim()))throw Error('商品「'+p.title+'」的 '+field+' 引用了空白或公式单元格 '+list.find((_,i)=>!values[field][i]));
      }
      if(!Object.values(values).some(v=>v.length)&&!issues.length)issues.push('未返回可补全的字段，请核对原表');
-     if([...new Set([...(values.title_en||[]),...(values.title_zh||[])])].join(' / ').length>200)throw Error('商品「'+p.title+'」的合并标题超过200字，请核对原表坐标');
+     if([...new Set([...(values.title_en||[]),...(values.title_zh||[])])].join(' / ').length>200){
+      issues.push('合并标题超过 200 字（'+[...(refs.title_en||[]),...(refs.title_zh||[])].join('、')+'），已保留原名称');
+      delete values.title_en;delete values.title_zh;delete refs.title_en;delete refs.title_zh;
+     }
+     if((values.spec?.[0]?.length||0)>100){
+      issues.push('规格超过 100 字（'+refs.spec[0]+'），已保留原预览，请核对该单元格');
+      delete values.spec;delete refs.spec;
+     }
      if(values.spec?.length&&p.barcodes.length>1)issues.push('多条码商品的规格请逐个 SKU 核对');
-     if((values.spec?.[0]?.length||0)>100)throw Error('商品「'+p.title+'」的规格超过100字，请核对原表坐标');
      review[p.key]={values,refs,issues};
     }
     data.workbuddy=review;
@@ -225,10 +262,10 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
       const existing=db.prepare('SELECT id FROM products WHERE owner=? AND source=?').get(owner,source);
       if(existing){result={key:item.key,ok:true,id:existing.id,duplicate:true};}
       else{
-       const urls=[];for(const asset of original.images){let row=db.prepare('SELECT url FROM supplier_uploaded WHERE batch_id=? AND asset=?').get(id,asset);if(!row||row.url.length>128){const a=data.assets.find(a=>a.id===asset),bytes=await readFile(join(directory,id,a.file)),type=imageType(bytes),key=compactImageKey(owner,bytes,type.ext);const url=await (storeImage?storeImage(c,key,{bytes,...type},owner):uploadImage(c,key,{bytes,...type},{fetchImpl}));db.prepare('INSERT INTO supplier_uploaded VALUES(?,?,?) ON CONFLICT(batch_id,asset) DO UPDATE SET url=excluded.url').run(id,asset,url);row={url};}urls.push(row.url);}
+       const enriched=applySupplierReview(original,data.workbuddy?.[original.key]||data.ai_review?.[original.key]);
+       const urls=[];for(const asset of enriched.images){let row=db.prepare('SELECT url FROM supplier_uploaded WHERE batch_id=? AND asset=?').get(id,asset);if(!row||row.url.length>128){const a=data.assets.find(a=>a.id===asset),bytes=await readFile(join(directory,id,a.file)),type=imageType(bytes),key=compactImageKey(owner,bytes,type.ext);const url=await (storeImage?storeImage(c,key,{bytes,...type},owner):uploadImage(c,key,{bytes,...type},{fetchImpl}));db.prepare('INSERT INTO supplier_uploaded VALUES(?,?,?) ON CONFLICT(batch_id,asset) DO UPDATE SET url=excluded.url').run(id,asset,url);row={url};}urls.push(row.url);}
        const latest=getStorage();if(!latest?.enabled||!allowedStorage(owner,latest)||storageDestination(latest)!==storageDestination(c))throw Error('存储配置或授权已变化，未创建商品');
        const metadata={supplier:r.supplier,batch_id:id,filename:r.filename,card:original.key,barcodes:original.barcodes,sku_codes:item.skus.map(s=>s.sku),packaging:original.packaging,category_hint:original.category_hint};
-       const enriched=applySupplierReview(original,data.workbuddy?.[original.key]);
        const product=validateProduct({source_url:source,title:item.title,description:enriched.description,attributes:enriched.attributes,category:'',images:urls,detail_images:[],skus:item.skus,...(item.mall_mappings?{mall_mappings:item.mall_mappings,...(item.mall_mappings[0]||{})}:{})},{supplier:metadata});
        const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);chargeProduct?.(owner,pid,rate);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
       }

@@ -19,7 +19,7 @@ rows={3:{'C':'产品名称','D':'测试产品','I':'产品名称','J':'多规格
 if sys.argv[3]=='1': rows={1:{'A':'货品叫法','B':'拿货金额'},2:{'A':'测试商品','B':'35'}}
 if sys.argv[3]=='2':
  h={'B':'产品名称','C':'颜色/编号','D':'零售价（元）','E':'批发价（元）','I':'描述'}
- rows={11:h,13:{'B':'Example Alpha'},15:{'B':'样品甲','C':'100ml'},16:{'C':'6977880050002','D':'199','E':'89','I':'原商品描述'},21:{'B':'甲补充说明'},
+ rows={11:h,13:{'B':'Example Alpha'},15:{'B':'样品甲','C':'100ml'},16:{'C':'6977880050002','D':'199','E':'89','I':'原商品描述'},20:{'G':'详细说明'*30},21:{'B':'甲补充说明'},
  23:h,25:{'B':'样品乙','C':'6977880050040'},26:{'B':'Example Beta','D':'239','E':'99'},30:{'C':'15ml'},31:{'I':'乙补充说明'}}
 
 data=''.join('<row r="%s">'%r+''.join('<c r="%s%s" t="inlineStr"><is><t>%s</t></is></c>'%(c,r,v) for c,v in cs.items())+'</row>' for r,cs in rows.items())
@@ -28,9 +28,12 @@ z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlf
 if extra:
  import base64
  z.writestr('xl/worksheets/_rels/sheet1.xml.rels','<Relationships><Relationship Id="drawing" Target="../drawings/drawing1.xml"/></Relationships>')
- z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><twoCellAnchor><from><row>4</row><col>0</col></from><pic><a:blip r:embed="image"/></pic></twoCellAnchor></wsDr>')
- z.writestr('xl/drawings/_rels/drawing1.xml.rels','<Relationships><Relationship Id="image" Target="../media/image.png"/></Relationships>')
- z.writestr('xl/media/image.png',base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhWQAAAAASUVORK5CYII='))
+ anchors=[(12,'image'),(13,'second')] if sys.argv[3]=='2' else [(4,'image')]
+ z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns:d="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+''.join('<twoCellAnchor><from><row>%s</row><col>0</col></from><pic><a:blip r:embed="%s"/></pic></twoCellAnchor>'%(r,key) for r,key in anchors)+'</wsDr>')
+ z.writestr('xl/drawings/_rels/drawing1.xml.rels','<Relationships><Relationship Id="image" Target="../media/image.png"/><Relationship Id="second" Target="../media/second.png"/></Relationships>')
+ png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhWQAAAAASUVORK5CYII=')
+ z.writestr('xl/media/image.png',png)
+ if sys.argv[3]=='2':z.writestr('xl/media/second.png',png+b'x')
 z.close()`,path,withImage?'1':'0',table==='mixed'?'2':table?'1':'0']);}
 async function wait(service,owner,id){for(let i=0;i<100;i++){const v=service.get(owner,id);if(v.state!=='processing')return v;await delay(5);}throw Error('worker timeout');}
 test('货盘卡片提取、预览隔离、库存必填、多SKU确认、导入幂等、无1688链接编辑支持',async()=>{
@@ -151,14 +154,62 @@ test('WorkBuddy 同表商品采用不同字段行：按各自坐标补全双语�
   const apply=items=>service.importWorkbuddy('alice',b.id,{format:manifest.format,batch_id:b.id,revision:manifest.revision,items});
   await assert.rejects(apply([{key:a.key,fields:{spec:['C30']}}]),/超出/);
   const result=await apply([
-   {key:a.key,fields:{title_en:['B13'],title_zh:['B15'],spec:['C15'],notes:['B21']}},
-   {key:c.key,fields:{title_zh:['B25'],title_en:['B26'],spec:['C30'],notes:['I31']}},
+   {key:a.key,fields:{title_en:['B13','B13'],title_zh:'b15',spec:'$C$15',notes:['B21'],unknown:['D16']}},
+   {key:c.key,fields:{title_zh:['B25'],title_en:['B26'],spec:['C30'],notes:['I31'],attributes:['A24','A25','A26','A27','A28']}},
   ]);
   assert.deepEqual(result.products.map(p=>[p.title,p.spec_hint,p.cost,p.price]),[
    ['Example Alpha / 样品甲','100ml',89,199],['Example Beta / 样品乙','15ml',99,239],
   ]);
+  assert.match(result.products[0].warnings.join(' '),/不支持字段「unknown」/);
+  assert.match(result.products[1].warnings.join(' '),/attributes 需填写不超过 4 个/);
   assert.equal(result.products[0].description,'原商品描述\n\n甲补充说明');
   assert.equal(result.products[1].description,'乙补充说明');
   assert.deepEqual(service.get('alice',b.id).products,result.products);
+  const fallback=await apply([
+   {key:a.key,fields:{title_zh:['B15'],spec:['G20']}},
+   {key:c.key,fields:{spec:['C30']}},
+  ]);
+  assert.equal(fallback.products[0].title,'样品甲');
+  assert.equal(fallback.products[0].spec_hint,b.products[0].spec_hint);
+  assert.match(fallback.products[0].warnings.join(' '),/规格超过 100 字（G20）/);
+  assert.equal(fallback.products[1].spec_hint,'15ml');
+ }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('上传货盘自动调用 NewAPI，采用原文及已提取图片，拒绝串款并在模型失败时回退',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-supplier-newapi-')),db=openStore(join(dir,'test.sqlite')),path=join(dir,'mixed.xlsx');
+ try{
+  createFixture(path,true,'mixed');
+  let offline=false,calls=0;
+  const service=supplierImports({db,dataDir:dir,root,audit(){},python,aiConfig:{endpoint:new URL('https://example.com/v1/chat/completions'),key:'test-key',model:'test-model'},fetchImpl:async(url,options)=>{
+   calls++;
+   assert.equal(new URL(url).pathname,'/v1/chat/completions');
+   const req=JSON.parse(options.body),[first,second]=JSON.parse(req.messages[1].content);
+   assert.equal(req.model,'test-model');assert.equal(first.cells.B15,'样品甲');assert.equal(second.cells.B15,undefined);assert.deepEqual(first.image_anchors,['A13','A14']);
+   if(offline)return new Response('',{status:503});
+   return Response.json({choices:[{message:{content:JSON.stringify({items:[
+    {id:first.id,fields:{title_zh:['B15'],title_en:['B13'],spec:['C15'],notes:['B21']},image:'A14'},
+    {id:second.id,fields:{title_zh:['B15'],spec:['C30']},image:'Z99'},
+   ]})}}]});
+  }});
+  const input={supplier:'测试供应商',filename:'mixed.xlsx',bytes:await readFile(path)};
+  const queued=await service.enqueue('alice',input);await service.tick();
+  const result=service.get('alice',queued.id);
+  assert.equal(calls,1);
+  assert.deepEqual(result.ai,{recognized:2,unresolved:0});
+  assert.equal(result.products[0].title,'Example Alpha / 样品甲');
+  assert.equal(result.products[0].spec_hint,'100ml');
+  assert.equal(result.products[0].cost,89);
+  assert.equal(result.products[0].images[0],result.products[0].image_anchors.A14);
+  assert.equal(result.products[0].images.length,2);
+  assert.match(result.products[0].description,/甲补充说明/);
+  assert.equal(result.products[1].title,'样品乙');
+  assert.match(result.products[1].warnings.join(' '),/主图坐标未匹配/);
+  offline=true;
+  const retry=await service.enqueue('alice',input);await service.tick();
+  const fallback=service.get('alice',retry.id);
+  assert.equal(calls,2);assert.equal(fallback.state,'ready');
+  assert.deepEqual(fallback.ai,{recognized:0,unresolved:2});
+  assert.equal(fallback.products[0].title,'Example Alpha');
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });

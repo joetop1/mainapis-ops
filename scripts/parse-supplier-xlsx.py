@@ -127,7 +127,12 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
    result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
  return result
 
-def parse(path,out,mapping=None,inspect=False,block=None,references=None):
+def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_blocks=None):
+ def coordinate(r,c):
+  letters=''
+  c+=1
+  while c:c,k=divmod(c-1,26);letters=chr(65+k)+letters
+  return letters+str(r+1)
  if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or not isinstance(mapping.get('columns'),dict)):
   raise ValueError('请指定工作表和商品名称列')
  z=zipfile.ZipFile(path);infos=z.infolist()
@@ -152,6 +157,7 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
   if mapping is not None and sheet.get('name')!=mapping['sheet']:continue
   if block is not None and sheet.get('name')!=block['sheet']:continue
   if references is not None and sheet.get('name') not in references:continue
+  if ai_blocks is not None and sheet.get('name') not in ai_blocks:continue
   name=books.get(sheet.get('{'+N['r']+'}id'))
   if not name:continue
   root=xml(name);cells={}
@@ -163,6 +169,21 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
    # Formula results must be explicitly reviewed, never execute cached formulas.
    if c.find('s:f',N) is not None:value=''
    cells[(int(m[2])-1,col(m[1]))]=value.strip()
+  if ai_blocks is not None:
+   from bisect import bisect_left,bisect_right
+   by_row={}
+   for (r,c),value in cells.items():
+    if value:by_row.setdefault(r+1,[]).append((c,value))
+   rows=sorted(by_row)
+   for item in ai_blocks[sheet.get('name')]:
+    first,last,left,right=item['bounds'];values={};size=0
+    for r,c,value in ((row-1,c,value) for row in rows[bisect_left(rows,first):bisect_right(rows,last)] for c,value in by_row[row]):
+     if not left<=c+1<=right:continue
+     if len(value)>420:continue
+     if len(values)>=100 or size+len(value)>6500:break
+     values[coordinate(r,c)]=value;size+=len(value)
+    resolved[item['key']]=values
+   continue
   if references is not None:
    values={}
    for ref in references[sheet.get('name')]:
@@ -174,11 +195,6 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
   if block is not None:
    start,end=block['start_row'],block['end_row']
    if type(start) is not int or type(end) is not int or not 1<=start<=end<=1048576 or end-start>=30:raise ValueError('请选择不超过30行的商品块')
-   def coordinate(r,c):
-    letters=''
-    c+=1
-    while c:c,k=divmod(c-1,26);letters=chr(65+k)+letters
-    return letters+str(r+1)
    values={coordinate(r,c):v[:800] for (r,c),v in cells.items() if start<=r+1<=end and v}
    if len(values)>180 or sum(map(len,values.values()))>18000:raise ValueError('商品块文字过多，请缩小行范围')
    merged=[]
@@ -222,7 +238,11 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
      filename=asset+'.bin';open(os.path.join(out,filename),'wb').write(data);assets[asset]={'id':asset,'file':filename,'bytes':len(data)}
     pictures.append((int(origin.find('d:row',N).text),int(origin.find('d:col',N).text),asset))
   tabular=table_products(cells,pictures,[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)],sheet.get('name'),date1904,mapping)
+  def anchors(product):
+   first,last,left,right=product['bounds']
+   product['image_anchors']={coordinate(pr,pc):aid for pr,pc,aid in pictures if first<=pr+1<=last and left<=pc+1<=right and aid in product['images']}
   if tabular is not None:
+   for product in tabular:anchors(product)
    products.extend(tabular);continue
   for r,c in starts:
    end=min([nr for nr,nc in starts if nc==c and nr>r]+[max((rr for rr,cc in cells),default=r)+1]);right=min([cc for rr,cc in starts if cc>c]+[c+4]);width=right-c
@@ -252,8 +272,9 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
    if not title:continue
    products.append({'key':sheet.get('name')+':'+str(r+1)+':'+str(c+1),'title':title,'category_hint':section,'barcodes':barcodes,'cost':price('批发价') if price('批发价') is not None else price('供货价'),'price':price('零售价'),'description':'\n'.join(fields.get('描述',[])),'attributes':[{'name':label,'value':' / '.join(fields[label])} for label in ('产品成分','产品参数') if fields.get(label)],'packaging':' / '.join(fields.get('箱规',[])),'images':list(dict.fromkeys(pics)),'warnings':flags,'sheet':sheet.get('name'),'row':r+1,'bounds':[r+1,end,left+1,right]})
+   anchors(products[-1])
  if block is not None:raise ValueError('工作表不存在')
- if references is not None:return resolved
+ if references is not None or ai_blocks is not None:return resolved
  if inspect:return layouts
  if not products:raise ValueError('未识别到商品卡片；支持左右排列商品卡片，或含“品名/产品名称、批发价/售价”等表头的一行一商品清单')
  if len(products)>500:raise ValueError(f'已识别 {len(products)} 件商品，超过单份货盘 500 件上限，未生成预览。')
@@ -261,8 +282,8 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None):
 if __name__=='__main__':
  try:
   arg=sys.argv[3] if len(sys.argv)>3 else None
-  if arg=='references':
-   with open(sys.argv[4],encoding='utf-8') as f: result=parse(sys.argv[1],sys.argv[2],references=json.load(f))
+  if arg in ('references','ai-blocks'):
+   with open(sys.argv[4],encoding='utf-8') as f: result=parse(sys.argv[1],sys.argv[2],**{('references' if arg=='references' else 'ai_blocks'):json.load(f)})
    print(json.dumps(result,ensure_ascii=False));sys.exit(0)
   result=parse(sys.argv[1],sys.argv[2],None if arg in (None,'inspect','block') else json.loads(arg),arg=='inspect',json.loads(sys.argv[4]) if arg=='block' else None);print(json.dumps(result,ensure_ascii=False))
  except Exception as e:
