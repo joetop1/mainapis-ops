@@ -308,9 +308,27 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 .job-product-info .title{max-width:300px}
 
 #toast:popover-open:not(.is-error)::backdrop{background:rgb(20 32 25 / 12%);backdrop-filter:blur(3px);pointer-events:auto}
-#campaignDialog{width:min(950px,95vw)}
-#campaignDialog .table-scroll{max-height:40vh;overflow:auto}
-#campaignDialog .campaign-item{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-#campaignDialog .campaign-item label{display:flex;align-items:center;gap:8px;margin:0}
-#campaignDialog .campaign-item input{width:80px}
-#campaignMore[hidden]{display:none}
+#campaign{padding:16px}
+.campaign-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(265px,1fr);gap:16px;align-items:start}
+.campaign-catalog,.campaign-calculation{min-width:0;border:1px solid #dce7de;border-radius:10px;padding:12px}
+.campaign-calculation{position:sticky;top:12px;background:#f7faf7}
+.campaign-filters{background:#fff}
+.campaign-filters .form-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.campaign-filters .campaign-check{display:flex;align-items:center;gap:6px}
+.campaign-check input{width:auto;margin:0}
+#campaign .table-scroll{max-height:62vh;overflow:auto}
+#campaign thead th{position:sticky;top:0;z-index:1}
+#campaign .campaign-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #dce7de}
+#campaign .campaign-item label{display:flex;align-items:center;gap:6px;margin:0}
+#campaign .campaign-item input{width:65px}
+#campaignSelected{max-height:28vh;overflow:auto;margin-bottom:10px}
+#campaignResult{margin-top:0;font-weight:600}
+#campaignResult.campaign-loss{color:#8b2929;background:#fcecec}
+#campaignMore[hidden],#campaignMobileSummary{display:none}
+@media(max-width:900px){
+ .campaign-grid{grid-template-columns:minmax(0,1fr)}
+ #campaign{padding-bottom:65px}
+ #campaignMobileSummary{display:block;position:fixed;bottom:12px;right:12px;z-index:8;max-width:calc(100vw - 24px)}
+ .campaign-calculation{display:none;position:fixed;inset:auto 12px 62px;max-height:65vh;overflow:auto;z-index:8;box-shadow:0 6px 24px #173a2933}
+ .campaign-expanded .campaign-calculation{display:block}
+}
