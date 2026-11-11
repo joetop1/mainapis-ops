@@ -110,6 +110,12 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'inspect'],{timeout:15000,maxBuffer:1024*1024}).catch(()=>{throw Error('无法读取表格结构，请重新上传原表');});
    return JSON.parse(stdout);
   },
+  async inspectBlock(owner,id,block){
+   const r=batch(owner,id);if(r.plan||!['ready','parse_failed'].includes(r.state)||active.has(id))throw Error('当前批次不能预览商品块');
+   const dir=join(directory,id);
+   const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'block',JSON.stringify(block)],{timeout:15000,maxBuffer:256*1024}).catch(e=>{let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'无法读取商品块，请检查行范围或重新上传原表');});
+   return JSON.parse(stdout);
+  },
   async remap(owner,id,mapping){
    const r=batch(owner,id);if(r.plan||!['ready','parse_failed'].includes(r.state)||active.has(id)||parsing>=2)throw Error('当前批次不能修改列映射');
    const dir=join(directory,id);active.add(id);parsing++;

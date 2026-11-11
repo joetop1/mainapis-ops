@@ -6,13 +6,16 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
  from datetime import datetime,timedelta
  from decimal import Decimal,InvalidOperation
  aliases={
-  'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号'),
+  'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号','容量'),
   'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','日常售价','销售价','售价','市场价'),
   'barcode':('条形码','条码','商品条码','产品条码','颜色/编号'), 'images':('产品图片','商品图片','图片'),
-  'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量','装箱数'),
+  'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量'),
   'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
   'position':('定位','产品定位'), 'series_info':('系列特点','系列说明'),
-  'dimensions':('产品尺寸',), 'accessories':('产品配件',)}
+  'dimensions':('产品尺寸','尺寸'), 'accessories':('产品配件',),
+  'weight':('重量','重量千克','重量kg','产品重量','净重','毛重'),
+  'specifications':('产品规格','商品规格','产品参数','规格参数'),
+  'ingredients':('产品成分','成分','材质','产品材质')}
  def normalize(text):return re.sub(r'[\s（）()¥￥]','',text).rstrip('元')
  lookup={normalize(label):key for key,labels in aliases.items() for label in labels}
  headers=[];by_row={}
@@ -41,7 +44,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
       or len(set(columns.values()))!=len(columns)):
    raise ValueError('货盘列映射无效')
   columns={k:v-1 for k,v in columns.items()}
-  labels={k:aliases[k][0] for k in columns}
+  labels={k:(cells[(start-2,c)] if lookup.get(normalize(cells.get((start-2,c),'')))==k else aliases[k][0]) for k,c in columns.items()}
   manual_blocks=mapping.get('grouping')=='repeated_header'
   if manual_blocks:
    first=start-2
@@ -112,15 +115,19 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
    if not barcodes:flags.append('无条码：使用系统SKU编码，条码保持空缺')
    if len(barcodes)>1:flags.append('多个条码：请逐项确认规格与条码对应关系')
    attributes=[]
-   for key in ('model','date','position','series_info','dimensions','accessories'):
+   for key in ('model','date','position','series_info','dimensions','accessories','weight','specifications','ingredients'):
     text=get(key)
     if key=='date' and re.fullmatch(r'\d+(?:\.0+)?',text) and 1<=float(text)<=100000:
      text=((datetime(1904,1,1) if date1904 else datetime(1899,12,30))+timedelta(days=float(text))).strftime('%Y-%m-%d')
     if text:attributes.append({'name':labels[key],'value':text})
-   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':get('model')})
+   spec_hint=get('model')
+   if not spec_hint and normalize(labels.get('barcode',''))=='颜色/编号':
+    capacities=list(dict.fromkeys(re.findall(r'(?im)^\s*(\d+(?:\.\d+)?\s*(?:ml|毫升|g|克|l|升))\s*$',raw_barcode)))
+    if len(capacities)==1 and len(barcodes)<=1:spec_hint=capacities[0]
+   result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint})
  return result
 
-def parse(path,out,mapping=None,inspect=False):
+def parse(path,out,mapping=None,inspect=False,block=None):
  if mapping is not None and (not isinstance(mapping,dict) or not isinstance(mapping.get('sheet'),str) or not isinstance(mapping.get('columns'),dict)):
   raise ValueError('请指定工作表和商品名称列')
  z=zipfile.ZipFile(path);infos=z.infolist()
@@ -143,6 +150,7 @@ def parse(path,out,mapping=None,inspect=False):
  products=[];assets={};warnings=[];layouts=[];books=rels('xl/workbook.xml');workbook=xml('xl/workbook.xml');properties=workbook.find('s:workbookPr',N);date1904=properties is not None and properties.get('date1904') in ('1','true')
  for sheet in xml('xl/workbook.xml').findall('s:sheets/s:sheet',N):
   if mapping is not None and sheet.get('name')!=mapping['sheet']:continue
+  if block is not None and sheet.get('name')!=block['sheet']:continue
   name=books.get(sheet.get('{'+N['r']+'}id'))
   if not name:continue
   root=xml(name);cells={}
@@ -154,6 +162,33 @@ def parse(path,out,mapping=None,inspect=False):
    # Formula results must be explicitly reviewed, never execute cached formulas.
    if c.find('s:f',N) is not None:value=''
    cells[(int(m[2])-1,col(m[1]))]=value.strip()
+  if block is not None:
+   start,end=block['start_row'],block['end_row']
+   if type(start) is not int or type(end) is not int or not 1<=start<=end<=1048576 or end-start>=30:raise ValueError('请选择不超过30行的商品块')
+   def coordinate(r,c):
+    letters=''
+    c+=1
+    while c:c,k=divmod(c-1,26);letters=chr(65+k)+letters
+    return letters+str(r+1)
+   values={coordinate(r,c):v[:800] for (r,c),v in cells.items() if start<=r+1<=end and v}
+   if len(values)>180 or sum(map(len,values.values()))>18000:raise ValueError('商品块文字过多，请缩小行范围')
+   merged=[]
+   for item in root.findall('s:mergeCells/s:mergeCell',N):
+    ref=item.get('ref','');m=re.fullmatch(r'[A-Z]+(\d+):[A-Z]+(\d+)',ref)
+    if m and int(m[1])<=end and int(m[2])>=start:merged.append(ref)
+   anchors=[]
+   sheetrels=rels(name)
+   for draw in root.findall('s:drawing',N):
+    dname=sheetrels.get(draw.get('{'+N['r']+'}id'))
+    if not dname:continue
+    for anchor in xml(dname):
+     origin=anchor.find('d:from',N)
+     if origin is None or anchor.find('.//a:blip',N) is None:continue
+     r,c=int(origin.find('d:row',N).text),int(origin.find('d:col',N).text)
+     end_node=anchor.find('d:to',N)
+     last=int(end_node.find('d:row',N).text) if end_node is not None else r
+     if r+1<=end and last+1>=start:anchors.append(coordinate(r,c))
+   return {'cells':values,'merges':merged[:180],'image_anchors':anchors[:30]}
   if inspect:
    rows={}
    for (r,c),v in cells.items():
@@ -208,6 +243,7 @@ def parse(path,out,mapping=None,inspect=False):
    if not pics:flags.append('未找到对应嵌入图片，请补图后再发布')
    if not title:continue
    products.append({'key':sheet.get('name')+':'+str(r+1)+':'+str(c+1),'title':title,'category_hint':section,'barcodes':barcodes,'cost':price('批发价') if price('批发价') is not None else price('供货价'),'price':price('零售价'),'description':'\n'.join(fields.get('描述',[])),'attributes':[{'name':label,'value':' / '.join(fields[label])} for label in ('产品成分','产品参数') if fields.get(label)],'packaging':' / '.join(fields.get('箱规',[])),'images':list(dict.fromkeys(pics)),'warnings':flags,'sheet':sheet.get('name'),'row':r+1})
+ if block is not None:raise ValueError('工作表不存在')
  if inspect:return layouts
  if not products:raise ValueError('未识别到商品卡片；支持左右排列商品卡片，或含“品名/产品名称、批发价/售价”等表头的一行一商品清单')
  if len(products)>500:raise ValueError(f'已识别 {len(products)} 件商品，超过单份货盘 500 件上限，未生成预览。')
@@ -215,6 +251,6 @@ def parse(path,out,mapping=None,inspect=False):
 if __name__=='__main__':
  try:
   arg=sys.argv[3] if len(sys.argv)>3 else None
-  result=parse(sys.argv[1],sys.argv[2],None if arg in (None,'inspect') else json.loads(arg),arg=='inspect');print(json.dumps(result,ensure_ascii=False))
+  result=parse(sys.argv[1],sys.argv[2],None if arg in (None,'inspect','block') else json.loads(arg),arg=='inspect',json.loads(sys.argv[4]) if arg=='block' else None);print(json.dumps(result,ensure_ascii=False))
  except Exception as e:
   print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)

@@ -18,3 +18,14 @@ z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns="http://schemas.openxmlformat
 `,file,date1904?'1':'0']);}
 test('行式货盘识别品名、型号、价格、条码及图片，合并系列延续但不生成空白商品',async()=>{const dir=await mkdtemp(join(tmpdir(),'ops-table-'));try{const path=join(dir,'table.xlsx');fixture(path);const result=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir],{encoding:'utf8'}));assert.equal(result.products.length,3);const [a,b,c]=result.products;assert.equal(a.title,'测试甲');assert.equal(a.cost,120);assert.equal(a.price,199);assert.equal(a.spec_hint,'APP版');assert.equal(b.category_hint,'测试系列');assert.equal(b.attributes.find(x=>x.name==='系列特点').value,'系列说明');assert.equal(b.cost,1200);assert.equal(b.price,1999);assert.equal(a.images.length,1);assert.equal(b.images.length,1);assert.notEqual(a.images[0],b.images[0]);assert.equal(c.images.length,0);assert.equal(c.cost,null);assert.equal(c.price,null);assert.match(c.warnings.join(';'),/未上市/);assert.match(c.warnings.join(';'),/售价未识别/);assert.deepEqual(c.barcodes,['6970000000003']);assert.equal(a.attributes.find(x=>x.name==='上市时间').value,'2026-07-01');assert.equal(result.assets.length,2);for(const asset of result.assets)assert.ok((await readFile(join(dir,asset.file))).length>0);}finally{await rm(dir,{recursive:true,force:true});}});
 test('1904日期系统按工作簿设置转换，忽略公式缓存和赠品价格',async()=>{const dir=await mkdtemp(join(tmpdir(),'ops-table-date-'));try{const path=join(dir,'table.xlsx');fixture(path,true);const result=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir],{encoding:'utf8'}));assert.equal(result.products[0].attributes.find(x=>x.name==='上市时间').value,'1904-01-02');assert.equal(result.products[2].cost,null);assert.equal(result.products[2].price,null);}finally{await rm(dir,{recursive:true,force:true});}});
+test('商品块只读选定行，并保留合并区域与图片锚点',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-block-'));
+ try{
+  const path=join(dir,'table.xlsx');fixture(path);
+  const block=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir,'block',JSON.stringify({sheet:'产品清单',start_row:3,end_row:3})],{encoding:'utf8'}));
+  assert.equal(block.cells.C3,'测试甲');
+  assert.equal(block.cells.C4,undefined);
+  assert.deepEqual(block.merges,['A3:A4','B3:B4']);
+  assert.deepEqual(block.image_anchors,['E3']);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
