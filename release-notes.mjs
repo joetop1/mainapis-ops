@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.8',title:'货盘识别与商城群通知',changes:['货盘支持 AI 推荐列、多行商品分组和浏览器内供应商模板。','Tigshop 可向钉钉群发送付款和退款申请摘要；未开启加签时密钥可留空。','钉钉和企业微信群消息隐藏内部事件编号，保留订单号与售后单号。']},
  {version:'0.24.7',title:'货盘容量与失败提示',changes:['单份货盘可预览并提交最多500件商品。超限时显示实际识别件数。']},
  {version:'0.24.6',title:'近期后台体验更新',changes:['发布任务列表展示商品缩略图。','保存及审核完成后先显示成功反馈，再刷新列表。','成功提示约两秒消失，显示期间模糊背景。']},
  {version:'0.24.5',title:'1688详情图片来源兼容',changes:['插件0.1.18兼容V-DETAIL-D、GIF及更多懒加载图片来源，跳过公共占位图。','诊断补充图片来源格式及去重分组，不导出地址或查询参数。','Safari资源0.1.21同步，仍需打包安装；实际商品采集效果待浏览器核对。']},

@@ -26,10 +26,10 @@ export function notificationFact(kind,data){
  if(!Array.isArray(data.items)||data.items.length>200)throw Error('通知商品明细格式无效');
  return {id:String(data.id),number:clean(data.order_id,80),orderNumber:kind==='refund'?clean(data.order.order_id,80):clean(data.order_id,80),amount:String(amount),reason:kind==='refund'?clean(data.refund_reason||data.refund_explain,200):'',time:clean(kind==='paid'?data.pay_time:data.add_time,30),items:data.items.slice(0,5).map(row=>({name:clean(row.store_name,100),spec:clean(row.suk,80),quantity:clean(row.cart_num,10)})),itemCount:data.items.length};
 }
-export function notificationText(mall,kind,fact,eventId){
- if(kind==='test')return '【'+clean(mall.name,50)+' · 通知测试】\n企业微信群连接正常。此消息不是订单或退款通知。\n事件：'+eventId;
+export function notificationText(mall,kind,fact,channel='wecom'){
+ if(kind==='test')return '【'+clean(mall.name,50)+' · 通知测试】\n'+(channel==='ding'?'钉钉群':'企业微信群')+'连接正常。此消息不是订单或退款通知。';
  const title=kind==='paid'?'付款成功':'申请退款（待商城处理）';
- return ['【'+clean(mall.name,50)+' · '+title+'】','事件：'+eventId,eventTime(fact.time)?'时间（北京时间）：'+eventTime(fact.time):'',kind==='refund'?'售后单：'+fact.number:'订单号：'+fact.number,kind==='refund'?'原订单：'+fact.orderNumber:'',kind==='refund'?'申请金额：'+(fact.currency||'CNY')+' '+fact.amount:'实付金额：'+(fact.currency||'CNY')+' '+fact.amount,fact.items.length?'':'商品明细未提供，请到商城后台查看',...fact.items.map(row=>'商品：'+row.name+' / '+row.spec+' × '+row.quantity),fact.itemCount>5?'另有 '+(fact.itemCount-5)+' 项，请到商城后台查看':'',fact.reason?'申请原因：'+fact.reason:'','请登录该商城后台核对处理。'].filter(Boolean).join('\n');
+ return ['【'+clean(mall.name,50)+' · '+title+'】',eventTime(fact.time)?'时间（北京时间）：'+eventTime(fact.time):'',kind==='refund'?'售后单：'+fact.number:'订单号：'+fact.number,kind==='refund'?'原订单：'+fact.orderNumber:'',kind==='refund'?'申请金额：'+(fact.currency||'CNY')+' '+fact.amount:'实付金额：'+(fact.currency||'CNY')+' '+fact.amount,fact.items.length?'':'商品明细未提供，请到商城后台查看',...fact.items.map(row=>'商品：'+row.name+' / '+row.spec+' × '+row.quantity),fact.itemCount>5?'另有 '+(fact.itemCount-5)+' 项，请到商城后台查看':'',fact.reason?'申请原因：'+fact.reason:'','请登录该商城后台核对处理。'].filter(Boolean).join('\n');
 }
 export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.now}){
  db.exec(`CREATE TABLE IF NOT EXISTS notification_outbox(id TEXT PRIMARY KEY,mall_id TEXT NOT NULL,kind TEXT NOT NULL,event_key TEXT NOT NULL,fact TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL,created INTEGER NOT NULL,sent_at INTEGER,error TEXT NOT NULL DEFAULT '',UNIQUE(mall_id,kind,event_key));
@@ -81,7 +81,7 @@ export function mallNotifications({db,store,findMall,fetcher=fetch,clock=Date.no
     if(!db.prepare("UPDATE notification_outbox SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'").run(row.id).changes)continue;
     lastAttempt=clock();
     try{
-     const response=await fetcher(c.channel==='ding'?(c.dingSecret?signedDingWebhook(c.webhook,c.dingSecret,clock()):dingWebhook(c.webhook).href):wecomWebhook(c.webhook),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msgtype:'text',text:{content:boundedText(notificationText(mall,row.kind,JSON.parse(row.fact),row.id))}}),redirect:'error',signal:AbortSignal.timeout(10000)});
+     const response=await fetcher(c.channel==='ding'?(c.dingSecret?signedDingWebhook(c.webhook,c.dingSecret,clock()):dingWebhook(c.webhook).href):wecomWebhook(c.webhook),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msgtype:'text',text:{content:boundedText(notificationText(mall,row.kind,JSON.parse(row.fact),c.channel))}}),redirect:'error',signal:AbortSignal.timeout(10000)});
      const raw=await response.text();if(raw.length>10000)throw Error('invalid_response');let data;try{data=JSON.parse(raw);}catch{throw Error('invalid_response');}
      if(!response.ok||typeof data.errcode!=='number')throw Error('invalid_response');
      if(data.errcode!==0){const attempts=row.attempts+1;db.prepare("UPDATE notification_outbox SET status=?,next_at=?,error=? WHERE id=?").run(attempts>=5?'failed':'pending',clock()+Math.min(3600000,30000*2**attempts),(c.channel==='ding'?'钉钉':'企业微信')+'拒绝发送，错误码 '+data.errcode,row.id);}
