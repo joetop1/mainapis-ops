@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.23',title:'AI 优化商品标题',changes:['在商品编辑页生成标题建议，确认后填入标题框。']},
  {version:'0.24.22',title:'活动选品推荐套餐',changes:['按利润率和库存筛选套餐，并载入试算。','可按需用 AI 解释搭配。']},
  {version:'0.24.21',title:'多门店最近分类横向排列',changes:['最近分类在门店选项下方靠左横排，使用整行宽度。']},
  {version:'0.24.20',title:'多门店分类快捷入口',changes:['最近选择的分类移到门店适用范围下方。']},

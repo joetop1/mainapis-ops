@@ -1,3 +1,4 @@
+import {optimizeProductTitle} from './product-title-ai.mjs';
 import {explainCampaign} from './campaign-ai.mjs';
 import {supplierAISettings} from './supplier-ai.mjs';
 import {onboardingStatus} from './onboarding.mjs';
@@ -620,6 +621,12 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size'),{scope:query.get('task_scope')||'all',actor,mall:query.get('mall')||'',status:query.get('status')||''}));}
+    if(path==='/api/products/optimize-title'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不调用 AI');
+      quota.assertAccess(owner);
+      const config=supplierAI.get();if(!config)throw Error('当前未启用 NewAPI');
+      return json(res,200,await optimizeProductTitle({actor,config,input:await body(req,16384)}));
+    }
     if(path==='/api/campaign/explain'&&req.method==='POST'){
       if(demo)throw Error('演示模式不调用 AI');
       quota.assertAccess(owner);
