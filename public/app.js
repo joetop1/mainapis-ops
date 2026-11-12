@@ -62,12 +62,33 @@ function toast(message,{error=false}={}){
  toast.timer=setTimeout(()=>{if(global.hidePopover&&global.matches(':popover-open'))global.hidePopover();global.classList.add('hidden');},error?6500:2000);
 }
 document.addEventListener('close',event=>{if(event.target.tagName==='DIALOG')clearDialogFeedback(event.target);},true);
+let sessionReloading=false,sessionChecking=false;
+const sessionEnded=(status,code)=>(status===401&&code==='OPS_SESSION_EXPIRED')||(status===403&&code==='OPS_ACCESS_DISABLED');
+function refreshAfterSessionEnd(){
+ if(!me.user||sessionReloading)return;
+ sessionReloading=true;
+ location.reload();
+}
+async function checkSession(){
+ if(!me.user||document.hidden||sessionReloading||sessionChecking)return;
+ sessionChecking=true;
+ try{
+  const current=await api('/api/session','GET',undefined,AbortSignal.timeout(10000));
+  if(current.csrf!==me.csrf)refreshAfterSessionEnd();
+ }catch{}finally{sessionChecking=false;}
+}
+function watchSession(){
+ setInterval(checkSession,30000);
+ document.addEventListener('visibilitychange',checkSession);
+ window.addEventListener('focus',checkSession);
+ window.addEventListener('pageshow',event=>{if(event.persisted)checkSession();});
+}
 async function api(path,method='GET',body,signal){
  const type=path.match(/^\/api\/connections\/(crmeb-pro|crmeb-store|tigshop|yunzhong|shopxo)(?:\/|$)/)?.[1];
  if(type&&selectedMalls[type])path+=(path.includes('?')?'&':'?')+'connection_id='+encodeURIComponent(selectedMalls[type]);
  const selector=type?document.querySelector('[data-mall-selector="'+type+'"]'):null;
  if(selector){settingsRequests[type]=(settingsRequests[type]||0)+1;selector.disabled=true;$('#addMall').disabled=true;}
- try{const r=await fetch(path,{method,signal,headers:method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Object.assign(Error(data.error||'请求失败'),{httpStatus:r.status});if(!['GET','HEAD'].includes(method)&&path!=='/auth/logout')assetPanel?.schedule();return data;}
+ try{const r=await fetch(path,{method,signal,headers:method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':me.csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok){if(sessionEnded(r.status,data.code))refreshAfterSessionEnd();throw Object.assign(Error(data.error||'请求失败'),{httpStatus:r.status,code:data.code});}if(!['GET','HEAD'].includes(method)&&path!=='/auth/logout')assetPanel?.schedule();return data;}
  finally{if(selector){settingsRequests[type]--;selector.disabled=settingsRequests[type]>0;$('#addMall').disabled=Object.values(settingsRequests).some(n=>n>0);}}
 }
 
@@ -490,7 +511,7 @@ $('#publishForm').onsubmit=async event=>{
  }catch(error){toast(error.message,{error:true});}finally{publishUncertain=uncertain;button.disabled=uncertain||!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;}
 };
 $('#refresh').onclick=()=>load().catch(e=>toast(e.message));$('#logout').onclick=async()=>{try{await api('/auth/logout','POST',{});location.reload();}catch(e){toast(e.message);}};
-async function init(){try{me=await api('/api/me');applyBranding(me.branding);$('#systemSettingsNav').classList.toggle('hidden',!me.systemAdmin);$('#usersNav').classList.toggle('hidden',!me.systemAdmin);$('#systemVersion').disabled=!me.user;$('#systemVersion').textContent=me.system?`系统 v${me.system.version} · ${me.system.build}`:'系统版本未知';$('#mode').textContent=me.demo?'本地演示 · 不执行发布':'内部运营空间';if(!me.user){$('#login').classList.remove('hidden');$('#loginHint').textContent=me.demo?'演示模式仅限本机，所有数据保存在本机数据库。':me.authReady?'使用你的统一账号继续。':'服务已启动，等待管理员配置 Casdoor 应用和账号允许名单。';if(new URLSearchParams(location.search).get('access')==='pending')$('#loginHint').textContent='访问申请已提交，请等待管理员授权。授权后请重新登录。';return;}$('#username').textContent=me.user.name;$('#logout').classList.remove('hidden');$('#workspace').classList.remove('hidden');assetPanel.start();await load();setInterval(()=>{if(page==='jobs'&&document.querySelector('dialog[open]'))loadJobPage().then(()=>renderStats()).catch(()=>{});else if(['products','jobs'].includes(page)&&!document.querySelector('dialog[open]'))load().catch(()=>{});},10000);}catch(e){toast(e.message);}}
+async function init(){try{me=await api('/api/me');applyBranding(me.branding);$('#systemSettingsNav').classList.toggle('hidden',!me.systemAdmin);$('#usersNav').classList.toggle('hidden',!me.systemAdmin);$('#systemVersion').disabled=!me.user;$('#systemVersion').textContent=me.system?`系统 v${me.system.version} · ${me.system.build}`:'系统版本未知';$('#mode').textContent=me.demo?'本地演示 · 不执行发布':'内部运营空间';if(!me.user){$('#login').classList.remove('hidden');$('#loginHint').textContent=me.demo?'演示模式仅限本机，所有数据保存在本机数据库。':me.authReady?'使用你的统一账号继续。':'服务已启动，等待管理员配置 Casdoor 应用和账号允许名单。';if(new URLSearchParams(location.search).get('access')==='pending')$('#loginHint').textContent='访问申请已提交，请等待管理员授权。授权后请重新登录。';return;}$('#username').textContent=me.user.name;$('#logout').classList.remove('hidden');$('#workspace').classList.remove('hidden');watchSession();assetPanel.start();await load();setInterval(()=>{if(page==='jobs'&&document.querySelector('dialog[open]'))loadJobPage().then(()=>renderStats()).catch(()=>{});else if(['products','jobs'].includes(page)&&!document.querySelector('dialog[open]'))load().catch(()=>{});},10000);}catch(e){if(e.code==='OPS_ACCESS_DISABLED'){$('#login').classList.remove('hidden');$('#loginHint').textContent=e.message;}else toast(e.message);}}
 init();
 
 $('#jobRows').addEventListener('error',event=>{if(event.target.matches('.job-product-thumb img'))event.target.remove();},true);

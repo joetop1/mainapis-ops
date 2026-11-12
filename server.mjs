@@ -344,10 +344,11 @@ const handleRequest=async(req,res)=>{
       if(['succeeded','failed'].includes(job.status)){if(job.status!==b.status||job.remote_id!==remoteId)return json(res,409,{error:'终态结果冲突'});billing.reconcileJob(id);return json(res,200,{ok:true,duplicate:true});}
       db.prepare('UPDATE jobs SET status=?,message=?,remote_id=?,updated=? WHERE id=?').run(b.status,String(b.message||'').slice(0,500),remoteId,now(),id);audit(job.owner,'job.'+b.status,id);billing.reconcileJob(id);return json(res,200,{ok:true});
     }
-    if(path!=='/auth/logout'&&s?.user&&users.blocked(s.user.sub))return json(res,403,{error:'OPS账号已停用，请联系系统管理员'});
-    if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{error:'团队成员已停用，请联系管理员'});
+    if(path!=='/auth/logout'&&s?.user&&users.blocked(s.user.sub))return json(res,403,{code:'OPS_ACCESS_DISABLED',error:'OPS账号已停用，请联系系统管理员'});
+    if(path!=='/auth/logout'&&s?.user&&teams.member(s.user.sub)&&!teams.member(s.user.sub).active)return json(res,403,{code:'OPS_ACCESS_DISABLED',error:'团队成员已停用，请联系管理员'});
     if(path==='/api/me')return json(res,200,{user:s?.user||null,team:s?.user?teams.context(s.user.sub):null,csrf:s?.csrf||'',demo,system:systemRelease,systemAdmin:!demo&&isSystemAdmin(s?.user?.sub),branding:branding.read(),authReady:demo||!!(client&&clientSecret&&allowed.length)});
-    if(!s?.user)return json(res,401,{error:'请先登录'});
+    if(!s?.user)return json(res,401,{code:'OPS_SESSION_EXPIRED',error:'请先登录'});
+    if(path==='/api/session'&&req.method==='GET')return json(res,200,{csrf:s.csrf});
     if(!['GET','HEAD'].includes(req.method)) {
       if(req.headers.origin!==origin || !equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求来源或 CSRF 校验失败'});
     }

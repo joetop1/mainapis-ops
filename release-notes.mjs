@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.18',title:'登录失效时返回登录页',changes:['会话失效后，OPS 自动刷新并回到登录页。']},
  {version:'0.24.17',title:'货盘本地预览与 AI 手动复核',changes:['上传 Excel 默认不调用 AI；在原预览点击「用 AI 重试」才会调用。','识别参考图片范围、合并区域和表头，名称按原表顺序合并。']},
  {version:'0.24.16',title:'货盘识别避免思考耗尽输出',changes:['DeepSeek Flash / V4 货盘识别关闭思考模式，保持原请求上限。']},
  {version:'0.24.15',title:'货盘 AI 响应诊断',changes:['细分 AI 响应问题，统计双语标题，兼容绝对坐标写法。']},
