@@ -51,6 +51,9 @@ test('标题长度按资料调整，模型漏删的供货词由服务端清除',
  const run=(actor,title)=>optimizeProductTitle({actor,config,input:{title:'水杯'},fetchImpl:async(_,req)=>{
   const rules=JSON.parse(req.body).messages[0].content;
   assert.match(rules,/35至60字符/);
+  assert.match(rules,/品牌 \+ 系列或款名 \+ 核心功能 \+ 品类/);
+  assert.match(rules,/没有依据不得新增「智能」/);
+  assert.match(rules,/简洁标题无需拉长/);
   assert.match(rules,/资料不足可以保留短标题/);
   assert.match(rules,/长于目标时，优先删重复/);
   return Response.json({choices:[{message:{content:JSON.stringify({title})}}]});
