@@ -51,7 +51,7 @@ let editingMappings=new Map(),activeMappingId='',publishResults=new Map(),publis
 let productPage=1,productSize=20,jobPageNumber=1,jobSize=20,jobView={rows:[],page:1,pages:1,total:0,start:0,end:0},jobRequest=0,jobLoading=false;
 const mallRows=()=>state.malls||state.targets.map(t=>({...t,type:t.id,id:t.connection_id||t.id}));
 const mallFor=(id,type)=>mallRows().find(m=>m.id===id)||mallRows().find(m=>m.type===type&&m.legacy)||mallRows().find(m=>m.type===type);
-const campaignPanel=setupCampaign({$,esc,products:()=>state.products,mallName:(id,target)=>mallFor(id,target)?.name||target});
+const campaignPanel=setupCampaign({$,esc,products:()=>state.products,explain:bundles=>api('/api/campaign/explain','POST',{bundles}),mallName:(id,target)=>mallFor(id,target)?.name||target});
 const labels={draft:'待整理',pending_review:'待审核',approved:'审核通过',dispatching:'发送中',accepted:'执行中',unknown:'需核对',succeeded:'发布成功',failed:'执行失败',awaiting_review:'待核对商品ID',verifying:'核对中'};
 const date=v=>new Date(v).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 function clearDialogFeedback(dialog){dialog?.querySelectorAll('[data-dialog-feedback]').forEach(node=>node.remove());}

@@ -1,3 +1,4 @@
+import {explainCampaign} from './campaign-ai.mjs';
 import {supplierAISettings} from './supplier-ai.mjs';
 import {onboardingStatus} from './onboarding.mjs';
 import {storageQuota} from './storage-quota.mjs';
@@ -619,6 +620,13 @@ const handleRequest=async(req,res)=>{
     }
     if(path==='/auth/logout' && req.method==='POST'){expire(res,s.id);return json(res,200,{ok:true});}
     if(path==='/api/jobs'&&req.method==='GET'){const query=new URL(req.url,origin).searchParams;return json(res,200,jobPage(db,owner,query.get('page'),query.get('page_size'),{scope:query.get('task_scope')||'all',actor,mall:query.get('mall')||'',status:query.get('status')||''}));}
+    if(path==='/api/campaign/explain'&&req.method==='POST'){
+      if(demo)throw Error('演示模式不调用 AI');
+      quota.assertAccess(owner);
+      const config=supplierAI.get();if(!config)throw Error('当前未启用 NewAPI');
+      const {bundles}=await body(req,16384);
+      return json(res,200,await explainCampaign({actor,config,bundles,findProduct:id=>decodeProduct(productFor(owner,id))}));
+    }
     if(path==='/api/state' && req.method==='GET'){const publications=productPublications(db,owner),mergeUsage=productMergeUsage(db,owner);return json(res,200,{team,job_summary:jobSummary(db,owner),products:collectors.rows(owner,actor,new URL(req.url,origin).searchParams.get('collection_scope')||'all').map(row=>({...decodeProduct(row),merge_usage:mergeUsage.get(row.id)||[],collected_by:row.collected_by||'',collector_name:row.collector_name||'',publications:publications.get(row.id)||[]})),jobs:db.prepare('SELECT id,product_id,revision,target,mall_connection_id,status,message,remote_id,created,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 300').all(owner).map(j=>({...j,claimed:!!db.prepare('SELECT claimed FROM job_snapshots WHERE job_id=?').get(j.id)?.claimed,marker:'OPS-'+j.id.replaceAll('-',''),fx:j.target==='tigshop'?(()=>{const snap=db.prepare('SELECT product FROM job_snapshots WHERE job_id=?').get(j.id);return snap?JSON.parse(snap.product).tigshop?.fx:null;})():null})),targets:targets.map(t=>{const row=malls.get(owner,null,t.id);return {...t,connection_id:row.id,system:t.name,name:row.name,configured:!demo&&connected(t.id,owner,row.id)};}),malls:malls.list(owner).map(row=>({...row,type:row.system,system:MALL_SYSTEMS[row.system].name,version:MALL_SYSTEMS[row.system].version,url:credentialsFor(row.system,owner,row.id)?.url||(row.legacy?MALL_SYSTEMS[row.system].origin:''),configured:!demo&&connected(row.system,owner,row.id)})),connections:{casdoor:demo?'demo':'connected',n8n:!demo&&['crmeb-pro','crmeb-store'].some(t=>connected(t,owner))?'configured':'unconfigured'},audit:db.prepare('SELECT action,object_id,created FROM audit WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner)});}
     if(['/api/images/upload','/api/images/shorten'].includes(path)&&req.method==='POST'){if(demo)throw Error('演示模式不上传图片');const input=await body(req,15*1024*1024);if(path.endsWith('/shorten')&&typeof input.url!=='string')throw Error('请提供需要修复的图片地址');const result=await uploadLocalImage(owner,path.endsWith('/shorten')?{sourceUrl:input.url}:input);audit(owner,'image.upload','local');return json(res,201,result);}
     if(path==='/api/products/bulk-settings'&&req.method==='POST'){if(demo)throw Error('演示模式不修改商品');return json(res,200,await bulkProductSettings({db,owner,input:await body(req),validateMapping:m=>checkedBulkMapping(owner,m),audit}));}
