@@ -9,14 +9,14 @@ const node=()=>({value:'',disabled:false,innerHTML:'',textContent:'',classList:{
 test('编辑时未保存的分类品牌标签按商城记住，来回切换不清空其他映射',()=>{
  const nodes=new Map(['catalogTarget','catalogMall','categorySelect','brandSelect','storeScopeField','mallMappingSummary'].map(id=>[id,node()]));
  const categoryGroup={append(el){el.parentElement=this;}},storeScope=nodes.get('storeScopeField');
- storeScope.append=function(el){el.parentElement=this;};
+ const scopeRow={append(el){el.parentElement=this;}};storeScope.parentElement=scopeRow;
  nodes.get('categorySelect').closest=()=>categoryGroup;
  nodes.set('categoryRecent',{parentElement:categoryGroup});
  const elements={category_id:nodes.get('categorySelect'),brand_id:nodes.get('brandSelect'),tag_ids:{value:'101'},applicable_type:{value:'0'}};nodes.set('productForm',{elements});
  const context=vm.createContext({refreshPublishQuote(){},confirmBilling:async()=>1,$:s=>nodes.get(s.slice(1)),esc:String,mallRows:()=>malls,mallFor:id=>malls.find(m=>m.id===id),fillCatalogMalls:id=>nodes.get('catalogMall').value=id});
  vm.runInContext(`let editingMappings=new Map(),activeMappingId='a',catalog={categories:[{id:11,label:'会员分类'}],brands:[{id:21,ids:[21]}]};function loadCatalogOptions(m){catalog={categories:[{id:m.category_id,label:m.category}],brands:m.brand_ids.map(id=>({id,ids:[id]}))};$('#categorySelect').value=String(m.category_id);$('#brandSelect').value=String(m.brand_ids.at(-1)||0);}`,context);
  vm.runInContext(source.slice(source.indexOf('function currentMapping()'),source.indexOf("$('#refreshCatalog').onclick=")),context);
- nodes.get('categorySelect').value='11';nodes.get('brandSelect').value='21';context.switchMapping('b');assert.equal(nodes.get('categoryRecent').parentElement,storeScope);
+ nodes.get('categorySelect').value='11';nodes.get('brandSelect').value='21';context.switchMapping('b');assert.equal(nodes.get('categoryRecent').parentElement,scopeRow);
  nodes.get('categorySelect').value='12';nodes.get('brandSelect').value='22';elements.tag_ids.value='202';elements.applicable_type.value='1';vm.runInContext("catalog={categories:[{id:12,label:'多门店分类'}],brands:[{id:22,ids:[22]}]}",context);
  context.switchMapping('a');assert.equal(nodes.get('categoryRecent').parentElement,categoryGroup);assert.equal(nodes.get('categorySelect').value,'11');assert.equal(nodes.get('brandSelect').value,'21');assert.equal(elements.tag_ids.value,'101');context.switchMapping('b');assert.equal(nodes.get('categorySelect').value,'12');assert.equal(nodes.get('brandSelect').value,'22');assert.equal(elements.tag_ids.value,'202');assert.equal(elements.applicable_type.value,'1');
 });

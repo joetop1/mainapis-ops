@@ -413,7 +413,7 @@ function switchMapping(id){
  const mapping=editingMappings.get(mall.id)||{catalog_target:mall.type,catalog_connection_id:mall.id,category_id:0,category:'',brand_ids:[],tag_ids:[],applicable_type:0};
  const storeScope=$('#storeScopeField'),isMultiStore=mall.type==='crmeb-store',categoryRecent=$('#categoryRecent');
  storeScope.classList.toggle('hidden',!isMultiStore);
- const recentParent=isMultiStore?storeScope:$('#categorySelect').closest('.catalog-field-group');
+ const recentParent=isMultiStore?storeScope.parentElement:$('#categorySelect').closest('.catalog-field-group');
  if(categoryRecent.parentElement!==recentParent)recentParent.append(categoryRecent);const f=$('#productForm');f.elements.applicable_type.value=String(mapping.applicable_type??0);f.elements.tag_ids.value=(mapping.tag_ids||[]).join(',');renderMappingSummary();loadCatalogOptions(mapping);
 }
 $('#mallMappingSummary').onclick=event=>{const button=event.target.closest('[data-mapping-mall]');if(button)switchMapping(button.dataset.mappingMall);};

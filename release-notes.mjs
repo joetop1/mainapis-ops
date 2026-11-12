@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.21',title:'多门店最近分类横向排列',changes:['最近分类在门店选项下方靠左横排，使用整行宽度。']},
  {version:'0.24.20',title:'多门店分类快捷入口',changes:['最近选择的分类移到门店适用范围下方。']},
  {version:'0.24.19',title:'整理左侧主菜单',changes:['主菜单分成日常运营、工作空间和系统管理三组。','工作空间配置完成后收起快捷入口，指南仍可从团队管理打开。']},
  {version:'0.24.18',title:'登录失效时返回登录页',changes:['会话失效后，OPS 自动刷新并回到登录页。']},
