@@ -20,3 +20,13 @@ test('没有原题不调用模型，过长或多行建议不接受',async()=>{
   await assert.rejects(optimizeProductTitle({actor,config,input:{title:'原题'},fetchImpl:async()=>Response.json({choices:[{message:{content:JSON.stringify({title})}}]})}),/有效的 AI 标题/);
  }
 });
+
+
+test('兼容单行标题，并区分模型截断与渠道限流',async()=>{
+ const run=(actor,response)=>optimizeProductTitle({actor,config,input:{title:'水杯'},fetchImpl:async()=>response});
+ const reply=(content,finish_reason)=>Response.json({choices:[{finish_reason,message:{content}}]});
+ assert.deepEqual(await run('plain',reply('建议标题：便携水杯','stop')),{title:'便携水杯'});
+ await assert.rejects(run('truncated',reply('便携水','length')),/长度上限/);
+ await assert.rejects(run('limited',new Response('',{status:429})),/HTTP 429/);
+ await assert.rejects(run('broken-json',reply('{"title":','stop')),/有效的 AI 标题/);
+});
