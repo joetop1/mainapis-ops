@@ -347,3 +347,13 @@ aside nav button>span:last-child{min-width:0;text-align:left}
 .campaign-card-values{font-size:12px}
 .campaign-card-select{display:flex;align-items:center;gap:6px}
 .campaign-card-select input{width:auto;margin:0}
+
+/* Sidebar groups remain open; the mobile menu scrolls horizontally. */
+aside nav .nav-label{margin:13px 15px 4px;letter-spacing:.08em}
+aside nav .nav-group:first-of-type .nav-label{margin-top:16px}
+aside nav #onboardingNav{color:#d6efb7;margin-top:10px}
+@media(max-width:760px){
+ aside nav .nav-group{display:flex;flex:none;gap:2px}
+ aside nav .nav-group.hidden{display:none}
+ aside nav #onboardingNav{margin-top:5px}
+}
