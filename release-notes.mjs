@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.26',title:'AI 标题优化规则',changes:['短标题按原资料补充，长标题优先精简，并清除常见供货词。']},
  {version:'0.24.25',title:'AI 标题截断恢复',changes:['提高生成预算，输出截断且不完整时最多补试一次。']},
  {version:'0.24.24',title:'改进 AI 标题响应处理',changes:['兼容模型直接返回的单行标题，并显示更具体的失败原因。']},
  {version:'0.24.23',title:'AI 优化商品标题',changes:['在商品编辑页生成标题建议，确认后填入标题框。']},

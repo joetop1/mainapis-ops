@@ -46,3 +46,15 @@ test('截断且正文不完整时只补试一次，完整 JSON 不重复调用',
  assert.deepEqual(await run('retry',[['','length'],['便携水杯','stop']]),{result:{title:'便携水杯'},budgets:[1024,4096]});
  assert.deepEqual(await run('complete',[['{"title":"便携水杯"}','length']]),{result:{title:'便携水杯'},budgets:[1024]});
 });
+
+test('标题长度按资料调整，模型漏删的供货词由服务端清除',async()=>{
+ const run=(actor,title)=>optimizeProductTitle({actor,config,input:{title:'水杯'},fetchImpl:async(_,req)=>{
+  const rules=JSON.parse(req.body).messages[0].content;
+  assert.match(rules,/35至60字符/);
+  assert.match(rules,/资料不足可以保留短标题/);
+  assert.match(rules,/长于目标时，优先删重复/);
+  return Response.json({choices:[{message:{content:JSON.stringify({title})}}]});
+ }});
+ assert.deepEqual(await run('wholesale','【支持 1 件代发】 水杯 A-12 厂家直销'),{title:'水杯 A-12'});
+ await assert.rejects(run('wholesale-only','一件代发'),/有效的 AI 标题/);
+});
