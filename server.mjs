@@ -240,13 +240,18 @@ async function dispatch(job,p,action='publish_draft',verification={}) {
     db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);
     await directRunner(job,action);return;
   }
+  const verifyEntryFailure=message=>{
+    if(action!=='verify_draft')return false;
+    db.prepare("UPDATE jobs SET status='awaiting_review',message=?,updated=? WHERE id=? AND status='verifying' AND EXISTS (SELECT 1 FROM job_snapshots WHERE job_id=jobs.id AND verification_nonce=?)").run(message,now(),job.id,verification.verification_nonce);
+    return true;
+  };
   const payload={job_id:job.id,idempotency_key:job.id,action,target:job.target,product_revision:job.revision,product:p,...verification,callback:{url:origin+'/api/callback/'+job.id,token:job.token}};
   try {
     const connection=connectionFor(job.target,job.owner,job.mall_connection_id);if(!connection.url||!connection.token)throw Error('目标商城未配置');
     const r=await fetch(connection.url,{method:'POST',headers:{'Content-Type':'application/json','X-Ops-Token':connection.token,'Idempotency-Key':job.id},body:JSON.stringify(payload),redirect:'error',signal:AbortSignal.timeout(15000)});
     if(r.ok)db.prepare("UPDATE jobs SET status='accepted',message='n8n 已接收，等待执行结果',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);
-    else db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('发布入口返回 HTTP '+r.status+'；请到连接与配置测试该商城发布入口，核对后重发原未领取任务',now(),job.id);
-  } catch {db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
+    else if(!verifyEntryFailure('n8n 核对入口返回 HTTP '+r.status+'；请检查工作流后重试核对'))db.prepare("UPDATE jobs SET status='unknown',message=?,updated=? WHERE id=? AND status='dispatching'").run('发布入口返回 HTTP '+r.status+'；请到连接与配置测试该商城发布入口，核对后重发原未领取任务',now(),job.id);
+  } catch {if(!verifyEntryFailure('未确认 n8n 是否收到核对请求，请检查执行记录后重试核对'))db.prepare("UPDATE jobs SET status='unknown',message='未确认 n8n 是否接收，请核对执行记录；不会自动重发',updated=? WHERE id=? AND status='dispatching'").run(now(),job.id);}
  }catch{db.prepare("UPDATE jobs SET status='unknown',message='商城连接或任务归属发生变化，请核对原商城记录；未自动重发',updated=? WHERE id=? AND status NOT IN ('succeeded','failed')").run(now(),job.id);}finally{try{billing.reconcileJob(job.id);}catch{console.error('billing_reconcile_pending');}}
 }
 if(!isWorker)db.prepare("UPDATE jobs SET status='unknown',message='服务重启，请先核对商城与执行记录',updated=? WHERE (status='dispatching' OR (target IN ('tigshop','yunzhong','crmeb-pro','crmeb-store','shopxo') AND status IN ('accepted','verifying') AND id IN (SELECT job_id FROM job_transports WHERE mode='direct'))) AND NOT EXISTS(SELECT 1 FROM publication_queue q WHERE q.job_id=jobs.id AND q.state IN ('queued','running'))").run(now());
@@ -607,6 +612,10 @@ const handleRequest=async(req,res)=>{
       db.prepare("UPDATE jobs SET status='dispatching',message='正在重新提交原未领取任务',updated=? WHERE id=?").run(now(),job.id);audit(owner,'job.retry_unclaimed',job.id);if(['tigshop','yunzhong','shopxo'].includes(job.target)||!malls.forJob(job).legacy){db.prepare("INSERT OR IGNORE INTO job_transports VALUES(?,'direct')").run(job.id);setImmediate(()=>dispatch(job,JSON.parse(snap.product)));}else if(db.prepare('SELECT 1 FROM image_transfer_jobs WHERE job_id=?').get(job.id))setImmediate(()=>dispatch(job,JSON.parse(snap.product)));else await dispatch(job,JSON.parse(snap.product));return json(res,202,{id:job.id});
     }
     const verificationRoute=path.match(/^\/api\/jobs\/([^/]+)\/verify$/);
+    if(verificationRoute && req.method==='GET'){
+      const result=db.prepare('SELECT j.status,j.message,j.remote_id,s.candidate_id FROM jobs j JOIN job_snapshots s ON s.job_id=j.id WHERE j.id=? AND j.owner=? AND s.claimed=1').get(verificationRoute[1],owner);
+      return result?json(res,200,result):json(res,404,{error:'找不到核对任务'});
+    }
     if(verificationRoute && req.method==='POST'){
       if(demo)return json(res,503,{error:'演示模式不执行发布'});
       const id=verificationRoute[1],b=await body(req),job=db.prepare('SELECT * FROM jobs WHERE id=? AND owner=?').get(id,owner),snapshot=db.prepare('SELECT * FROM job_snapshots WHERE job_id=?').get(id);

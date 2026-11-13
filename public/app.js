@@ -559,7 +559,31 @@ async function init(){try{me=await api('/api/me');applyBranding(me.branding);$('
 init();
 
 $('#jobRows').addEventListener('error',event=>{if(event.target.matches('.job-product-thumb img'))event.target.remove();},true);
-$('#jobRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.recoverYunzhong){const r=await api('/api/jobs/'+b.dataset.recoverYunzhong+'/recover-uncreated','POST',{});toast(r.message);}if(b.dataset.recoverStock){const r=await api('/api/jobs/'+b.dataset.recoverStock+'/recover-zero-stock','POST',{});toast(r.message);}if(b.dataset.verify){const id=await actions.prompt('从商城仓库找到任务编码对应的商品，输入数字商品 ID。此操作只读取详情核对，不会再次创建商品。');if(id===null)return;await api('/api/jobs/'+b.dataset.verify+'/verify','POST',{remote_id:id.trim()});toast('核对请求已提交，请等待结果');}if(b.dataset.retry){if(!await actions.confirm('仅重发尚未领取创建操作的任务；已领取的创建操作不会被重复执行。继续？'))return;await api('/api/jobs/'+b.dataset.retry+'/retry','POST',{});toast('已重发同一任务');}await load();}catch(e){toast(e.message);}};
+let jobVerifyGeneration=0;
+function jobVerifyFeedback(message){
+ const node=$('#jobVerifyFeedback');node.hidden=false;node.textContent=message;
+}
+async function verifyJob(jobId,candidate){
+ const generation=++jobVerifyGeneration,path='/api/jobs/'+jobId+'/verify',prefix='商品 ID '+candidate+'：';
+ jobVerifyFeedback(prefix+'正在提交核对…');
+ try{await api(path,'POST',{remote_id:candidate},AbortSignal.timeout(25000));}
+ catch(e){if(generation===jobVerifyGeneration)jobVerifyFeedback(prefix+'提交未确认：'+e.message);throw e;}
+ if(generation!==jobVerifyGeneration)return;
+ jobVerifyFeedback(prefix+'已提交，等待核对结果…');
+ const deadline=Date.now()+120000;
+ while(generation===jobVerifyGeneration){
+  try{
+   const result=await api(path,'GET',undefined,AbortSignal.timeout(8000));
+   if(generation!==jobVerifyGeneration)return;
+   if(result.candidate_id!==candidate){jobVerifyFeedback(prefix+'核对已被另一条请求替换。');return;}
+   jobVerifyFeedback(prefix+(labels[result.status]||result.status)+' · '+(result.message||'暂无详情'));
+   if(result.status!=='verifying'){load().catch(()=>{});return;}
+  }catch(e){if(generation!==jobVerifyGeneration)return;jobVerifyFeedback(prefix+'暂时无法读取核对状态，正在重试…');}
+  if(Date.now()>=deadline){jobVerifyFeedback(prefix+'仍未收到核对结果。请刷新查看最新状态；如仍卡住，请检查 Worker 或 n8n 执行记录后再核对。');return;}
+  await new Promise(resolve=>setTimeout(resolve,2500));
+ }
+}
+$('#jobRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.recoverYunzhong){const r=await api('/api/jobs/'+b.dataset.recoverYunzhong+'/recover-uncreated','POST',{});toast(r.message);}if(b.dataset.recoverStock){const r=await api('/api/jobs/'+b.dataset.recoverStock+'/recover-zero-stock','POST',{});toast(r.message);}if(b.dataset.verify){const id=await actions.prompt('从商城仓库找到任务编码对应的商品，输入数字商品 ID。此操作只读取详情核对，不会再次创建商品。');if(id===null)return;await verifyJob(b.dataset.verify,id.trim());return;}if(b.dataset.retry){if(!await actions.confirm('仅重发尚未领取创建操作的任务；已领取的创建操作不会被重复执行。继续？'))return;await api('/api/jobs/'+b.dataset.retry+'/retry','POST',{});toast('已重发同一任务');}await load();}catch(e){toast(e.message);}};
 
 let tigshopConnection=null,tigshopFX=null;
 async function loadTigshopConnection(){
