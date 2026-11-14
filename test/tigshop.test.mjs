@@ -36,4 +36,9 @@ test('Tigshop普通属性独立于SKU，分组写入并核对，历史任务不�
  delete l.product.tigshop_native_attributes;assert.deepEqual(buildTigshopProduct(l,fx,shipping).attrList.normal,[]);const r=response();delete r.data.attrList.normal;assert.equal(verifyTigshopProduct(r,l,fx,shipping).status,'succeeded');
 });
 
-test('普通属性超出已审阅库字段长度或字符集时创建前拦截',()=>{for(const value of ['a'.repeat(121),'材质😀']){const l=structuredClone(lease);l.product.tigshop_native_attributes=true;l.product.attributes=[{name:'参数',value}];assert.throws(()=>buildTigshopProduct(l,fx,shipping),/120字/);}});
+test('Tigshop 参数错误区分名称、内容和字符集，并定位具体参数',()=>{
+ for(const [name,value,expected] of [['参数','a'.repeat(121),/第 1 项「参数」：内容有 121 字，最多 120 字/],['参数','材质😀',/第 1 项「参数」：内容含表情或其他四字节字符/],['长'.repeat(61),'硅胶',/名称有 61 字，最多 60 字/]]){
+  const l=structuredClone(lease);l.product.tigshop_native_attributes=true;l.product.attributes=[{name,value}];
+  assert.throws(()=>buildTigshopProduct(l,fx,shipping),expected);
+ }
+});

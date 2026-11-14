@@ -55,7 +55,7 @@ import {recoverTigshopZeroStock} from './tigshop-recovery.mjs';
 import {connectionStore} from './connection-store.mjs';
 import {createTigshopClient,requireTigshopToken,tigshopShipping} from './tigshop-client.mjs';
 import {createTigshopRunner} from './tigshop-direct.mjs';
-import {buildTigshopProduct} from './tigshop.mjs';
+import {buildTigshopProduct,assertTigshopAttributes} from './tigshop.mjs';
 import {createTigshopCatalog} from './tigshop-catalog.mjs';
 import {fetchTigshopFX} from './tigshop-pricing.mjs';
 import http from 'node:http';
@@ -744,10 +744,10 @@ const handleRequest=async(req,res)=>{
         if(!connected(b.target,owner,destinationId))throw Object.assign(Error('请先在连接与配置中完成目标商城连接，未发送任务'),{httpStatus:503});
         if(publishingProduct.category_id&&(publishingProduct.catalog_target||'crmeb-pro')!==b.target)throw Error('分类和品牌属于另一商城，请在编辑页选择当前目标商城并重新审核');
         if(b.target==='crmeb-store'&&(!publishingProduct.category_id||publishingProduct.catalog_target!=='crmeb-store'))throw Error('请先选择多门店分类并重新审核');
+        if(b.target==='tigshop'){publishingProduct.tigshop_native_attributes=true;publishingProduct.attributes=normalizeProductAttributes(publishingProduct.attributes);assertTigshopAttributes(publishingProduct.attributes);}
         await validateCatalog(publishingProduct,owner);
         if(['crmeb-pro','crmeb-store'].includes(b.target)){publishingProduct.crmeb_native_specs=true;publishingProduct.attributes=normalizeProductAttributes(publishingProduct.attributes);}
         if(b.target==='crmeb-store')publishingProduct.attributes=storeLease({product:publishingProduct}).product.attributes;
-        if(b.target==='tigshop'){publishingProduct.tigshop_native_attributes=true;publishingProduct.attributes=normalizeProductAttributes(publishingProduct.attributes);}
         if(b.target==='yunzhong'){const connection=credentialsFor('yunzhong',owner,destinationId);const catalog=await catalogLoader('yunzhong',owner,destinationId)();const category=catalog.categories.find(c=>c.id===publishingProduct.category_id);publishingProduct.yunzhong={categoryIds:category?.ids,categoryLevel:catalog.categoryLevel,dispatchPrice:connection.dispatchPrice,mode:connection.mode,origin:connection.url||LEGACY_YUNZHONG_ORIGIN};buildYunzhongProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},{...publishingProduct.yunzhong,compatibility:connection.mode==='bridge'});}
         if(b.target==='shopxo'){const c=credentialsFor('shopxo',owner,destinationId);publishingProduct.shopxo={origin:c.url,warehouseId:c.warehouseId};buildShopxoProduct({product:publishingProduct,marker:'OPS-'+'0'.repeat(32)},c.warehouseId);}
         if(b.target==='tigshop'){if(publishingProduct.catalog_target!=='tigshop'||!publishingProduct.category_id)throw Error('请选择 Tigshop 分类并重新审核');publishingProduct.tigshop={origin:credentialsFor('tigshop',owner,destinationId).url||'https://xiaolango.com',fx:await fetchTigshopFX(),shipping:{templateId:credentialsFor('tigshop',owner,destinationId).templateId}};}

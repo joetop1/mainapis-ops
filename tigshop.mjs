@@ -2,6 +2,23 @@ import {specificationMatrix} from './public/specifications.js';
 import {tigshopPrices} from './tigshop-pricing.mjs';
 const httpsImage=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||/[\u0000-\u0020]/.test(value))throw Error();return value;}catch{throw Error('图片必须为无账号密码的 HTTPS 地址');}};
 const html=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export function assertTigshopAttributes(attributes){
+ if(!Array.isArray(attributes)||attributes.length>100)throw Error('Tigshop 商品参数须为列表，最多 100 项');
+ const issues=[];
+ for(const [i,row] of attributes.entries()){
+  const name=typeof row?.name==='string'?row.name:'',value=typeof row?.value==='string'?row.value:'';
+  const label='第 '+(i+1)+' 项'+(name.trim()?'「'+[...name].slice(0,30).join('')+([...name].length>30?'…':'')+'」':'');
+  const reasons=[];
+  for(const [field,text,limit] of [['名称',name,60],['内容',value,120]]){
+   const length=[...text].length;
+   if(!text.trim())reasons.push(field+'为空');
+   if(length>limit)reasons.push(field+'有 '+length+' 字，最多 '+limit+' 字');
+   if(/[\u{10000}-\u{10FFFF}]/u.test(text))reasons.push(field+'含表情或其他四字节字符');
+  }
+  if(reasons.length)issues.push(label+'：'+reasons.join('、'));
+ }
+ if(issues.length)throw Error('Tigshop 商品参数（参数与说明）：'+issues.slice(0,3).join('；')+(issues.length>3?'；另有 '+(issues.length-3)+' 项':''));
+}
 export function buildTigshopProduct(lease,fx,shipping={}){
  if(!Number.isSafeInteger(shipping.templateId)||shipping.templateId<=0)throw Error("请选择 Tigshop 真实运费模板");
  const p=lease?.product;
@@ -39,10 +56,9 @@ export function buildTigshopProduct(lease,fx,shipping={}){
  if(stock>2147483647)throw Error('总库存超出范围');
  const normal=[];
  if(p.tigshop_native_attributes===true){
-  if(!Array.isArray(p.attributes)||p.attributes.length>100)throw Error('Tigshop 产品参数格式无效');
+  assertTigshopAttributes(p.attributes);
   const groups=new Map();
   for(const row of p.attributes){
-   if(typeof row?.name!=='string'||!row.name.trim()||row.name.length>60||typeof row.value!=='string'||!row.value.trim()||[...row.value].length>120||/[\u{10000}-\u{10FFFF}]/u.test(row.name+row.value))throw Error('Tigshop 参数名称最多60字、内容最多120字，且不能含表情等四字节字符；请编辑后重新发布');
    if(!groups.has(row.name)){const group={attrName:row.name,attrList:[]};groups.set(row.name,group);normal.push(group);}
    const group=groups.get(row.name);if(group.attrList.some(x=>x.attrValue===row.value))continue;
    group.attrList.push({attrType:0,attrName:row.name,attrValue:row.value,attrPrice:0,attrColor:'',attrPic:'',attrPicThumb:'',sortOrder:0});
