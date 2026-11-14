@@ -1,3 +1,4 @@
+import {splitSupplierParameters} from './public/supplier-parameters.js';
 import {supplierAIConfig,recognizeSupplierBlocks,suggestSupplierLayout} from './supplier-ai.mjs';
 import {ossRequest,MAX_WORKBOOK_BYTES} from './oss-multipart.mjs';
 import {createWriteStream} from 'node:fs';
@@ -328,10 +329,11 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
       if(existing){result={key:item.key,ok:true,id:existing.id,duplicate:true};}
       else{
        const enriched=applySupplierReview(original,data.workbuddy?.[original.key]||data.ai_review?.[original.key]);
+       const parameters=splitSupplierParameters(enriched.attributes,enriched.description);
        const urls=[];for(const asset of enriched.images){let row=db.prepare('SELECT url FROM supplier_uploaded WHERE batch_id=? AND asset=?').get(id,asset);if(!row||row.url.length>128){const a=data.assets.find(a=>a.id===asset),bytes=await readFile(join(directory,id,a.file)),type=imageType(bytes),key=compactImageKey(owner,bytes,type.ext);const url=await (storeImage?storeImage(c,key,{bytes,...type},owner):uploadImage(c,key,{bytes,...type},{fetchImpl}));db.prepare('INSERT INTO supplier_uploaded VALUES(?,?,?) ON CONFLICT(batch_id,asset) DO UPDATE SET url=excluded.url').run(id,asset,url);row={url};}urls.push(row.url);}
        const latest=getStorage();if(!latest?.enabled||!allowedStorage(owner,latest)||storageDestination(latest)!==storageDestination(c))throw Error('存储配置或授权已变化，未创建商品');
        const metadata={supplier:r.supplier,batch_id:id,filename:r.filename,card:original.key,barcodes:original.barcodes,sku_codes:item.skus.map(s=>s.sku),packaging:original.packaging,category_hint:original.category_hint};
-       const product=validateProduct({source_url:source,title:item.title,description:enriched.description,attributes:enriched.attributes,category:'',images:urls,detail_images:[],skus:item.skus,...(item.mall_mappings?{mall_mappings:item.mall_mappings,...(item.mall_mappings[0]||{})}:{})},{supplier:metadata});
+       const product=validateProduct({source_url:source,title:item.title,description:parameters.description,attributes:parameters.attributes,category:'',images:urls,detail_images:[],skus:item.skus,...(item.mall_mappings?{mall_mappings:item.mall_mappings,...(item.mall_mappings[0]||{})}:{})},{supplier:metadata});
        const pid=randomUUID(),now=new Date().toISOString();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO products(id,owner,source,data,status,revision,created,updated) VALUES(?,?,?,?,'draft',1,?,?)").run(pid,owner,source,JSON.stringify(product),now,now);chargeProduct?.(owner,pid,rate);recordCollector(pid);audit(owner,'supplier.import',pid);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}result={key:item.key,ok:true,id:pid};
       }
      }catch(e){result={key:item.key,ok:false,error:e.message};}

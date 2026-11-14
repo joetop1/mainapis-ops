@@ -1,6 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
- {version:'0.24.30',title:'椰购商品参数提示',changes:['发布前指出哪项商品参数的名称、内容或字符需要修改。']},
+ {version:'0.24.30',title:'拆分货盘商品参数',changes:['新导入的货盘拆分合并参数，已导入商品可在编辑页一键拆分。','发布前指出哪项商品参数的名称、内容或字符需要修改。']},
  {version:'0.24.29',title:'关联商城已有商品',changes:['采集箱可记录商城已有商品及上下架状态；关联后跳过该商城的重复发布。']},
  {version:'0.24.28',title:'发布核对反馈',changes:['提交商品 ID 后单独显示核对进度和结果；旧版 n8n 核对入口报错时提示原因。']},
  {version:'0.24.27',title:'AI 商品标题结构',changes:['优先按品牌、款名、核心功能和品类组织标题，避免无依据添加功能词或凑字数。']},

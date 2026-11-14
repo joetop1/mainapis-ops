@@ -1,3 +1,4 @@
+import {splitSupplierParameters} from './supplier-parameters.js';
 import {setupCampaign} from './campaign.js';
 import {createCatalogRecents} from './catalog-recents.js';
 import {setupAssetPanel} from './assets.js';
@@ -383,6 +384,15 @@ function attributeRow(row={name:'',value:''}){
  const remove=document.createElement('button');remove.type='button';remove.className='text';remove.textContent='删除';remove.onclick=()=>item.remove();item.append(name,value,remove);$('#attributeRows').append(item);
 }
 function readProductAttributes(){return normalizeProductAttributes([...$('#attributeRows').children].map(row=>({name:row.querySelector('[data-attribute-name]').value,value:row.querySelector('[data-attribute-value]').value})));}
+$('#splitSupplierParameters').onclick=()=>{
+ const form=$('#productForm'),container=$('#attributeRows');
+ const rows=[...container.children].map(row=>({name:row.querySelector('[data-attribute-name]').value,value:row.querySelector('[data-attribute-value]').value}));
+ const result=splitSupplierParameters(rows,form.elements.description.value);
+ if(!result.changed){toast('未找到可拆分的合并参数');return;}
+ container.replaceChildren();result.attributes.forEach(attributeRow);
+ form.elements.description.value=result.description;
+ toast('参数已拆分，请核对参数和商品详情后保存');
+};
 $('#addProductAttribute').onclick=()=>attributeRow();
 $('#productAttributesFile').onchange=async event=>{
  try{const file=event.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw Error('采集文件请小于 2 MB');const rows=productAttributesFromJSON($('#productForm').elements.source_url.value,JSON.parse(await file.text()));if($('#attributeRows').children.length&&!await actions.confirm('用文件中的产品参数替换当前参数？其他商品资料不变。'))return;$('#attributeRows').replaceChildren();rows.forEach(attributeRow);toast('已补充 '+rows.length+' 项产品参数，请核对后保存');}catch(error){toast(error.message);}finally{event.target.value='';}
