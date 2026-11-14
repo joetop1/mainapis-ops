@@ -123,14 +123,20 @@ function recordConnectionPart(target,key,value){
 function publicationRows(product){return publicationMalls(product,mallRows()).map(mall=>({mall,record:product.publications?.find(row=>row.mall_connection_id===mall.id||!row.mall_connection_id&&row.target===mall.type&&mall.legacy)}));}
 const listingLabels={listed:'已上架',unlisted:'已下架',unknown:'上下架未核实'};
 const publicationLabel=record=>record?.source==='manual_link'?'已关联 · '+listingLabels[record.listing_status]:record?.status==='succeeded'?'已发布':record?.status==='failed'?'失败':labels[record?.status]||'未发布';
+const approvingProducts=new Set();
+const activePublications=new Set(['dispatching','accepted','verifying']);
+function reviewBadge(product){
+ const busy=approvingProducts.has(product.id),status=busy?'dispatching':product.status;
+ return '<span class="badge '+esc(status)+(busy?' activity-indicator':'')+'" aria-live="polite">'+esc(busy?'审核中…':labels[status]||status)+'</span>';
+}
 let publicationProduct;
 function publicationBadges(product){
  const rows=publicationRows(product);
  if(!rows.length)return '<span class="hint">暂无商城</span>';
  const linked=rows.filter(({record})=>record?.source==='manual_link');
- return '<div class="product-publications publication-circles">'+rows.map(({mall,record})=>{const status=record?.status||'none',label=publicationLabel(record),mark=mall.badge||Array.from(mall.name||'商')[0],description=mall.name+' · '+label+(record?.revision?' · v'+record.revision:'');return '<button type="button" class="publication-circle '+esc(status)+'" data-publications="'+esc(product.id)+'" title="'+esc(description)+'" aria-label="'+esc(description)+'，查看发布记录">'+esc(mark)+'</button>';}).join('')+'</div>'+linked.map(({mall,record})=>'<small>'+esc(mall.name+' · '+publicationLabel(record))+'</small>').join('');
+ return '<div class="product-publications publication-circles">'+rows.map(({mall,record})=>{const status=record?.status||'none',label=publicationLabel(record),mark=mall.badge||Array.from(mall.name||'商')[0],description=mall.name+' · '+label+(record?.revision?' · v'+record.revision:'');return '<button type="button" class="publication-circle '+esc(status)+(activePublications.has(status)?' activity-indicator':'')+'" data-publications="'+esc(product.id)+'" title="'+esc(description)+'" aria-label="'+esc(description)+'，查看发布记录">'+esc(mark)+'</button>';}).join('')+'</div>'+linked.map(({mall,record})=>'<small>'+esc(mall.name+' · '+publicationLabel(record))+'</small>').join('');
 }
-function showPublicationDetails(product){
+function showPublicationDetails(product,{refresh=false}={}){
  publicationProduct=product;
  const dialog=$('#publicationDialog'),editable=state.team?.role!=='editor';
  $('#publicationTitle').textContent=product.title||'商品发布记录';
@@ -138,13 +144,30 @@ function showPublicationDetails(product){
  $('#publicationRows').innerHTML=publicationRows(product).map(({mall,record})=>{
   const manual=record?.source==='manual_link',status=record?.status||'none';
   const action=!editable?'':manual?'<button type="button" class="text" data-unlink-mall="'+esc(mall.id)+'">解除关联</button>':!record||record.can_republish?'<button type="button" class="text" data-link-mall="'+esc(mall.id)+'">关联已有商品</button>':'';
-  return `<tr><td>${esc(mall.name)}<small>${esc(mall.system)}</small></td><td><span class="badge ${esc(status)}">${esc(publicationLabel(record))}</span></td><td>${manual?'人工关联':record?'v'+esc(record.revision)+(record.revision!==product.revision?'（历史版本）':''):'—'}</td><td>${esc(record?.remote_id||'—')}</td><td>${action}</td></tr>`;
+  const verify=editable&&record?.verify_job_id?`<form class="publication-verify" data-verify-job="${esc(record.verify_job_id)}"><label>核对商品 ID<input name="remote_id" required inputmode="numeric" pattern="[1-9][0-9]{0,14}" maxlength="15"></label><button type="submit" class="secondary">验证</button></form>`:'';
+  return `<tr><td>${esc(mall.name)}<small>${esc(mall.system)}</small></td><td><span class="badge ${esc(status)}${activePublications.has(status)?' activity-indicator':''}">${esc(publicationLabel(record))}</span>${record?.message?'<small>'+esc(record.message)+'</small>':''}</td><td>${manual?'人工关联':record?'v'+esc(record.revision)+(record.revision!==product.revision?'（历史版本）':''):'—'}</td><td>${esc(record?.remote_id||'—')}</td><td>${action}${verify}</td></tr>`;
  }).join('')||empty(5,'暂无商城发布记录','配置商城后即可关联已有商品');
- $('#mallLinkForm').hidden=true;
- $('#mallLinkFeedback').textContent='';
+ if(!refresh){$('#mallLinkForm').hidden=true;$('#mallLinkFeedback').textContent='';$('#publicationVerifyFeedback').textContent='';}
  if(!dialog.open)dialog.showModal();
 }
 $('#closePublication').onclick=()=>$('#publicationDialog').close();
+let publicationVerifying=false;
+$('#publicationRows').onsubmit=async event=>{
+ const form=event.target;
+ if(!form.dataset.verifyJob)return;
+ event.preventDefault();
+ if(publicationVerifying)return;
+ const button=event.submitter,pathJob=form.dataset.verifyJob,productId=publicationProduct?.id;
+ const feedback=$('#publicationVerifyFeedback');
+ publicationVerifying=true;button.disabled=true;button.classList.add('activity-indicator');
+ try{
+  await verifyJob(pathJob,form.elements.remote_id.value.trim(),message=>{if(publicationProduct?.id===productId&&$('#publicationDialog').open)feedback.textContent=message;},()=>{const badge=form.closest('tr').querySelector('.badge');badge.className='badge verifying activity-indicator';badge.textContent='核对中';void load().catch(()=>{});});
+  await load();
+  const refreshed=state.products.find(row=>row.id===productId);
+  if(refreshed&&publicationProduct?.id===productId&&$('#publicationDialog').open)showPublicationDetails(refreshed,{refresh:true});
+ }catch(error){if(publicationProduct?.id===productId)feedback.textContent=error.message;}
+ finally{publicationVerifying=false;button.disabled=false;button.classList.remove('activity-indicator');}
+};
 $('#publicationRows').onclick=async event=>{
  const button=event.target.closest('button'),product=publicationProduct;
  if(!button||!product)return;
@@ -174,6 +197,13 @@ async function submitMallLink(product,mallId,remoteId,listingStatus,remove,butto
   catch{toast(message+'，列表刷新失败，请手动刷新。');}
  }catch(error){$('#mallLinkFeedback').textContent=error.message;}
  finally{button.disabled=false;}
+}
+async function refreshPublicationDialog(){
+ const id=publicationProduct?.id;
+ await load();
+ if(!$('#publicationDialog').open||publicationProduct?.id!==id||publicationVerifying||!$('#mallLinkForm').hidden||$('#publicationRows').querySelector('input:focus')||[...$('#publicationRows').querySelectorAll('input')].some(input=>input.value))return;
+ const refreshed=state.products.find(row=>row.id===id);
+ if(refreshed&&JSON.stringify(refreshed.publications)!==JSON.stringify(publicationProduct.publications))showPublicationDetails(refreshed,{refresh:true});
 }
 let stateRequest=0;
 async function load(){const request=++stateRequest,scope=$('#collectionScope').value,result=await api('/api/state?collection_scope='+scope);if(request!==stateRequest||scope!==$('#collectionScope').value)return;state=result;await loadJobPage();if(request!==stateRequest)return;render();renderMallNames();refreshSetupShortcut();}
@@ -237,7 +267,7 @@ function render(){
  const productPaging=pageInfo(products.length,productPage,productSize);productPage=productPaging.page;
  $('#count').textContent=`第 ${productPaging.start}–${productPaging.end} 件 / 筛选结果 ${products.length} 件（已加载 ${state.products.length} 件，最多 1000 件）`;
  $('#productPageInfo').textContent=productPaging.page+' / '+productPaging.pages+' 页';$('#productPrev').disabled=productPage<=1;$('#productNext').disabled=productPage>=productPaging.pages;
- $('#productRows').innerHTML=products.slice(productPaging.offset,productPaging.offset+productPaging.pageSize).map(p=>`<tr><td><input type="checkbox" data-merge-select="${esc(p.id)}" aria-label="选择商品：${esc(p.title||p.source_url)}" ${mergeSelected.has(p.id)?'checked':''}></td><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title" title="${esc(p.title||p.source_url)}">${esc(p.title||'待采集 · '+(p.source_url.match(/offer\/(\d+)/)?.[1]||new URL(p.source_url).searchParams.get('id')||''))}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small>${mergeStatusHTML(p,mergeUsage.get(p.id),esc)}${state.team?'<small>采集：'+esc(p.collected_by===me.user.sub?'我':p.collector_name||p.collected_by||'历史采集人未知')+'</small>':''}</div></div></td><td>${p.supplier_import?'<span>货盘 · '+esc(p.supplier_import.supplier)+'</span>':`<a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">${p.source_url.includes('detail.tmall.com')?'天猫':p.source_url.includes('item.taobao.com')?'淘宝':'1688'} ↗</a>`}${p.same_style?'<small>货盘同款整理商品</small>':p.merge_sources?'<small>多链接合并商品</small>':''}</td><td>${p.skus.length} 个 SKU${p.spec_names?.length?`<small>${esc(p.spec_names.join(' × '))}</small>`:''}<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td><span class="badge ${p.status}">${labels[p.status]}</span></td><td>${publicationBadges(p)}</td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}">审核</button>`}</td></tr>`).join('')||empty(8,'采集箱已准备好','添加1688或淘宝商品链接，或导入采集器整理好的 JSON 商品资料。');
+ $('#productRows').innerHTML=products.slice(productPaging.offset,productPaging.offset+productPaging.pageSize).map(p=>`<tr><td><input type="checkbox" data-merge-select="${esc(p.id)}" aria-label="选择商品：${esc(p.title||p.source_url)}" ${mergeSelected.has(p.id)?'checked':''}></td><td><div class="product-cell">${p.images[0]?`<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="${esc(p.images[0])}" alt="">`:'<div class="thumb">▧</div>'}<div><div class="title" title="${esc(p.title||p.source_url)}">${esc(p.title||'待采集 · '+(p.source_url.match(/offer\/(\d+)/)?.[1]||new URL(p.source_url).searchParams.get('id')||''))}</div><small>${esc(p.category||'尚未分类')} · v${p.revision}</small>${mergeStatusHTML(p,mergeUsage.get(p.id),esc)}${state.team?'<small>采集：'+esc(p.collected_by===me.user.sub?'我':p.collector_name||p.collected_by||'历史采集人未知')+'</small>':''}</div></div></td><td>${p.supplier_import?'<span>货盘 · '+esc(p.supplier_import.supplier)+'</span>':`<a href="${esc(p.source_url)}" target="_blank" rel="noopener noreferrer">${p.source_url.includes('detail.tmall.com')?'天猫':p.source_url.includes('item.taobao.com')?'淘宝':'1688'} ↗</a>`}${p.same_style?'<small>货盘同款整理商品</small>':p.merge_sources?'<small>多链接合并商品</small>':''}</td><td>${p.skus.length} 个 SKU${p.spec_names?.length?`<small>${esc(p.spec_names.join(' × '))}</small>`:''}<small>${p.skus.length?'¥ '+Math.min(...p.skus.map(s=>s.price)).toFixed(2)+' 起':'尚未录入价格'}</small></td><td>${reviewBadge(p)}</td><td>${publicationBadges(p)}</td><td>${date(p.updated)}</td><td><button class="text" data-edit="${p.id}">编辑</button>${!canPublish?'':p.status==='approved'?`<button class="text" data-publish="${p.id}">发布</button>`:`<button class="text" data-approve="${p.id}" ${approvingProducts.has(p.id)?'disabled aria-busy="true"':''}>审核</button>`}</td></tr>`).join('')||empty(8,'采集箱已准备好','添加1688或淘宝商品链接，或导入采集器整理好的 JSON 商品资料。');
  $('#jobRows').innerHTML=jobView.rows.map(j=>`<tr><td><div class="product-cell job-product-cell"><div class="thumb job-product-thumb" aria-hidden="true"><span>▧</span>${j.product_image?`<img loading="lazy" decoding="async" referrerpolicy="no-referrer" src="${esc(j.product_image)}" alt="">`:''}</div><div class="job-product-info"><div class="title" title="${esc(j.product_title||'商品记录')}">${esc(j.product_title||'商品记录')}</div><small>${j.id.slice(0,8)} · v${j.revision}</small>${state.team?'<small>发起：'+esc(j.initiated_by===me.user.sub?'我':j.initiator_name||j.initiated_by||'历史发起人未知')+'</small>':''}</div></div></td><td>${esc(mallFor(j.mall_connection_id,j.target)?.name||j.target)}</td><td><span class="badge ${j.status}">${labels[j.status]||esc(j.status)}</span></td><td>${esc(j.message||'等待执行')}${canPublish&&j.id==='650b74d9-6d5e-4174-9245-4d45163e3699'&&j.status==='unknown'&&j.message.includes('商品总库存必须大于0')?`<button class="text" data-recover-stock="${j.id}">核对未入库并结束任务</button>`:''}${j.fx?`<small>1 EUR = ${esc(j.fx.cnyPerEur)} CNY · 汇率日期 ${esc(j.fx.rateDate)}</small>`:''}${j.remote_id?`<small>商城商品 ID：${esc(j.remote_id)}</small>`:''}${j.claimed?`<small>任务编码：${esc(j.marker)}</small>`:''}${canPublish&&j.target==='yunzhong'&&j.claimed&&j.status==='unknown'&&!j.remote_id&&j.message.includes('兼容扩展返回 HTTP 400')?`<button class="text" data-recover-yunzhong="${j.id}">核对未入库并恢复原任务</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'].includes(j.target)&&j.claimed&&!['succeeded','failed'].includes(j.status)?`<button class="text" data-verify="${j.id}">填写商品 ID 核对</button>`:''}${canPublish&&['crmeb-pro','crmeb-store','tigshop','yunzhong','shopxo'].includes(j.target)&&!j.claimed&&['accepted','unknown'].includes(j.status)?`<button class="text" data-retry="${j.id}">重发未领取任务</button>`:''}</td><td>${date(j.created)}</td></tr>`).join('')||empty(5,'还没有发布任务','审核商品后，选择一个目标商城创建发布任务。');
  $('#jobCount').textContent='第 '+jobView.start+'–'+jobView.end+' 条 / 共 '+jobView.total+' 条记录';$('#jobPageInfo').textContent=jobPageNumber+' / '+jobView.pages+' 页';updateJobPager();
  $('#connectionScope').textContent=state.team?'当前团队：'+state.team.name+' · 管理员配置后由团队共享':'当前个人工作空间';
@@ -581,7 +611,9 @@ $('#applyBatchPrice').onclick=()=>{
   toast(`已设置 ${prices.length} 个规格的售价，请检查后保存商品`);
  }catch(e){toast(e.message);}
 };
-$('#productRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.openMerge){const p=state.products.find(p=>p.id===b.dataset.openMerge)||await api('/api/products/'+encodeURIComponent(b.dataset.openMerge));edit(p);}if(b.dataset.publications)showPublicationDetails(state.products.find(p=>p.id===b.dataset.publications));if(b.dataset.edit)edit(state.products.find(p=>p.id===b.dataset.edit));if(b.dataset.approve){const p=state.products.find(p=>p.id===b.dataset.approve);if(editorReadiness(p).issues.length){edit(p);showEditorIssue('review');return;}if(!await actions.confirm('确认图片、分类、所有规格与售价无误，将当前版本标记为审核通过？'))return;await api('/api/products/'+p.id+'/approve','POST',{revision:p.revision});toast('审核通过，可以创建发布任务');void load().catch(()=>toast('审核已通过，列表刷新失败，请手动刷新。'));}if(b.dataset.publish){await loadImageStorageAvailability();openPublish(state.products.find(p=>p.id===b.dataset.publish));}}catch(e){toast(e.message);}};
+$('#productRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.openMerge){const p=state.products.find(p=>p.id===b.dataset.openMerge)||await api('/api/products/'+encodeURIComponent(b.dataset.openMerge));edit(p);}if(b.dataset.publications)showPublicationDetails(state.products.find(p=>p.id===b.dataset.publications));if(b.dataset.edit)edit(state.products.find(p=>p.id===b.dataset.edit));if(b.dataset.approve){const p=state.products.find(p=>p.id===b.dataset.approve);if(editorReadiness(p).issues.length){edit(p);showEditorIssue('review');return;}if(!await actions.confirm('确认图片、分类、所有规格与售价无误，将当前版本标记为审核通过？'))return;if(approvingProducts.has(p.id))return;approvingProducts.add(p.id);render();
+try{await api('/api/products/'+p.id+'/approve','POST',{revision:p.revision});const current=state.products.find(row=>row.id===p.id&&row.revision===p.revision);if(current)current.status='approved';toast('审核通过，可以创建发布任务');}finally{approvingProducts.delete(p.id);render();}
+void load().catch(()=>toast('审核已通过，列表刷新失败，请手动刷新。'));}if(b.dataset.publish){await loadImageStorageAvailability();openPublish(state.products.find(p=>p.id===b.dataset.publish));}}catch(e){toast(e.message);}};
 $('#productForm').onsubmit=async e=>{e.preventDefault();if(updateEditorReadiness().save.length){showEditorIssue('save');return;}const b=e.submitter;b.disabled=true;try{const f=e.target,p={};if(editorImageBusy)throw Error('图片仍在上传，请等待完成后保存商品');for(const k of ['source_url','title','description'])p[k]=f.elements[k].value;p.attributes=readProductAttributes();const tags=f.elements.tag_ids.value.trim();p.tag_ids=tags?tags.split(/[,，\s]+/).map(Number):[];p.catalog_target=f.elements.catalog_target.value;p.catalog_connection_id=$('#catalogMall').value;if(p.catalog_target==='crmeb-store')p.applicable_type=Number(f.elements.applicable_type.value);p.category_id=Number(f.elements.category_id.value);p.category=catalog?.categories.find(x=>x.id===p.category_id)?.label||'';const brandId=Number(f.elements.brand_id.value);const brand=catalog?.brands.find(x=>x.id===brandId);if(brandId&&!brand&&brandId!==editingMappings.get(activeMappingId)?.brand_ids?.at(-1))throw Error('请刷新后选择有效商城品牌');p.brand_ids=brand?.ids||editingMappings.get(activeMappingId)?.brand_ids||[];rememberMapping();p.mall_mappings=[...editingMappings.values()];p.virtual_sales=Number(f.elements.virtual_sales.value);p.detail_images=f.elements.detail_images.value.split('\n').map(x=>x.trim()).filter(Boolean);p.images=f.elements.images.value.split('\n').map(x=>x.trim()).filter(Boolean);const pendingNames=$('#specNames').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean);if(JSON.stringify(pendingNames)!==JSON.stringify(editingSpecNames))throw Error('请先点击应用规格列，再保存商品');p.skus=readSkuRows();if(editingSpecNames.length)p.spec_names=[...editingSpecNames];specificationMatrix(p);if(editing){p.revision=editing.revision;if(editing.sourcing)p.sourcing=editing.sourcing;}if(!editing)p.billing_revision=await confirmBilling('collect',1);await api(editing?'/api/products/'+editing.id:'/api/products',editing?'PUT':'POST',p);$('#editor').close();toast(editing?'商品已保存，待审核':'商品已保存为待整理');void load().catch(()=>toast('商品已保存，列表刷新失败，请手动刷新。'));}catch(e){toast(e.message);}finally{b.disabled=editorImageBusy>0;}};
 $('#importButton').onclick=()=>{$('#importResult').textContent='';$('#importDialog').showModal();};$('#closeImport').onclick=()=>$('#importDialog').close();$('#importFile').onchange=async e=>{const file=e.target.files[0];if(file){if(file.size>2*1024*1024)return toast('文件请小于 2 MB');$('#importText').value=await file.text();}};
 $('#importForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;try{const input=/^[\s\uFEFF]*[\[{]/.test($('#importText').value)?JSON.parse($('#importText').value.replace(/^\uFEFF/,'')):{table:$('#importText').value};input.billing_revision=await confirmBilling('collect',input.products?.length||100,false,input.table);const result=await api('/api/import','POST',input);$('#importResult').textContent=result.results.map(x=>`第 ${x.index+1} 件：${x.ok?'导入成功':x.error}`).join('\n');await load();toast(`成功导入 ${result.results.filter(x=>x.ok).length} 件商品`);}catch(error){toast(error.message);}finally{button.disabled=false;}};
@@ -607,7 +639,7 @@ $('#publishForm').onsubmit=async event=>{
  }catch(error){toast(error.message,{error:true});}finally{publishUncertain=uncertain;button.disabled=uncertain||!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;}
 };
 $('#refresh').onclick=()=>load().catch(e=>toast(e.message));$('#logout').onclick=async()=>{try{await api('/auth/logout','POST',{});location.reload();}catch(e){toast(e.message);}};
-async function init(){try{me=await api('/api/me');applyBranding(me.branding);$('#adminNav').classList.toggle('hidden',!me.systemAdmin);$('#systemSettingsNav').classList.toggle('hidden',!me.systemAdmin);$('#usersNav').classList.toggle('hidden',!me.systemAdmin);$('#systemVersion').disabled=!me.user;$('#systemVersion').textContent=me.system?`系统 v${me.system.version} · ${me.system.build}`:'系统版本未知';$('#mode').textContent=me.demo?'本地演示 · 不执行发布':'内部运营空间';if(!me.user){$('#login').classList.remove('hidden');$('#loginHint').textContent=me.demo?'演示模式仅限本机，所有数据保存在本机数据库。':me.authReady?'使用你的统一账号继续。':'服务已启动，等待管理员配置 Casdoor 应用和账号允许名单。';if(new URLSearchParams(location.search).get('access')==='pending')$('#loginHint').textContent='访问申请已提交，请等待管理员授权。授权后请重新登录。';return;}$('#username').textContent=me.user.name;$('#logout').classList.remove('hidden');$('#workspace').classList.remove('hidden');watchSession();assetPanel.start();refreshSetupShortcut();await load();setInterval(()=>{if(page==='jobs'&&document.querySelector('dialog[open]'))loadJobPage().then(()=>renderStats()).catch(()=>{});else if(['products','jobs'].includes(page)&&!document.querySelector('dialog[open]'))load().catch(()=>{});},10000);}catch(e){if(e.code==='OPS_ACCESS_DISABLED'){$('#login').classList.remove('hidden');$('#loginHint').textContent=e.message;}else toast(e.message);}}
+async function init(){try{me=await api('/api/me');applyBranding(me.branding);$('#adminNav').classList.toggle('hidden',!me.systemAdmin);$('#systemSettingsNav').classList.toggle('hidden',!me.systemAdmin);$('#usersNav').classList.toggle('hidden',!me.systemAdmin);$('#systemVersion').disabled=!me.user;$('#systemVersion').textContent=me.system?`系统 v${me.system.version} · ${me.system.build}`:'系统版本未知';$('#mode').textContent=me.demo?'本地演示 · 不执行发布':'内部运营空间';if(!me.user){$('#login').classList.remove('hidden');$('#loginHint').textContent=me.demo?'演示模式仅限本机，所有数据保存在本机数据库。':me.authReady?'使用你的统一账号继续。':'服务已启动，等待管理员配置 Casdoor 应用和账号允许名单。';if(new URLSearchParams(location.search).get('access')==='pending')$('#loginHint').textContent='访问申请已提交，请等待管理员授权。授权后请重新登录。';return;}$('#username').textContent=me.user.name;$('#logout').classList.remove('hidden');$('#workspace').classList.remove('hidden');watchSession();assetPanel.start();refreshSetupShortcut();await load();setInterval(()=>{if($('#publicationDialog').open&&!publicationVerifying&&!document.querySelector('dialog[open]:not(#publicationDialog)'))refreshPublicationDialog().catch(()=>{});else if(page==='jobs'&&document.querySelector('dialog[open]'))loadJobPage().then(()=>renderStats()).catch(()=>{});else if(['products','jobs'].includes(page)&&!document.querySelector('dialog[open]'))load().catch(()=>{});},10000);}catch(e){if(e.code==='OPS_ACCESS_DISABLED'){$('#login').classList.remove('hidden');$('#loginHint').textContent=e.message;}else toast(e.message);}}
 init();
 
 $('#jobRows').addEventListener('error',event=>{if(event.target.matches('.job-product-thumb img'))event.target.remove();},true);
@@ -615,23 +647,23 @@ let jobVerifyGeneration=0;
 function jobVerifyFeedback(message){
  const node=$('#jobVerifyFeedback');node.hidden=false;node.textContent=message;
 }
-async function verifyJob(jobId,candidate){
+async function verifyJob(jobId,candidate,feedback=jobVerifyFeedback,onQueued=()=>{}){
  const generation=++jobVerifyGeneration,path='/api/jobs/'+jobId+'/verify',prefix='商品 ID '+candidate+'：';
- jobVerifyFeedback(prefix+'正在提交核对…');
+ feedback(prefix+'正在提交核对…');
  try{await api(path,'POST',{remote_id:candidate},AbortSignal.timeout(25000));}
- catch(e){if(generation===jobVerifyGeneration)jobVerifyFeedback(prefix+'提交未确认：'+e.message);throw e;}
+ catch(e){if(generation===jobVerifyGeneration)feedback(prefix+'提交未确认：'+e.message);throw e;}
  if(generation!==jobVerifyGeneration)return;
- jobVerifyFeedback(prefix+'已提交，等待核对结果…');
+ feedback(prefix+'已提交，等待核对结果…');onQueued();
  const deadline=Date.now()+120000;
  while(generation===jobVerifyGeneration){
   try{
    const result=await api(path,'GET',undefined,AbortSignal.timeout(8000));
    if(generation!==jobVerifyGeneration)return;
-   if(result.candidate_id!==candidate){jobVerifyFeedback(prefix+'核对已被另一条请求替换。');return;}
-   jobVerifyFeedback(prefix+(labels[result.status]||result.status)+' · '+(result.message||'暂无详情'));
-   if(result.status!=='verifying'){load().catch(()=>{});return;}
-  }catch(e){if(generation!==jobVerifyGeneration)return;jobVerifyFeedback(prefix+'暂时无法读取核对状态，正在重试…');}
-  if(Date.now()>=deadline){jobVerifyFeedback(prefix+'仍未收到核对结果。请刷新查看最新状态；如仍卡住，请检查 Worker 或 n8n 执行记录后再核对。');return;}
+   if(result.candidate_id!==candidate){feedback(prefix+'核对已被另一条请求替换。');return;}
+   feedback(prefix+(labels[result.status]||result.status)+' · '+(result.message||'暂无详情'));
+   if(result.status!=='verifying'){if(feedback===jobVerifyFeedback)load().catch(()=>{});return;}
+  }catch(e){if(generation!==jobVerifyGeneration)return;feedback(prefix+'暂时无法读取核对状态，正在重试…');}
+  if(Date.now()>=deadline){feedback(prefix+'仍未收到核对结果。请刷新查看最新状态；如仍卡住，请检查 Worker 或 n8n 执行记录后再核对。');return;}
   await new Promise(resolve=>setTimeout(resolve,2500));
  }
 }

@@ -17,6 +17,12 @@ test('商城发布摘要不受300条任务限制，保留历史成功、待核�
  assert.equal(rows.length,3);
  assert.deepEqual({...rows.find(r=>r.target==='crmeb-pro')},{product_id:'p',target:'crmeb-pro',mall_connection_id:'',status:'succeeded',revision:1,remote_id:'554',updated:'001',can_republish:false});
  assert.equal(rows.find(r=>r.target==='crmeb-store').status,'awaiting_review');
+ assert.equal(rows.find(r=>r.target==='crmeb-store').verify_job_id,undefined);
+ db.prepare("INSERT INTO job_snapshots(job_id,product,claimed) VALUES('pending','{}',1)").run();
+ assert.equal(productPublications(db,'alice').get('p').find(r=>r.target==='crmeb-store').verify_job_id,'pending');
+ db.prepare("UPDATE jobs SET status='verifying' WHERE id='pending'").run();
+ assert.equal(productPublications(db,'alice').get('p').find(r=>r.target==='crmeb-store').verify_job_id,undefined);
+
  assert.equal(productPublications(db,'alice').has('q'),false);
  assert.equal(productPublications(db,'bob').get('q')[0].remote_id,'999');
  assert.equal(productPublications(db,'empty').size,0);

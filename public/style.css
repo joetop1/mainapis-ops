@@ -371,3 +371,10 @@ aside nav #onboardingNav{color:#d6efb7;margin-top:10px}
 .editor-title-tools button{white-space:nowrap}
 .product-title-suggestion{margin-top:8px;padding:10px 12px;border:1px solid #dce7de;border-radius:8px;background:#f7faf7;overflow-wrap:anywhere}
 .product-title-suggestion p{margin:6px 0}
+
+/* Pending operations use an indeterminate glow; the label carries the state. */
+.activity-indicator{animation:ops-activity 1.8s ease-in-out infinite}
+@keyframes ops-activity{50%{box-shadow:0 0 0 4px rgba(73,133,194,.25)}}
+@media(prefers-reduced-motion:reduce){.activity-indicator{animation:none}}
+.publication-verify{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.publication-verify label{margin:0}.publication-verify input{max-width:150px}
