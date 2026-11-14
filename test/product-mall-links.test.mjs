@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {openStore} from '../core.mjs';
+import {mallConnections} from '../mall-connections.mjs';
+import {changeMallLink,assertMallCanCreate} from '../product-mall-links.mjs';
+import {productPublications} from '../product-publications.mjs';
+
+test('manual links block one mall only, survive product edits, and do not create jobs',()=>{
+ const db=openStore(':memory:');
+ const malls=mallConnections(db);
+ const mall=malls.get('alice',null,'crmeb-store').id;
+ const other=malls.get('alice',null,'tigshop').id;
+ const foreign=malls.get('bob',null,'crmeb-store').id;
+ const add=db.prepare("INSERT INTO products VALUES(?,?,?,'{}','draft',1,'now','now')");
+ add.run('p','alice','a');add.run('q','alice','b');add.run('r','bob','c');
+ const options={owner:'alice',productId:'p',mallId:mall,remoteId:'554',listingStatus:'listed',audit(){}};
+ assert.throws(()=>changeMallLink(db,{...options,mallId:foreign}),/工作空间/);
+ assert.throws(()=>changeMallLink(db,{...options,productId:'r'}),/工作空间/);
+ changeMallLink(db,options);
+ assert.throws(()=>assertMallCanCreate(db,'alice','p',mall),/重复发布/);
+ assert.doesNotThrow(()=>assertMallCanCreate(db,'alice','p',other));
+ assert.throws(()=>changeMallLink(db,{...options,productId:'q'}),/其他记录/);
+ assert.throws(()=>changeMallLink(db,{...options,remove:true,remoteId:'555'}),/关联已变化/);
+ db.prepare("UPDATE products SET revision=2 WHERE id='p'").run();
+ const record=productPublications(db,'alice').get('p')[0];
+ assert.equal(record.source,'manual_link');
+ assert.equal(record.listing_status,'listed');
+ assert.equal(record.remote_id,'554');
+ assert.equal(productPublications(db,'bob').size,0);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n,0);
+ changeMallLink(db,{...options,remove:true});
+ assert.doesNotThrow(()=>assertMallCanCreate(db,'alice','p',mall));
+ db.prepare("INSERT INTO jobs(id,owner,product_id,revision,target,mall_connection_id,status,token,created,updated) VALUES('job','alice','p',2,'crmeb-store',?,'dispatching','token','now','now')").run(mall);
+ assert.throws(()=>changeMallLink(db,options),/已有发布任务/);
+ db.close();
+});

@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.29',title:'关联商城已有商品',changes:['采集箱可记录商城已有商品及上下架状态；关联后跳过该商城的重复发布。']},
  {version:'0.24.28',title:'发布核对反馈',changes:['提交商品 ID 后单独显示核对进度和结果；旧版 n8n 核对入口报错时提示原因。']},
  {version:'0.24.27',title:'AI 商品标题结构',changes:['优先按品牌、款名、核心功能和品类组织标题，避免无依据添加功能词或凑字数。']},
  {version:'0.24.26',title:'AI 标题优化规则',changes:['短标题按原资料补充，长标题优先精简，并清除常见供货词。']},

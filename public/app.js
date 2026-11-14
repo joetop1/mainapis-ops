@@ -120,18 +120,60 @@ function recordConnectionPart(target,key,value){
  $('#connectionCounts').textContent=counts.join(' · ');
 }
 function publicationRows(product){return publicationMalls(product,mallRows()).map(mall=>({mall,record:product.publications?.find(row=>row.mall_connection_id===mall.id||!row.mall_connection_id&&row.target===mall.type&&mall.legacy)}));}
+const listingLabels={listed:'已上架',unlisted:'已下架',unknown:'上下架未核实'};
+const publicationLabel=record=>record?.source==='manual_link'?'已关联 · '+listingLabels[record.listing_status]:record?.status==='succeeded'?'已发布':record?.status==='failed'?'失败':labels[record?.status]||'未发布';
+let publicationProduct;
 function publicationBadges(product){
  const rows=publicationRows(product);
  if(!rows.length)return '<span class="hint">暂无商城</span>';
- return '<div class="product-publications publication-circles">'+rows.map(({mall,record})=>{const status=record?.status||'none',label=status==='succeeded'?'已发布':status==='none'?'未发布':labels[status]||'需核对',mark=mall.badge||Array.from(mall.name||'商')[0],description=mall.name+' · '+label+(record?' · v'+record.revision:'');return '<button type="button" class="publication-circle '+esc(status)+'" data-publications="'+esc(product.id)+'" title="'+esc(description)+'" aria-label="'+esc(description)+'，查看发布记录">'+esc(mark)+'</button>';}).join('')+'</div>';
+ const linked=rows.filter(({record})=>record?.source==='manual_link');
+ return '<div class="product-publications publication-circles">'+rows.map(({mall,record})=>{const status=record?.status||'none',label=publicationLabel(record),mark=mall.badge||Array.from(mall.name||'商')[0],description=mall.name+' · '+label+(record?.revision?' · v'+record.revision:'');return '<button type="button" class="publication-circle '+esc(status)+'" data-publications="'+esc(product.id)+'" title="'+esc(description)+'" aria-label="'+esc(description)+'，查看发布记录">'+esc(mark)+'</button>';}).join('')+'</div>'+linked.map(({mall,record})=>'<small>'+esc(mall.name+' · '+publicationLabel(record))+'</small>').join('');
 }
 function showPublicationDetails(product){
+ publicationProduct=product;
+ const dialog=$('#publicationDialog'),editable=state.team?.role!=='editor';
  $('#publicationTitle').textContent=product.title||'商品发布记录';
- $('#publicationRevision').textContent='商品当前版本 v'+product.revision+'；以下为发布核对记录，商城当前上下架状态请到商城查看。';
- $('#publicationRows').innerHTML=publicationRows(product).map(({mall,record})=>{const status=record?.status||'none',label=status==='succeeded'?'已发布':status==='failed'?'失败':status==='none'?'未发布':labels[status]||'需核对';return `<tr><td>${esc(mall.name)}<small>${esc(mall.system)}</small></td><td><span class="badge ${esc(status)}">${esc(label)}</span></td><td>${record?'v'+esc(record.revision)+(record.revision!==product.revision?'（历史版本）':''):'—'}</td><td>${esc(record?.remote_id||'—')}</td></tr>`;}).join('')||empty(4,'暂无商城发布记录','配置商城后即可查看发布情况');
- $('#publicationDialog').showModal();
+ $('#publicationRevision').textContent='当前版本 v'+product.revision+'；已有商品的上下架状态由人工记录，以商城为准。';
+ $('#publicationRows').innerHTML=publicationRows(product).map(({mall,record})=>{
+  const manual=record?.source==='manual_link',status=record?.status||'none';
+  const action=!editable?'':manual?'<button type="button" class="text" data-unlink-mall="'+esc(mall.id)+'">解除关联</button>':!record||record.can_republish?'<button type="button" class="text" data-link-mall="'+esc(mall.id)+'">关联已有商品</button>':'';
+  return `<tr><td>${esc(mall.name)}<small>${esc(mall.system)}</small></td><td><span class="badge ${esc(status)}">${esc(publicationLabel(record))}</span></td><td>${manual?'人工关联':record?'v'+esc(record.revision)+(record.revision!==product.revision?'（历史版本）':''):'—'}</td><td>${esc(record?.remote_id||'—')}</td><td>${action}</td></tr>`;
+ }).join('')||empty(5,'暂无商城发布记录','配置商城后即可关联已有商品');
+ $('#mallLinkForm').hidden=true;
+ $('#mallLinkFeedback').textContent='';
+ if(!dialog.open)dialog.showModal();
 }
 $('#closePublication').onclick=()=>$('#publicationDialog').close();
+$('#publicationRows').onclick=async event=>{
+ const button=event.target.closest('button'),product=publicationProduct;
+ if(!button||!product)return;
+ if(button.dataset.linkMall){
+  const form=$('#mallLinkForm');form.reset();form.dataset.mall=button.dataset.linkMall;
+  $('#mallLinkTarget').textContent='关联到 '+mallFor(form.dataset.mall).name;
+  $('#mallLinkFeedback').textContent='';form.hidden=false;form.elements.remote_id.focus();return;
+ }
+ if(!button.dataset.unlinkMall)return;
+ const mall=mallFor(button.dataset.unlinkMall),record=product.publications.find(row=>row.mall_connection_id===mall.id);
+ if(!await actions.confirm('解除 '+mall.name+' 商品 '+record.remote_id+' 的关联？商城商品保留；解除后 OPS 可再次向此商城发布。'))return;
+ await submitMallLink(product,mall.id,record.remote_id,undefined,true,button);
+};
+$('#mallLinkForm').onsubmit=async event=>{
+ event.preventDefault();
+ const form=event.currentTarget,product=publicationProduct,mall=mallFor(form.dataset.mall),remoteId=form.elements.remote_id.value.trim();
+ if(!product||!mall)return;
+ if(!await actions.confirm('确认「'+product.title+'」与 '+mall.name+' 的商品 '+remoteId+' 是同一件商品？OPS 不会读取或修改商城商品。'))return;
+ await submitMallLink(product,mall.id,remoteId,form.elements.listing_status.value,false,event.submitter);
+};
+async function submitMallLink(product,mallId,remoteId,listingStatus,remove,button){
+ button.disabled=true;$('#mallLinkFeedback').textContent='';
+ try{
+  await api('/api/products/'+encodeURIComponent(product.id)+'/mall-link',remove?'DELETE':'POST',{connection_id:mallId,remote_id:remoteId,listing_status:listingStatus});
+  const message=remove?'已解除关联':'已关联商城已有商品';
+  try{await load();const refreshed=state.products.find(row=>row.id===product.id);if(refreshed&&$('#publicationDialog').open&&publicationProduct?.id===product.id)showPublicationDetails(refreshed);toast(message);}
+  catch{toast(message+'，列表刷新失败，请手动刷新。');}
+ }catch(error){$('#mallLinkFeedback').textContent=error.message;}
+ finally{button.disabled=false;}
+}
 let stateRequest=0;
 async function load(){const request=++stateRequest,scope=$('#collectionScope').value,result=await api('/api/state?collection_scope='+scope);if(request!==stateRequest||scope!==$('#collectionScope').value)return;state=result;await loadJobPage();if(request!==stateRequest)return;render();renderMallNames();refreshSetupShortcut();}
 async function loadJobPage(){const request=++jobRequest;jobLoading=true;updateJobPager();try{const data=await api('/api/jobs?page='+jobPageNumber+'&page_size='+jobSize+'&task_scope='+$('#jobScope').value+'&mall='+encodeURIComponent($('#jobMall').value)+'&status='+$('#jobStatus').value);if(request!==jobRequest)return;jobView=data;jobPageNumber=data.page;}finally{if(request===jobRequest){jobLoading=false;updateJobPager();}}}
@@ -538,9 +580,9 @@ function openPublish(product){
  publishing=product;publishResults=new Map();publishUncertain=false;$('#publishTitle').textContent=product.title;$('#publishResults').replaceChildren();$('#publishSubmit').disabled=false;$('#publishSubmit').textContent='提交所选商城任务';
  const mappings=productMallMappings(product),rows=mallRows().filter(m=>m.configured);
  const available=new Set(imageStorageAvailability.filter(x=>x.available).map(x=>x.id));
- $('#publishTargets').innerHTML=rows.map(m=>{const mapping=mappings.find(x=>x.catalog_connection_id===m.id&&x.catalog_target===m.type),record=product.publications?.find(x=>x.mall_connection_id===m.id||!x.mall_connection_id&&x.target===m.type&&m.legacy),legacy=product.mall_mappings===undefined&&!product.category_id,ready=!!mapping?.category_id||legacy,locked=!!record&&!(record.status==='failed'&&record.can_republish===true),reason=locked?'已有'+(labels[record.status]||'发布')+'任务，请在任务列表核对或重试':ready?(mapping?.category||product.category||'兼容旧分类'):'尚未设置分类，请编辑商品';
+ $('#publishTargets').innerHTML=rows.map(m=>{const mapping=mappings.find(x=>x.catalog_connection_id===m.id&&x.catalog_target===m.type),record=product.publications?.find(x=>x.mall_connection_id===m.id||!x.mall_connection_id&&x.target===m.type&&m.legacy),legacy=product.mall_mappings===undefined&&!product.category_id,ready=!!mapping?.category_id||legacy,locked=!!record&&!(record.status==='failed'&&record.can_republish===true),reason=record?.source==='manual_link'?'已关联商城商品 '+record.remote_id+'，跳过重复发布':locked?'已有'+(labels[record.status]||'发布')+'任务，请在任务列表核对或重试':ready?(mapping?.category||product.category||'兼容旧分类'):'尚未设置分类，请编辑商品';
  return '<div class="publish-choice"><input data-publish-mall type="checkbox" value="'+esc(m.id)+'" '+(ready&&!locked?'checked':'disabled')+'><span><strong>'+esc(m.name)+'</strong><small>'+esc(m.system+' · '+reason)+'</small><label class="image-transfer-choice"><input data-import-images="'+esc(m.id)+'" type="checkbox" '+(available.has(m.id)&&ready&&!locked?'':'disabled')+'>转存图片到OPS存储'+(available.has(m.id)?'（默认关闭）':'（未配置或域名未授权）')+'</label></span></div>';}).join('')||'<p class="hint">请先配置商城连接。</p>';
- $('#publishDialog').showModal();refreshPublishQuote();
+ $('#publishSubmit').disabled=!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;$('#publishDialog').showModal();refreshPublishQuote();
 }
 $('#publishTargets').onchange=()=>{refreshPublishQuote();clearDialogFeedback($('#publishDialog'));$('#publishSubmit').disabled=publishUncertain||!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;};
 $('#publishForm').onsubmit=async event=>{

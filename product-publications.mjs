@@ -11,5 +11,13 @@ export function productPublications(db,owner){
  ) WHERE position=1`).all(owner,owner);
  const result=new Map();
  for(const row of rows){const entries=result.get(row.product_id)||[];const {publication_blocked,...publication}=row;entries.push({...publication,can_republish:publication_blocked===0});result.set(row.product_id,entries);}
+ const links=db.prepare(`SELECT l.* FROM product_mall_links l
+ JOIN (SELECT id FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000) p ON p.id=l.product_id
+`).all(owner);
+ for(const link of links){
+  const entries=(result.get(link.product_id)||[]).filter(row=>row.mall_connection_id!==link.mall_connection_id);
+  entries.push({...link,status:'succeeded',source:'manual_link',can_republish:false});
+  result.set(link.product_id,entries);
+ }
  return result;
 }
