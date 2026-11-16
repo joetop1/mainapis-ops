@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.24.32',title:'审核与预览反馈',changes:['审核资料不足时在采集箱提示待补项。','接口返回非 JSON 时显示 HTTP 状态码和可用的 Cloudflare Ray ID。']},
  {version:'0.24.31',title:'采集箱执行状态',changes:['审核、发布和核对执行中显示呼吸效果。','可在商城徽章弹窗中直接填写商品 ID 核对。']},
  {version:'0.24.30',title:'拆分货盘商品参数',changes:['新导入的货盘拆分合并参数，已导入商品可在编辑页一键拆分。','发布前指出哪项商品参数的名称、内容或字符需要修改。']},
  {version:'0.24.29',title:'关联商城已有商品',changes:['采集箱可记录商城已有商品及上下架状态；关联后跳过该商城的重复发布。']},
