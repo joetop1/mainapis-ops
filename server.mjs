@@ -44,7 +44,7 @@ import {createYunzhongClient,requireYunzhongCredentials,testYunzhongConnection,l
 import {normalizeProductAttributes} from './public/product-attributes.js';
 import {systemVersion} from './system-version.mjs';
 import {productPublications} from './product-publications.mjs';
-import {assertMallCanCreate,changeMallLink} from './product-mall-links.mjs';
+import {assertMallCanCreate,changeMallLink,confirmMallProductDeleted} from './product-mall-links.mjs';
 import {createCollectorPackage} from './collector-package.mjs';
 import {fetchCrmebToken} from './crmeb-auth.mjs';
 import {teamStore,teamPermission} from './teams.mjs';
@@ -712,7 +712,11 @@ const handleRequest=async(req,res)=>{
         const b=await body(req,8192),remove=req.method==='DELETE';
         if(typeof b?.connection_id!=='string'||!b.connection_id)throw Error('请选择商城');
         const mall=malls.get(owner,b.connection_id);
-        try{changeMallLink(db,{owner,productId:r.id,mallId:mall.id,remoteId:b.remote_id,listingStatus:b.listing_status,remove,audit});}
+        try{
+          if(!remove&&b.confirm_deleted===true){
+            confirmMallProductDeleted(db,{owner,productId:r.id,mallId:mall.id,jobId:b.job_id,remoteId:b.remote_id,audit});
+          }else changeMallLink(db,{owner,productId:r.id,mallId:mall.id,remoteId:b.remote_id,listingStatus:b.listing_status,remove,audit});
+        }
         catch(error){if(error.httpStatus)return json(res,error.httpStatus,{error:error.message});throw error;}
         return json(res,200,{ok:true});
       }
