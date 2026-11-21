@@ -250,7 +250,7 @@ async function loadMallSettings(type){
  if(type==='tigshop'){await loadTigshopConnection();return loadNotifications(type);}
  if(['crmeb-pro','crmeb-store'].includes(type))await loadNotifications(type);
  await loadCrmebAuthConnections([type]);await loadCrmebPublishConnections([type]);
- const mall=mallFor(selectedMalls[type],type);document.querySelector('[data-crmeb-publishing="'+type+'"]').closest('details').classList.toggle('hidden',!mall?.legacy);
+ const mall=mallFor(selectedMalls[type],type);document.querySelector('[data-crmeb-publishing="'+type+'"]').closest('details').classList.toggle('hidden',state.publishing_transport==='worker'||!mall?.legacy);
 }
 for(const selector of document.querySelectorAll('[data-mall-selector]'))selector.onchange=async()=>{
  const type=selector.dataset.mallSelector;selectedMalls[type]=selector.value;
@@ -724,7 +724,7 @@ $('#refreshTigshopFX').onclick=async()=>{
 
 async function loadCrmebAuthConnections(targets=['crmeb-pro','crmeb-store']){
  await Promise.all(targets.map(async target=>{
-  try{const c=await api('/api/connections/'+target+'/auth');recordConnectionPart(target,'auth',c);$('#'+target+'-appsecret').placeholder=c.configured?'已保存 AppSecret；留空保留，输入新值可更换':'填写 AppSecret';$('#'+target+'-appid').value=c.appid;document.querySelector('[data-mall-url="'+target+'"]').value=c.url;document.querySelector('[data-mall-shipping="'+target+'"]').value=c.shippingTemplateId||'';const mall=mallFor(selectedMalls[target],target);document.querySelector('[data-mall-url="'+target+'"]').readOnly=!!mall?.legacy;document.querySelector('[data-mall-shipping="'+target+'"]').closest('label').classList.toggle('hidden',!!mall?.legacy);$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存'+(c.testedAt?' · '+date(c.testedAt):''):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
+  try{const c=await api('/api/connections/'+target+'/auth');recordConnectionPart(target,'auth',c);$('#'+target+'-appsecret').placeholder=c.configured?'已保存 AppSecret；留空保留，输入新值可更换':'填写 AppSecret';$('#'+target+'-appid').value=c.appid;document.querySelector('[data-mall-url="'+target+'"]').value=c.url;document.querySelector('[data-mall-shipping="'+target+'"]').value=c.shippingTemplateId||'';const mall=mallFor(selectedMalls[target],target);document.querySelector('[data-mall-url="'+target+'"]').readOnly=!!mall?.legacy;document.querySelector('[data-mall-shipping="'+target+'"]').closest('label').classList.toggle('hidden',c.transport==='n8n'&&!!mall?.legacy);$('#'+target+'-brand-status').textContent=c.configured?'商城发布凭证已保存'+(c.testedAt?' · '+date(c.testedAt):''):'请填写此商城的 AppID 和 AppSecret，发布时由 OPS 统一获取授权。';}
   catch(e){$('#'+target+'-brand-status').textContent=e.message;recordConnectionPart(target,'auth',{error:true});}
  }));
 }
@@ -743,8 +743,8 @@ for(const button of document.querySelectorAll('[data-test-auth]'))button.onclick
 
 async function loadCrmebPublishConnections(targets=['crmeb-pro','crmeb-store']){
  await Promise.all(targets.map(async target=>{
-  const mall=mallFor(selectedMalls[target],target),advanced=document.querySelector('[data-crmeb-publishing="'+target+'"]').closest('details');advanced.classList.toggle('hidden',!mall?.legacy);
-  if(mall&&!mall.legacy){recordConnectionPart(target,'publishing',{configured:mall.configured});$('#'+target+'-connection-summary').textContent=mall.configured?'独立商城连接已配置，使用 OPS 直连下架入库':'请填写该商城地址、授权及真实运费模板 ID';return;}
+  const mall=mallFor(selectedMalls[target],target),advanced=document.querySelector('[data-crmeb-publishing="'+target+'"]').closest('details');advanced.classList.toggle('hidden',state.publishing_transport==='worker'||!mall?.legacy);
+  if(mall&&(state.publishing_transport==='worker'||!mall.legacy)){recordConnectionPart(target,'publishing',{configured:mall.configured});$('#'+target+'-connection-summary').textContent=mall.configured?'商城已配置，发布与核对由 OPS Worker 执行':'请填写该商城地址、授权及真实运费模板 ID';return;}
   try{const c=await api('/api/connections/'+target+'/publishing');recordConnectionPart(target,'publishing',c);$('#'+target+'-publish-token').placeholder=c.configured?'已配置密钥；留空保留，输入新值可更换':'填写 Webhook 密钥';$('#'+target+'-publish-url').value=c.url;$('#'+target+'-publish-status').textContent=c.configured?`已配置发布连接（${c.source==='page'?'页面保存':'原服务器配置'}），密钥不回显。可测试入口或填写新密钥后保存。`:'请填写生产 Webhook 地址和密钥。';}
   catch(e){$('#'+target+'-publish-status').textContent=e.message;recordConnectionPart(target,'publishing',{error:true});}
  }));

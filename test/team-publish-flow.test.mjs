@@ -1,3 +1,4 @@
+process.env.OPS_LEGACY_N8N_PUBLISH='true';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';

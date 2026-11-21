@@ -1,5 +1,7 @@
 # MainAPIs 商品运营台 · v0.2.0
 
+0.25.0 默认由 OPS Worker 执行所有商城的新发布。升级说明和历史任务处理见 [Worker运行说明](docs/worker.md)。
+
 独立、自部署的内部商品运营后台。Casdoor 认证，SQLite 持久化，内置商城适配器执行发布任务，并兼容历史 n8n 工作流。无需 npm 依赖，运行环境 Node.js 22.16+（推荐 Node 22 LTS）。
 
 ## 已实现与尚未接通
@@ -52,7 +54,7 @@ docker compose logs --tail 50 goods-ops
 
 “退出”仅销毁此后台的本地会话，不注销整个 Casdoor 账号。用户再次登录可能复用 Casdoor 会话。
 
-## n8n 连接与协议
+## 历史 n8n 连接与协议
 
 服务地址已知是 `https://n8n.mainapis.com`，但这**不是 Webhook URL**。在 n8n 建立并激活工作流后，复制其 Production URL 到 `N8N_WEBHOOK_URL`。
 

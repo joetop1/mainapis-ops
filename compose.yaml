@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       OPS_DURABLE_QUEUE: "true"
+      OPS_LEGACY_N8N_PUBLISH: ${OPS_LEGACY_N8N_PUBLISH:-false}
       OPS_WORKER_PAUSED: ${OPS_WORKER_PAUSED:-false}
     ports:
       - "127.0.0.1:3080:3080"
@@ -23,6 +24,7 @@ services:
     env_file: .env
     environment:
       OPS_DURABLE_QUEUE: "true"
+      OPS_LEGACY_N8N_PUBLISH: ${OPS_LEGACY_N8N_PUBLISH:-false}
       OPS_WORKER_PAUSED: ${OPS_WORKER_PAUSED:-false}
     volumes:
       - goods_ops_data:/app/data
