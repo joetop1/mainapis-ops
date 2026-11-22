@@ -34,7 +34,7 @@ test('同一审核版本批量发布会员、多门店、Tigshop：独立快照�
   const product={source_url:'https://detail.1688.com/offer/811.html',title:'测试',images:['https://example.com/main.jpg'],skus:[{sku:'A',spec:'红',cost:2,price:10,stock:10}],catalog_target:'crmeb-pro',catalog_connection_id:ids['crmeb-pro'],category_id:11,brand_ids:[21],mall_mappings:maps};
   const made=await call('/api/products','POST',product);assert.equal(made.status,201,JSON.stringify(made));const id=made.data.id;
   const saved=JSON.parse(db.prepare('SELECT data FROM products WHERE id=?').get(id).data);assert.equal(saved.mall_mappings.length,3);assert.equal(saved.mall_mappings[2].category,'Tig类目');
-  assert.equal((await call('/api/products/'+id+'/approve','POST',{revision:1})).status,200);
+  const approval=await call('/api/products/'+id+'/approve','POST',{revision:1});assert.equal(approval.status,200);assert.equal(approval.data.product.status,'approved');assert.equal(approval.data.product.revision,1);
   const destinations=maps.map(m=>({connection_id:m.catalog_connection_id,target:m.catalog_target}));
   assert.equal((await call('/api/products/'+id+'/publish','POST',{revision:1,destinations},'outsider')).status,400);
   assert.equal((await call('/api/products/'+id+'/publish','POST',{revision:1,destinations:[destinations[0],destinations[0]]})).status,400);
@@ -51,7 +51,7 @@ test('同一审核版本批量发布会员、多门店、Tigshop：独立快照�
   const zero=await call('/api/products','POST',{...product,source_url:'https://detail.1688.com/offer/812.html',skus:product.skus.map(s=>({...s,stock:0}))});assert.equal(zero.status,201);
   await call('/api/products/'+zero.data.id+'/approve','POST',{revision:1});const partial=await call('/api/products/'+zero.data.id+'/publish','POST',{revision:1,destinations});assert.equal(partial.data.results.filter(r=>r.ok).length,2);assert.match(partial.data.results.find(r=>r.target==='tigshop').error,/总库存/);
   // Shared product edit retains all mappings but invalidates the former approval.
-  assert.equal((await call('/api/products/'+id,'PUT',{...product,revision:1,title:'已修改'})).status,200);const stale=await call('/api/products/'+id+'/publish','POST',{revision:1,destinations});assert.equal(stale.status,400);assert.equal(db.prepare('SELECT COUNT(*) n FROM jobs WHERE product_id=?').get(id).n,3);
+  const editReceipt=await call('/api/products/'+id,'PUT',{...product,revision:1,title:'已修改'});assert.equal(editReceipt.status,200);assert.equal(editReceipt.data.product.status,'pending_review');assert.equal(editReceipt.data.product.revision,2);assert.equal(editReceipt.data.product.title,'已修改');const stale=await call('/api/products/'+id+'/publish','POST',{revision:1,destinations});assert.equal(stale.status,400);assert.equal(db.prepare('SELECT COUNT(*) n FROM jobs WHERE product_id=?').get(id).n,3);
   const olderClient={...product,revision:2,title:'旧客户端修改',mall_mappings:undefined};assert.equal((await call('/api/products/'+id,'PUT',olderClient)).status,200);assert.equal(JSON.parse(db.prepare('SELECT data FROM products WHERE id=?').get(id).data).mall_mappings.length,3);
  }finally{await delay(30);globalThis.fetch=original;db.close();closeStore();await rm(dir,{recursive:true,force:true});}
 });

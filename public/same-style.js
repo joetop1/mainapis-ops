@@ -1,10 +1,11 @@
+import {openMergedProduct} from './product-flow.js';
 export function styleSourceIds(products){return new Set(products.filter(p=>p.same_style).flatMap(p=>[p.same_style.reference_id,...p.same_style.stock_ids]));}
 export function suggestedStyleMatch(stock,reference){
  const normalize=v=>String(v||'').trim().toLowerCase().replace(/\s+/g,'');
  const value=normalize(stock.spec);if(!value||['默认','默认规格'].includes(value))return '';
  const matches=reference.skus.filter(s=>normalize(s.spec)===value);return matches.length===1?matches[0].sku:'';
 }
-export function setupSameStyle({$,esc,context,api,load,edit,toast,clipboard=globalThis.navigator?.clipboard}){
+export function setupSameStyle({$,esc,context,api,load,edit,openMerged,toast,clipboard=globalThis.navigator?.clipboard}){
  let stocks=[],reference=null,requestId='',previewKey='',pending=null,busy=false,generation=0;
  const feedback=text=>{$('#sameStyleStatus').textContent=text;};
  const invalidate=()=>{if(busy)return;previewKey='';$('#confirmSameStyle').disabled=true;feedback('设置已变化，请重新预览。');};
@@ -37,5 +38,5 @@ export function setupSameStyle({$,esc,context,api,load,edit,toast,clipboard=glob
  $('#closeSameStyle').onclick=()=>{if(!busy&&!pending)$('#sameStyleDialog').close();};
  $('#sameStyleDialog').addEventListener('cancel',event=>{if(busy||pending)event.preventDefault();});
  $('#previewSameStyle').onclick=async()=>{const current=generation;try{const body=input(),key=JSON.stringify(body);lock(true);feedback('正在检查规格与来源…');const result=await api('/api/products/merge-preview','POST',body);if(current!==generation||key!==JSON.stringify(input()))return;previewKey=key;$('#sameStylePreview').innerHTML='<h3>'+esc(result.product.title)+'</h3><p>'+result.product.skus.length+'个SKU · '+result.product.images.length+'张主图 · '+result.product.detail_images.length+'张详情图</p>'+result.warnings.map(w=>'<p class="notice">'+esc(w)+'</p>').join('');feedback('预览通过；确认后生成新商品，不会向商城发布。');}catch(e){previewKey='';feedback(e.message);}finally{lock(false);}};
- $('#sameStyleForm').onsubmit=async event=>{event.preventDefault();try{if(!pending){const body=input();if(JSON.stringify(body)!==previewKey)throw Error('请先预览当前设置');pending={...body,request_id:requestId};}lock(true);feedback('正在生成待整理商品…');const result=await api('/api/products/merge','POST',pending);pending=null;context().selected.clear();$('#sameStyleDialog').close();await load();const product=context().products.find(p=>p.id===result.id);if(product)edit(product);toast('已生成同款商品，请检查图文和全部SKU后保存、审核');}catch(e){if(e.httpStatus&&e.httpStatus<500){pending=null;previewKey='';feedback(e.message);}else feedback('结果尚未确认，请点击确认按钮重试同一次请求，不会重复生成。'+e.message);}finally{lock(false);if(pending){$('#sameStyleForm').querySelectorAll('input,select').forEach(el=>el.disabled=true);$('#closeSameStyle').disabled=true;$('#previewSameStyle').disabled=true;$('#confirmSameStyle').disabled=false;}}};
+ $('#sameStyleForm').onsubmit=async event=>{event.preventDefault();try{if(!pending){const body=input();if(JSON.stringify(body)!==previewKey)throw Error('请先预览当前设置');pending={...body,request_id:requestId};}lock(true);feedback('正在生成待整理商品…');const result=await api('/api/products/merge','POST',pending);pending=null;context().selected.clear();$('#sameStyleDialog').close();await (openMerged|| (id=>openMergedProduct(id,{api,apply(){},edit,refresh:load,notify:message=>toast(message,{error:true})})))(result.id);toast('已生成同款商品，请检查图文和全部SKU后保存、审核');}catch(e){if(e.httpStatus&&e.httpStatus<500){pending=null;previewKey='';feedback(e.message);}else feedback('结果尚未确认，请点击确认按钮重试同一次请求，不会重复生成。'+e.message);}finally{lock(false);if(pending){$('#sameStyleForm').querySelectorAll('input,select').forEach(el=>el.disabled=true);$('#closeSameStyle').disabled=true;$('#previewSameStyle').disabled=true;$('#confirmSameStyle').disabled=false;}}};
 }

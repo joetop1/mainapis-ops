@@ -378,3 +378,5 @@ aside nav #onboardingNav{color:#d6efb7;margin-top:10px}
 @media(prefers-reduced-motion:reduce){.activity-indicator{animation:none}}
 .publication-verify{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
 .publication-verify label{margin:0}.publication-verify input{max-width:150px}
+
+.publication-circle.submitting,.badge.submitting{background:#eaf1fa;color:#587b9c}

@@ -197,7 +197,8 @@ function catalogLoader(target,owner,connectionId){
  return async(force)=>({...await tigshopCatalogs.get(key)(force),connectionId:row.id});
 }
 async function validateCatalog(p,owner){
- const check=async product=>{const target=product.catalog_target||'crmeb-pro',row=malls.get(owner,product.catalog_connection_id,target);product.catalog_connection_id=row.id;if(product.category_id||product.brand_ids?.length)applyCatalog(product,await catalogLoader(target,owner,row.id)());return product;};
+ const catalogs=new Map();
+ const check=async product=>{const target=product.catalog_target||'crmeb-pro',row=malls.get(owner,product.catalog_connection_id,target);product.catalog_connection_id=row.id;if(product.category_id||product.brand_ids?.length){const key=JSON.stringify([target,row.id]);if(!catalogs.has(key))catalogs.set(key,catalogLoader(target,owner,row.id)());applyCatalog(product,await catalogs.get(key));}return product;};
  if(p.mall_mappings!==undefined){
   await Promise.all(p.mall_mappings.map(mapping=>check(mapping)));
   const active=p.mall_mappings.find(m=>m.catalog_connection_id===p.catalog_connection_id&&m.catalog_target===(p.catalog_target||'crmeb-pro'));
@@ -287,7 +288,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/system-release'&&req.method==='GET')return json(res,200,systemRelease);
     if(path==='/healthz')return json(res,200,{ok:true});
     if(path==='/readyz'){const health=await readiness(db,dataDir);return json(res,health.ok?200:503,{ok:health.ok,reason:health.reason});}
-    if(req.method==='GET' && ['/','/app.js','/catalog-recents.js','/assets.js','/editor-readiness.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/supplier-parameters.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/operations.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/bulk-settings.js','/campaign.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString().replace('<meta name="ops-build" content="">','<meta name="ops-build" content="'+systemRelease.build+'">'),branding.read()):data);}
+    if(req.method==='GET' && ['/','/app.js','/catalog-recents.js','/assets.js','/editor-readiness.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/supplier-parameters.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/operations.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/product-flow.js','/bulk-settings.js','/campaign.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString().replace('<meta name="ops-build" content="">','<meta name="ops-build" content="'+systemRelease.build+'">'),branding.read()):data);}
     const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
     if(nativeNotice){
       if(demo||req.method!=='POST')return json(res,403,{errcode:1});
@@ -757,9 +758,9 @@ const handleRequest=async(req,res)=>{
         const validated=await validateCatalog(candidate,owner);const v=await repairSavedImageUrls(validated,owner,{getStorage:()=>images.get(),upload:uploadLocalImage});if(v.source_url!==p.source_url)throw Error('来源链接不能修改');
         const result=db.prepare("UPDATE products SET data=?,status='pending_review',revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?").run(JSON.stringify(v),now(),r.id,owner,b.revision);
         if(!result.changes)return json(res,409,{error:'商品已被更新，请刷新后重试'});
-        audit(owner,'product.edit',r.id);return json(res,200,{ok:true});
+        audit(owner,'product.edit',r.id);return json(res,200,{ok:true,product:decodeProduct(productFor(owner,r.id))});
       }
-      if(match[2]==='approve'&&req.method==='POST'){const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'版本已变化，请重新检查'});await validateCatalog(p,owner);assertPublishable(p);const result=db.prepare("UPDATE products SET status='approved',updated=? WHERE id=? AND revision=?").run(now(),r.id,b.revision);if(!result.changes)return json(res,409,{error:'版本已变化，请重新检查'});audit(owner,'product.approve',r.id);return json(res,200,{ok:true});}
+      if(match[2]==='approve'&&req.method==='POST'){const b=await body(req);if(b.revision!==r.revision)return json(res,409,{error:'版本已变化，请重新检查'});await validateCatalog(p,owner);assertPublishable(p);const result=db.prepare("UPDATE products SET status='approved',updated=? WHERE id=? AND revision=?").run(now(),r.id,b.revision);if(!result.changes)return json(res,409,{error:'版本已变化，请重新检查'});audit(owner,'product.approve',r.id);return json(res,200,{ok:true,product:decodeProduct(productFor(owner,r.id))});}
       if(match[2]==='publish'&&req.method==='POST') {
         if(demo)return json(res,503,{error:'演示模式不执行商城发布'});
         const input=await body(req),current=productFor(owner,r.id);if(current.status!=='approved'||input.revision!==current.revision)throw Error('请先审核当前版本商品');
