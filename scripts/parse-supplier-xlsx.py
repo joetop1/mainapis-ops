@@ -1,5 +1,6 @@
 """Read-only XLSX card and row-table parser. No formulas, macros, URLs or external relationships are executed."""
 import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
+from supplier_grid import workbook_grid,coordinate
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 # Detect header-based catalogs; only explicit title rows become products.
 def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None):
@@ -142,6 +143,19 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
      colors=list(dict.fromkeys(colors))
      if len(colors)==1:spec_hint=colors[0]
    result.append({'key':sheet_name+':table:'+str(row+1),'title':title,'category_hint':get('category'),'barcodes':barcodes,'cost':cost,'price':price,'description':get('description'),'attributes':attributes,'packaging':get('packaging'),'images':pics,'warnings':flags,'sheet':sheet_name,'row':row+1,'spec_hint':spec_hint,'needs_ai':needs_ai,'field_headers':{str(columns[k]+1):label for k,label in labels.items()},'title_column':columns['title']+1,**({'original_title':original_title} if title!=original_title else {}),'bounds':[header+2 if block else row+1,end if block else row+1,1,16384]})
+   sources={}
+   for key,column in columns.items():
+    refs=[]
+    for source_row in (block_rows if block else [row]):
+     origin_row,origin_column=source_row,column
+     if not cells.get((source_row,column)):
+      merged=next(((top,left) for top,left,bottom,right in merges if top<=source_row<=bottom and left<=column<=right),None)
+      if merged:origin_row,origin_column=merged
+     if cells.get((origin_row,origin_column)):
+      ref=coordinate(origin_row+1,origin_column+1)
+      if ref not in refs:refs.append(ref)
+    if refs:sources[key]=refs
+   result[-1]['source_refs']=sources
  return result
 
 def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_blocks=None):
@@ -232,10 +246,11 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_bloc
      if r+1<=end and last+1>=start:anchors.append(coordinate(r,c))
    return {'cells':values,'merges':merged[:180],'image_anchors':anchors[:30]}
   if inspect:
+   grid=workbook_grid(root,cells,sheet,xml,rels,name)
    rows={}
    for (r,c),v in cells.items():
     if r<30 and c<100 and v:rows.setdefault(r+1,{})[c+1]=v[:100]
-   layouts.append({'sheet':sheet.get('name'),'rows':rows})
+   layouts.append({'sheet':sheet.get('name'),'rows':rows,'grid':grid})
    continue
   starts=sorted((r,c) for (r,c),v in cells.items() if v in ('产品名称','商品名称'))
   sheetrels=rels(name);pictures=[];image_spans={}

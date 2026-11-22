@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.25.1',title:'货盘坐标网格与确认模板',changes:['读取合并区域、图片锚点、隐藏行列和待核对的公式缓存，行式预览显示原字段坐标。','供应商模板改为勾选后保存到当前工作空间，优先匹配表头与结构指纹，版式变化时提示复核。','保留人工确认入库，模型建议与实际数据提取继续分开执行。']},
  {version:'0.25.0',title:'核心发布迁入 Worker',changes:['CRMeB 默认连接的新发布由 OPS Worker 直连执行，与其他商城统一使用持久队列。','发布快照保存商城地址与运费模板，旧版未领取队列可补齐配置后执行。','默认连接开放真实运费模板设置，历史 n8n 在途任务继续使用原核对协议。']},
  {version:'0.24.32',title:'审核与预览反馈',changes:['审核资料不足时在采集箱提示待补项。','接口返回非 JSON 时显示 HTTP 状态码和可用的 Cloudflare Ray ID。']},
  {version:'0.24.31',title:'采集箱执行状态',changes:['审核、发布和核对执行中显示呼吸效果。','可在商城徽章弹窗中直接填写商品 ID 核对。']},

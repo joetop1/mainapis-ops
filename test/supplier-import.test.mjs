@@ -105,11 +105,14 @@ test('陌生表头首次点选成功后，同账号同供应商可自动复用',
   const first=await service.enqueue('alice',input);
   await service.tick();
   assert.equal(service.get('alice',first.id).state,'parse_failed');
-  const mapped=await service.remap('alice',first.id,{sheet:'测试',start_row:2,columns:{title:1,cost:2}});
+  await service.remap('alice',first.id,{sheet:'测试',start_row:2,columns:{title:1,cost:2}});
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM supplier_layouts').get().n,0);
+  const mapped=await service.remap('alice',first.id,{sheet:'测试',start_row:2,columns:{title:1,cost:2},save_template:true});
   assert.equal(mapped.products[0].cost,35);
   const next=await service.enqueue('alice',input);
   await service.tick();
   assert.equal(service.get('alice',next.id).products[0].title,'测试商品');
+  assert.equal(service.get('alice',next.id).recipe.origin,'confirmed_template');
   const other=await service.enqueue('bob',input);
   await service.tick();
   assert.equal(service.get('bob',other.id).state,'parse_failed');

@@ -29,3 +29,22 @@ test('商品块只读选定行，并保留合并区域与图片锚点',async()=>
   assert.deepEqual(block.image_anchors,['E3']);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+test('坐标网格保留合并区域、图片起点和待核对公式缓存，字段来源指向原始单元格',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-grid-'));
+ try{
+  const path=join(dir,'table.xlsx');fixture(path);
+  const inspect=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir,'inspect'],{encoding:'utf8'}));
+  const grid=inspect[0].grid;
+  assert.equal(grid.version,1);
+  assert.equal(grid.cells.C3,'测试甲');
+  assert.deepEqual(grid.formulas.I8,{formula:'1+98',cached_value:'99',requires_review:true});
+  assert.equal(grid.cells.I8,undefined);
+  assert.deepEqual(grid.merged_ranges,['A3:A4','B3:B4']);
+  assert.equal(grid.image_anchors[0].from,'E3');
+  assert.equal(grid.image_anchors[0].to,null);
+  const parsed=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir],{encoding:'utf8'}));
+  assert.deepEqual(parsed.products[1].source_refs.category,['A3']);
+  assert.deepEqual(parsed.products[1].source_refs.cost,['I4']);
+  assert.equal(parsed.products[2].cost,null);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

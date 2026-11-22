@@ -38,10 +38,18 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   return JSON.parse(stdout);
  }
  function layoutSignature(layouts,mapping){
-  const rows=layouts.find(layout=>layout.sheet===mapping.sheet)?.rows;
-  const header=rows?.[mapping.start_row-1];
-  if(!header?.[mapping.columns.title]||Object.keys(header).length<2)return null;
-  return hash(JSON.stringify([mapping.sheet,mapping.start_row,Object.entries(header).sort(([a],[b])=>Number(a)-Number(b))]));
+  const layout=layouts.find(item=>item.sheet===mapping.sheet),header=layout?.rows?.[mapping.start_row-1];
+  if(!header?.[mapping.columns.title]||Object.keys(header).length<2||layout.grid?.truncated)return null;
+  const headerRow=mapping.start_row-1;
+  const merges=(layout.grid?.merged_ranges||[]).filter(ref=>{
+   const match=/^[A-Z]+([0-9]+):[A-Z]+([0-9]+)$/.exec(ref);
+   return match&&Number(match[1])<=headerRow&&Number(match[2])>=headerRow;
+  }).sort();
+  return hash(JSON.stringify({
+   version:2,sheet:mapping.sheet,start_row:mapping.start_row,
+   header:Object.entries(header).sort(([a],[b])=>Number(a)-Number(b)),
+   merges,hidden_columns:layout.grid?.hidden_columns||[],sheet_state:layout.grid?.sheet_state||'visible'
+  }));
  }
  async function retryKnownLayout(r,dir){
   const templates=db.prepare('SELECT signature,mapping FROM supplier_layouts WHERE owner=? AND supplier=?').all(r.owner,r.supplier);
@@ -50,7 +58,8 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   for(const template of templates){
    const mapping=JSON.parse(template.mapping);
    if(layoutSignature(layouts,mapping)!==template.signature)continue;
-   return execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024});
+   const output=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024});
+   return {...output,recipe:{version:1,mapping,signature:template.signature,origin:'confirmed_template'}};
   }
   return null;
  }
@@ -104,13 +113,16 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
      if(!mapping)throw Error('AI 未找到可用表头，请手动指定表格列');
      out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:60000,maxBuffer:4*1024*1024});
     }else try{
-     out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});
+     out=await retryKnownLayout(r,dir);
+     if(!out)out=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir],{timeout:120000,maxBuffer:4*1024*1024});
     }catch(e){
      let message;try{message=JSON.parse(e.stdout).error;}catch{}
-     if(message?.startsWith('未识别到商品'))out=await retryKnownLayout(r,dir).catch(()=>null);
      if(!out)throw Error(message||'表格解析失败或超时，请确认文件完整、无密码且为支持的报价单版式');
     }
-    data=JSON.parse(out.stdout);if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+    data=JSON.parse(out.stdout);if(out.recipe)data.recipe=out.recipe;if(!out.recipe&&!r.ai_retry&&db.prepare('SELECT 1 FROM supplier_layouts WHERE owner=? AND supplier=? LIMIT 1').get(r.owner,r.supplier)){
+     data.recipe={version:1,origin:'layout_changed'};
+     for(const product of data.products||[])product.warnings.push('供应商模板与当前版式不同，已重新解析，请核对后另存模板');
+    }if(data.error)throw Error(data.error);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
     metrics.candidates=data.products.filter(p=>p.needs_ai&&p.bounds).length;
     if(r.ai_retry){data.ai={layout:true};for(const p of data.products)p.warnings.push('使用 AI 建议列生成，请核对字段与价格');}
     else metrics.reason=metrics.candidates?'local_review_needed':'local_parse_sufficient';
@@ -152,7 +164,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   const publications=db.prepare("SELECT target,mall_connection_id,remote_id,revision FROM jobs WHERE owner=? AND product_id=? AND status='succeeded' ORDER BY created DESC,id DESC").all(r.owner,existing.id);
   const seen=new Set();
   return {...p,existing_product:{id:existing.id,publications:publications.filter(j=>{const key=JSON.stringify([j.target,j.mall_connection_id]);if(seen.has(key))return false;seen.add(key);return true;})}};
- }),assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
+ }),assets:d.assets.map(a=>({id:a.id,url:'/api/supplier-imports/'+r.id+'/assets/'+a.id})),recipe:d.recipe||null,results:JSON.parse(r.results),plan:r.plan?JSON.parse(r.plan):null};}
  async function prune(){for(const r of db.prepare('SELECT id,state FROM supplier_batches WHERE created<?').all(Date.now()-86400000)){if(active.has(r.id)||r.state==='parsing')continue;await rm(join(directory,r.id),{recursive:true,force:true});db.prepare('DELETE FROM supplier_uploaded WHERE batch_id=?').run(r.id);db.prepare('DELETE FROM supplier_batches WHERE id=?').run(r.id);}}
  return {
   prune,tick,
@@ -196,7 +208,7 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
   async layout(owner,id){
    const r=batch(owner,id);if(r.plan||!['ready','parse_failed'].includes(r.state)||active.has(id))throw Error('当前批次不能修改列映射');
    const dir=join(directory,id);
-   const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'inspect'],{timeout:15000,maxBuffer:1024*1024}).catch(()=>{throw Error('无法读取表格结构，请重新上传原表');});
+   const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,'inspect'],{timeout:15000,maxBuffer:4*1024*1024}).catch(()=>{throw Error('无法读取表格结构，请重新上传原表');});
    return JSON.parse(stdout);
   },
   workbuddyTemplate(owner,id){
@@ -286,13 +298,18 @@ export function supplierImports({db,dataDir,root,getStorage,allowedStorage,recor
    const dir=join(directory,id);active.add(id);parsing++;
    try{
     const {stdout}=await execute(python,[join(root,'scripts/parse-supplier-xlsx.py'),join(dir,'input.xlsx'),dir,JSON.stringify(mapping)],{timeout:120000,maxBuffer:4*1024*1024}).catch(e=>{let message;try{message=JSON.parse(e.stdout).error;}catch{}throw Error(message||'无法读取映射，请检查列和行号');});
-    const data=JSON.parse(stdout);for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
-    db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=?").run(JSON.stringify(data),id);
-    if(!mapping.end_row){
-     const layouts=await inspectWorkbook(dir).catch(()=>[]);
-     const signature=layoutSignature(layouts,mapping);
-     if(signature)db.prepare('INSERT OR REPLACE INTO supplier_layouts(owner,supplier,signature,mapping) VALUES(?,?,?,?)').run(r.owner,r.supplier,signature,JSON.stringify(mapping));
+    const data=JSON.parse(stdout);data.recipe={version:1,mapping,origin:'manual'};for(const a of data.assets)imageType(await readFile(join(dir,a.file)));
+    let signature=null;
+    if(mapping.save_template===true&&!mapping.end_row){
+     signature=layoutSignature(await inspectWorkbook(dir),mapping);
     }
+    data.recipe.template_saved=!!signature;
+    db.exec('BEGIN IMMEDIATE');
+    try{
+     db.prepare("UPDATE supplier_batches SET data=?,state='ready',parse_error='' WHERE id=?").run(JSON.stringify(data),id);
+     if(signature)db.prepare('INSERT OR REPLACE INTO supplier_layouts(owner,supplier,signature,mapping) VALUES(?,?,?,?)').run(r.owner,r.supplier,signature,JSON.stringify(mapping));
+     db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
    }finally{active.delete(id);parsing--;}
    return view(batch(owner,id));
   },
