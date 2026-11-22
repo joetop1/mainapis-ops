@@ -1,6 +1,7 @@
 """Read-only XLSX card and row-table parser. No formulas, macros, URLs or external relationships are executed."""
 import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
 from supplier_grid import workbook_grid,coordinate
+from supplier_capacity import capacity_products
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 # Detect header-based catalogs; only explicit title rows become products.
 def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None):
@@ -14,7 +15,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
   'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
   'position':('定位','产品定位'), 'series_info':('系列特点','系列说明'),
   'dimensions':('产品尺寸','尺寸'), 'accessories':('产品配件',),
-  'weight':('重量','重量千克','重量kg','产品重量','净重','毛重'),
+  'weight':('重量','重量千克','重量kg','产品重量','净重','净重千克','毛重'),
   'specifications':('产品规格','商品规格','产品参数','规格参数'),
   'ingredients':('产品成分','成分','材质','产品材质')}
  def normalize(text):return re.sub(r'[\s（）()¥￥]','',text).rstrip('元')
@@ -75,6 +76,9 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
   if not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?',raw):return None
   amount=Decimal(raw.replace(',','')); rounded=amount.quantize(Decimal('0.01'))
   return float(rounded) if 0<=amount<=99999999 and abs(amount-rounded)<=Decimal('0.000000001') else None
+ if mapping is None:
+  paired=capacity_products(cells,pictures,headers,sheet_name,money,normalize)
+  if paired is not None:return paired
  result=[];last=max((r for r,c in cells),default=0)+1
  row_numbers=sorted({r for r,c in cells})
  for index,(header,columns,labels) in enumerate(headers):
