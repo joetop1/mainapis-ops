@@ -12,6 +12,10 @@ function fixture(path,mode='normal'){
 z=zipfile.ZipFile(sys.argv[1],'w');ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';rel='http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 header={'C':'产品名称','F':'容量','G':'零售价（元）','H':'批发价（元）','I':'代发价（元）','L':'产品描述','M':'规格'}
 rows={1:header,2:{'F':'50ml','L':'第一款原始描述','M':'第一款材质参数'},3:{'C':'测试牌水基润滑液','F':'6900000000001','G':'69','H':'28','I':'35'},4:{'C':'AQUA','G':'（限价）'},5:{'F':'100ml'},6:{'F':'6900000000002','G':'·'},7:{'C':'高性价比款','G':'109','H':'48','I':'55'},10:header,11:{'F':'30ml','L':'第二块原始描述'},12:{'C':'测试牌男性护理喷雾','F':'6900000000003','G':'199','H':'78'},13:{'C':'Male Spray'},14:{'F':'30ml'},15:{'C':'测试牌女性护理喷雾','F':'6900000000004','G':'209','H':'88'}}
+if sys.argv[2].startswith('bilingual'):
+ header={**{k:v for k,v in header.items() if k!='M'},'F':'颜色/编号','O':'（产品规格）'}
+ rows={1:header,2:{'F':'60ml','L':'共用描述','O':'原始成分'},3:{'C':'Hydra','F':'6900000000001','G':'199','H':'79','I':'99'},4:{'C':'Plant Cellulose Lube'},5:{'F':'120ml'},6:{'C':'肌润水基型润滑液','F':'6900000000002','G':'279','H':'99','I':'119'},7:{'C':'日常护理广告文案'},10:header,11:{'F':'30ml','L':'探索描述'},12:{'C':'Discover探索','F':'6900000000003','G':'329','H':'119'},13:{'C':'G点快感增强啫喱'},14:{'C':'广告不进标题'},20:header,21:{'F':'120ml','L':'樱桃草莓共用描述'},22:{'C':'Wild Cherries','F':'6900000000004','G':'279','H':'99'},23:{'C':'果味润滑液 野樱桃'},25:{'F':'120ml'},26:{'C':'Fresh Strawberry','F':'6900000000005','G':'289','H':'109'},27:{'C':'果味润滑液 野草莓'},30:{'F':'120ml','L':'桃子独立描述'},31:{'C':'Naughty Peaches','F':'6900000000006','G':'299','H':'119'},32:{'C':'果味润滑液 桃子味'}}
+ if sys.argv[2]=='bilingual-ambiguous':rows[8]={'F':'6900000000099'}
 if sys.argv[2]=='ambiguous':rows[8]={'F':'6900000000099'}
 if sys.argv[2]=='conflict':rows[8]={'H':'999'}
 if sys.argv[2]=='labelled':rows[17]={'A':'（男用）','B':'（女用）'}
@@ -20,9 +24,11 @@ def cell(c,r,v):return '<c r="%s%s" t="inlineStr"><is><t>%s</t></is></c>'%(c,r,h
 data=''.join('<row r="%s">'%r+''.join(cell(c,r,v)for c,v in cs.items())+'</row>'for r,cs in sorted(rows.items()))
 z.writestr('xl/workbook.xml','<workbook xmlns="'+ns+'" xmlns:r="'+rel+'"><sheets><sheet name="货盘" r:id="s"/></sheets></workbook>')
 z.writestr('xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="s" Target="worksheets/sheet1.xml"/></Relationships>')
-z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="'+ns+'" xmlns:r="'+rel+'"><sheetData>'+data+'</sheetData><mergeCells><mergeCell ref="L2:L9"/><mergeCell ref="L11:L17"/></mergeCells><drawing r:id="d"/></worksheet>')
+z.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="'+ns+'" xmlns:r="'+rel+'"><sheetData>'+data+'</sheetData><mergeCells><mergeCell ref="L2:L9"/><mergeCell ref="L11:L17"/><mergeCell ref="L21:L29"/><mergeCell ref="O2:O9"/></mergeCells><drawing r:id="d"/></worksheet>')
 z.writestr('xl/worksheets/_rels/sheet1.xml.rels','<Relationships><Relationship Id="d" Target="../drawings/drawing1.xml"/></Relationships>')
 anchors=''.join('<twoCellAnchor><from><row>%s</row><col>%s</col></from><pic><a:blip r:embed="i%s"/></pic></twoCellAnchor>'%(r,c,i)for r,c,i in ([(1,0,1),(10,0,2),(10,1,1)] if sys.argv[2]=='labelled' else [(1,0,1),(10,0,2)]))
+if sys.argv[2].startswith('bilingual'):
+ anchors=''.join('<twoCellAnchor><from><row>%s</row><col>0</col></from><to><row>%s</row><col>1</col></to><pic><a:blip r:embed="i%s"/></pic></twoCellAnchor>'%(r,end,i)for r,end,i in [(0,8,1),(8,17,2),(19,28,1)])
 z.writestr('xl/drawings/drawing1.xml','<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="'+rel+'">'+anchors+'</wsDr>')
 z.writestr('xl/drawings/_rels/drawing1.xml.rels','<Relationships><Relationship Id="i1" Target="../media/a.png"/><Relationship Id="i2" Target="../media/b.png"/></Relationships>')
 png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhWQAAAAASUVORK5CYII=');z.writestr('xl/media/a.png',png);z.writestr('xl/media/b.png',png+b'x');z.close()
@@ -90,4 +96,34 @@ test('容量货盘预览通过服务保留各SKU价格，确认入库仍要求�
   assert.throws(()=>service.start('alice',batch.id,{items:[{key:product.key,title:product.title,confirmed:true,skus:product.variants}]}),/库存/);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,0);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('分格中英文名称按条码商品块组合，同款容量保留为SKU而不同口味独立',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ops-bilingual-'));
+ try{
+  const path=join(dir,'input.xlsx');fixture(path,'bilingual');
+  const {products}=JSON.parse(execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir],{encoding:'utf8'}));
+  assert.equal(products.length,5);
+  assert.deepEqual(products.map(p=>p.title),['Hydra Plant Cellulose Lube / 肌润水基型润滑液','Discover探索 / G点快感增强啫喱','Wild Cherries / 果味润滑液 野樱桃','Fresh Strawberry / 果味润滑液 野草莓','Naughty Peaches / 果味润滑液 桃子味']);
+  assert.deepEqual(products[0].source_refs.title,['C3','C4','C6']);
+  assert.deepEqual(products[0].variants.map(s=>[s.spec,s.cost,s.price]),[['60ml',79,199],['120ml',99,279]]);
+  assert.deepEqual(products.slice(2).map(p=>[p.variants[0].cost,p.variants[0].price]),[[99,279],[109,289],[119,299]]);
+  assert.match(products[0].description,/日常护理广告文案/);
+  assert.equal(products[0].attributes.find(a=>a.name==='产品参数').value,'原始成分');
+  assert.match(products[3].description,/樱桃草莓共用描述/);
+  assert.doesNotMatch(products[3].description,/桃子独立描述|Wild Cherries/);
+  assert.match(products[4].description,/桃子独立描述/);
+  assert.doesNotMatch(products[4].description,/樱桃草莓共用描述/);
+  assert.deepEqual(products[3].source_refs.description,['L21']);
+  assert.equal(products[1].images.length,1); // Starts just above this block's header.
+  assert.notEqual(products[0].images[0],products[1].images[0]);
+  assert.match(products[2].warnings.join('；'),/图片跨越多个商品区域/);
+  assert.match(products[3].warnings.join('；'),/图片跨越多个商品区域/);
+  assert.deepEqual(products[2].images,products[3].images);
+  assert.equal(products[4].images.length,0);
+  assert.ok(products[1].image_anchors.A9);
+  assert.ok(products.every(p=>p.needs_ai===false));
+  fixture(path,'bilingual-ambiguous');
+  assert.throws(()=>execFileSync(python,['scripts/parse-supplier-xlsx.py',path,dir],{encoding:'utf8'}),e=>/条码不是唯一值/.test(e.stdout));
+ }finally{await rm(dir,{recursive:true,force:true});}
 });

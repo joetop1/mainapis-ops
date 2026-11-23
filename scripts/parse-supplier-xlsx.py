@@ -4,7 +4,7 @@ from supplier_grid import workbook_grid,coordinate
 from supplier_capacity import capacity_products
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 # Detect header-based catalogs; only explicit title rows become products.
-def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None):
+def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None,image_ranges=None):
  from datetime import datetime,timedelta
  from decimal import Decimal,InvalidOperation
  aliases={
@@ -77,7 +77,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
   amount=Decimal(raw.replace(',','')); rounded=amount.quantize(Decimal('0.01'))
   return float(rounded) if 0<=amount<=99999999 and abs(amount-rounded)<=Decimal('0.000000001') else None
  if mapping is None:
-  paired=capacity_products(cells,pictures,headers,sheet_name,money,normalize)
+  paired=capacity_products(cells,pictures,headers,sheet_name,money,normalize,value,image_ranges)
   if paired is not None:return paired
  result=[];last=max((r for r,c in cells),default=0)+1
  row_numbers=sorted({r for r,c in cells})
@@ -279,10 +279,11 @@ def parse(path,out,mapping=None,inspect=False,block=None,references=None,ai_bloc
      er,ec=end_node.find('d:row',N),end_node.find('d:col',N)
      if er is not None and ec is not None:image_spans[coordinate(pr,pc)]=coordinate(pr,pc)+':'+coordinate(int(er.text),int(ec.text))
   merge_refs=[merge.get('ref','') for merge in root.findall('s:mergeCells/s:mergeCell',N)]
-  tabular=table_products(cells,pictures,merge_refs,sheet.get('name'),date1904,mapping)
+  image_ranges={(pr,pc):int(match[1]) for pr,pc,aid in pictures if (span:=image_spans.get(coordinate(pr,pc))) and (match:=re.fullmatch(r'[A-Z]+[0-9]+:[A-Z]+([0-9]+)',span))}
+  tabular=table_products(cells,pictures,merge_refs,sheet.get('name'),date1904,mapping,image_ranges)
   def anchors(product):
    first,last,left,right=product['bounds']
-   product['image_anchors']={coordinate(pr,pc):aid for pr,pc,aid in pictures if first<=pr+1<=last and left<=pc+1<=right and aid in product['images']}
+   product['image_anchors']={coordinate(pr,pc):aid for pr,pc,aid in pictures if pr+1<=last and image_ranges.get((pr,pc),pr+1)>=first and left<=pc+1<=right and aid in product['images']}
    product['image_spans']={ref:image_spans[ref] for ref in product['image_anchors'] if ref in image_spans}
    product['merged_ranges']=[ref for ref in merge_refs if (m:=re.fullmatch(r'([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)',ref)) and int(m[2])<=last and int(m[4])>=first and col(m[1])+1<=right and col(m[3])+1>=left][:40]
   if tabular is not None:
