@@ -1,3 +1,4 @@
+import {mallClassification} from './mall-classification.mjs';
 import {optimizeProductTitle} from './product-title-ai.mjs';
 import {explainCampaign} from './campaign-ai.mjs';
 import {supplierAISettings} from './supplier-ai.mjs';
@@ -152,6 +153,7 @@ function getTigshopConnection(owner,job){return owner?credentialsFor('tigshop',o
 const yunzhongRunner=createYunzhongRunner({db,getConnection:(owner,job)=>credentialsFor('yunzhong',owner,job?.mall_connection_id),audit:(...args)=>audit(...args)});
 const directRunner=createTigshopRunner({db,getConnection:getTigshopConnection,audit:(...args)=>audit(...args)});
 const crmebRunner=createCrmebRunner({db,getConnection:job=>{const c=credentialsFor(job.target,job.owner,job.mall_connection_id);return {...c,url:c?.url||MALL_SYSTEMS[job.target].origin};},audit:(...args)=>audit(...args)});
+const classification=mallClassification({db,connection:(owner,id)=>{const mall=malls.get(owner,id);return {system:mall.system,credentials:credentialsFor(mall.system,owner,mall.id)};},audit:(...args)=>audit(...args)});
 const shopxoRunner=createShopxoRunner({db,getConnection:job=>credentialsFor('shopxo',job.owner,job.mall_connection_id),audit:(...args)=>audit(...args)});
 const targets=[{id:'shopxo',name:'ShopXO',version:'6.9.2',url:'https://xiaolanyoupin.wang'},{id:'yunzhong',name:'芸众商城',version:'2.3.700',url:'https://asns.cc/admin/shop'},{id:'crmeb-pro',name:'CRMEB 会员商城',version:'4.3',url:'https://www.xlupw.com/admin'},{id:'crmeb-store',name:'CRMEB 多门店',version:'4.2',url:'https://www.xlyp.cc/admin'},{id:'tigshop',name:'Tigshop 跨境 Java',version:'5.8.60',url:'https://xiaolango.com/admin'}];
 function sessionGet(req) {
@@ -288,7 +290,7 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/system-release'&&req.method==='GET')return json(res,200,systemRelease);
     if(path==='/healthz')return json(res,200,{ok:true});
     if(path==='/readyz'){const health=await readiness(db,dataDir);return json(res,health.ok?200:503,{ok:health.ok,reason:health.reason});}
-    if(req.method==='GET' && ['/','/app.js','/catalog-recents.js','/assets.js','/editor-readiness.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/supplier-parameters.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/operations.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/product-flow.js','/bulk-settings.js','/campaign.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString().replace('<meta name="ops-build" content="">','<meta name="ops-build" content="'+systemRelease.build+'">'),branding.read()):data);}
+    if(req.method==='GET' && ['/','/app.js','/catalog-recents.js','/assets.js','/editor-readiness.js','/pricing.js','/sku-images.js','/detail-images.js','/connection-status.js','/collector-version.js','/product-attributes.js','/supplier-parameters.js','/specifications.js','/style.css','/list-view.js','/mall-mappings.js','/merge-products.js','/operations.js','/action-dialogs.js','/dashboard.js','/merge-status.js','/source-url.js','/same-style.js','/product-flow.js','/bulk-settings.js','/campaign.js','/mall-classification.js'].includes(path)) {const file=path==='/'?'index.html':path.slice(1);const data=await readFile(join(root,'public',file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(file==='index.html'?renderSystemBranding(data.toString().replace('<meta name="ops-build" content="">','<meta name="ops-build" content="'+systemRelease.build+'">'),branding.read()):data);}
     const nativeNotice=path.match(/^\/api\/notification-relay\/([a-zA-Z0-9-]{8,80})\/(paid|refund)$/);
     if(nativeNotice){
       if(demo||req.method!=='POST')return json(res,403,{errcode:1});
@@ -459,6 +461,24 @@ const handleRequest=async(req,res)=>{
     if(path==='/api/billing/summary'&&req.method==='GET')return json(res,200,{...billing.summary(owner),owner,workspace:team?.name||'个人空间',storage:quota.status(owner)});
     if(path==='/api/billing'&&req.method==='GET')return json(res,200,{...billing.view(owner,new URL(req.url,origin).searchParams.get('page')||1),storage:quota.status(owner)});
     malls.ensure(owner);
+    if(path.startsWith('/api/mall-classification')){
+      if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权整理商城商品'});
+      if(demo)throw Error('演示模式不连接真实商城商品');
+      const q=new URL(req.url,origin).searchParams,base='/api/mall-classification';
+      if(path===base+'/catalog'&&req.method==='GET')return json(res,200,await classification.catalog(owner,q.get('mall')));
+      if(path===base+'/products'&&req.method==='GET')return json(res,200,await classification.list(owner,q.get('mall'),Object.fromEntries(q)));
+      if(path===base+'/history'&&req.method==='GET')return json(res,200,{plans:classification.history(owner)});
+      if(path===base+'/preview'&&req.method==='POST')return json(res,201,await classification.preview(owner,await body(req)));
+      const route=path.match(/^\/api\/mall-classification\/plans\/([a-f0-9-]{36})(?:\/(submit|verify|rollback))?$/);
+      if(route){
+        const [,id,action]=route;
+        if(!action&&req.method==='GET')return json(res,200,classification.view(owner,id));
+        if(req.method==='POST'&&action==='submit'){if(!durable)throw Error('请先启用OPS持久化Worker再同步商城');return json(res,202,classification.enqueue(owner,id));}
+        if(req.method==='POST'&&action==='verify'){const b=await body(req);return json(res,200,await classification.verify(owner,id,b.product_id));}
+        if(req.method==='POST'&&action==='rollback')return json(res,201,await classification.rollback(owner,id));
+      }
+      return json(res,404,{error:'整理接口不存在'});
+    }
     if(path==='/api/onboarding'&&req.method==='GET')return json(res,200,onboardingStatus({team,malls:malls.list(owner).map(m=>({configured:!demo&&connected(m.system,owner,m.id)})),productCount:db.prepare('SELECT COUNT(*) n FROM products WHERE owner=?').get(owner).n,publishedCount:db.prepare("SELECT COUNT(*) n FROM jobs WHERE owner=? AND status='succeeded' AND remote_id<>''").get(owner).n,billing:billing.view(owner),storage:quota.status(owner)}));
     if(!teamPermission(team?.role,path,req.method))return json(res,403,{error:'当前团队角色无权执行此操作'});
     if(path==='/api/image-storage/availability'&&req.method==='GET')return json(res,200,{malls:malls.list(owner).map(m=>({id:m.id,available:images.available(mallImageOrigin(m))}))});
@@ -809,7 +829,8 @@ export function startPublicationWorker(){
  if(!durable||demo||process.env.OPS_WORKER_PAUSED==='true')throw Error('Worker需要正式模式、启用OPS_DURABLE_QUEUE且未暂停');
  const worker=queueWorker({queue:tasks,dispatch,onError:()=>console.error('publication_worker_failed')});
  const poll=()=>{try{billing.reconcilePending();}catch{console.error('billing_reconcile_pending');}return worker.tick().catch(()=>console.error('publication_worker_failed'));};
+ const classificationTick=setInterval(()=>classification.tick().catch(()=>console.error('classification_worker_failed')),2000);
  const supplierTick=setInterval(()=>supplierImport.tick().catch(()=>console.error('supplier_parse_failed')),2000);
  const tick=setInterval(poll,2000),heartbeat=setInterval(()=>{try{worker.heartbeat();}catch{console.error('worker_heartbeat_failed');}},5000);poll();
- return {async stop(){clearInterval(supplierTick);clearInterval(tick);clearInterval(heartbeat);await worker.stop();}};
+ return {async stop(){clearInterval(classificationTick);await classification.stop();clearInterval(supplierTick);clearInterval(tick);clearInterval(heartbeat);await worker.stop();}};
 }

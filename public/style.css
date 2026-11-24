@@ -380,3 +380,5 @@ aside nav #onboardingNav{color:#d6efb7;margin-top:10px}
 .publication-verify label{margin:0}.publication-verify input{max-width:150px}
 
 .publication-circle.submitting,.badge.submitting{background:#eaf1fa;color:#587b9c}
+
+.classification-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;padding:20px 0}#classification small{display:block;color:var(--muted,#78877e);margin-top:6px}#classification .actions{flex-wrap:wrap}#classification{padding:24px}#classification select[multiple]{width:100%}

@@ -1,0 +1,92 @@
+    // OPS_CLASSIFICATION_V1: authenticated, narrow updates; never calls productSave.
+    private function opsClassificationIds($value): array
+    {
+        if (is_string($value)) $value = $value === '' ? [] : explode(',', $value);
+        if (!is_array($value) || count($value) > 100) throw new \RuntimeException('分类或标签格式错误');
+        $ids = [];
+        foreach ($value as $id) {
+            if (!preg_match('/^[1-9][0-9]{0,8}$/', (string)$id)) throw new \RuntimeException('分类或标签ID错误');
+            $ids[] = (int)$id;
+        }
+        $ids = array_values(array_unique($ids)); sort($ids); return $ids;
+    }
+
+    private function opsClassificationRow(array $row): array
+    {
+        return ['id' => (int)$row['id'], 'title' => $row['store_name'], 'image' => $row['image'],
+            'is_show' => (int)$row['is_show'], 'category_ids' => $this->opsClassificationIds($row['cate_id']),
+            'tag_ids' => $this->opsClassificationIds($row['store_label_id'])];
+    }
+
+    private function opsClassificationQuery()
+    {
+        return \think\facade\Db::name('store_product')->where('is_del', 0)->where('type', 0)->where('pid', 0);
+    }
+
+    public function opsClassificationCatalog()
+    {
+        return app('json')->success(['version' => 1,
+            'categories' => \think\facade\Db::name('store_product_category')->where('type', 0)->where('relation_id', 0)->field('id,pid,cate_name,is_show')->order('id')->select()->toArray(),
+            'tags' => \think\facade\Db::name('store_product_label')->where('type', 0)->where('relation_id', 0)->field('id,label_name')->order('id')->select()->toArray()]);
+    }
+
+    public function opsClassificationProducts(Request $request)
+    {
+        $page = max(1, min(100000, (int)$request->get('page', 1)));
+        $q = mb_substr(trim((string)$request->get('q', '')), 0, 100);
+        $query = $this->opsClassificationQuery();
+        $rawIds = (string)$request->get('ids', '');
+        if ($rawIds !== '') {
+            $ids = $this->opsClassificationIds($rawIds);
+            if (count($ids) > 50) throw new \RuntimeException('单批最多50个商品');
+            $query->whereIn('id', $ids); $page = 1;
+        }
+        if ($q !== '') $query->whereLike('store_name', '%' . $q . '%');
+        $show = (string)$request->get('show', '');
+        if (in_array($show, ['0', '1'], true)) $query->where('is_show', (int)$show);
+        $count = (clone $query)->count();
+        $rows = $query->field('id,store_name,image,is_show,cate_id,store_label_id')->order('id desc')->page($page, 50)->select()->toArray();
+        return app('json')->success(['version' => 1, 'total' => $count, 'page' => $page,
+            'products' => array_map(fn($row) => $this->opsClassificationRow($row), $rows)]);
+    }
+
+    public function opsClassificationDetail($id)
+    {
+        $row = $this->opsClassificationQuery()->where('id', (int)$id)->find();
+        if (!$row) throw new \RuntimeException('商品不存在或不是平台主商品');
+        return app('json')->success($this->opsClassificationRow($row));
+    }
+
+    public function opsClassificationUpdate(Request $request, $id)
+    {
+        $input = $request->post();
+        if (!is_array($input) || array_diff(array_keys($input), ['before', 'after'])) throw new \RuntimeException('仅允许修改分类和商品标签');
+        $normalize = function ($data) {
+            if (!is_array($data) || count($data) !== 2 || !array_key_exists('category_ids', $data) || !array_key_exists('tag_ids', $data)) throw new \RuntimeException('请提交完整分类标签快照');
+            return ['category_ids' => $this->opsClassificationIds($data['category_ids']), 'tag_ids' => $this->opsClassificationIds($data['tag_ids'])];
+        };
+        $before = $normalize($input['before'] ?? null); $after = $normalize($input['after'] ?? null);
+        if (!$after['category_ids']) throw new \RuntimeException('商品分类不能为空');
+        $result = \think\facade\Db::transaction(function () use ($id, $before, $after) {
+            $row = $this->opsClassificationQuery()->where('id', (int)$id)->lock(true)->find();
+            if (!$row) throw new \RuntimeException('商品不存在或不是平台主商品');
+            $current = $this->opsClassificationRow($row);
+            $actual = ['category_ids' => $current['category_ids'], 'tag_ids' => $current['tag_ids']];
+            if ($actual === $after) return $current;
+            if ($actual !== $before) throw new \RuntimeException('商品分类或标签已变化，请重新预览');
+            foreach (['category_ids' => 'store_product_category', 'tag_ids' => 'store_product_label'] as $key => $table) {
+                if (!$after[$key]) continue;
+                $query = \think\facade\Db::name($table)->whereIn('id', $after[$key]);
+                $query->where('type', 0)->where('relation_id', 0);
+                if ($query->count() !== count($after[$key])) throw new \RuntimeException('分类或商品标签已失效');
+            }
+            \think\facade\Db::name('store_product')->where('id', (int)$id)->update([
+                'cate_id' => implode(',', $after['category_ids']), 'store_label_id' => implode(',', $after['tag_ids'])]);
+            app()->make(\app\services\product\label\StoreProductLabelAuxiliaryServices::class)->saveLabelRelation((int)$id, $after['tag_ids']);
+            return array_merge($current, $after);
+        });
+        // Clear product caches even when an earlier successful write lost its response.
+        $this->productServices->cacheTag()->clear();
+        return app('json')->success($result);
+    }
+
