@@ -1,93 +1,73 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {fetchCrmebToken} from './crmeb-auth.mjs';
 import {mallOrigin,mallDispatcher} from './mall-address.mjs';
-const ids=value=>{if(!Array.isArray(value)||value.length>100||value.some(x=>!Number.isSafeInteger(x)||x<1||x>999999999))throw Error('分类或标签ID无效');return [...new Set(value)].sort((a,b)=>a-b);};
-const fields=row=>({category_ids:ids(row.category_ids),tag_ids:ids(row.tag_ids)});
-const equal=(a,b)=>JSON.stringify(fields(a))===JSON.stringify(fields(b));
-export const classificationRevision=row=>createHash('sha256').update(JSON.stringify(fields(row))).digest('hex');
+import {createCatalogLoader} from './catalog.mjs';
+export const CLASSIFICATION_TAGS=['水基','硅基','水硅混合','油基','男用','女用','男女通用','口交适用','阴道适用','后庭适用','拳交适用','热感','凉感','仿精','无香','果香','花香','香草香','草莓味','樱桃味','桃子味','保湿','干涩护理','舒缓','修护','长效润滑','易清洗'];
+function ids(value){
+ if(typeof value==='string')value=value.split(',').filter(v=>v.trim()&&v.trim()!=='0').map(Number);
+ if(Array.isArray(value))value=value.map(v=>typeof v==='object'&&v?Number(v.id??v.value):Number(v));
+ if(!Array.isArray(value)||value.length>100||value.some(v=>!Number.isSafeInteger(v)||v<1||v>999999999))throw Error('商城分类或标签ID格式无效');
+ return [...new Set(value)].sort((a,b)=>a-b);
+}
+export const classificationRevision=row=>createHash('sha256').update(JSON.stringify([row.id,row.category_ids,row.tag_ids])).digest('hex');
+function normalize(row,detail=false){
+ if(!row||!Number.isSafeInteger(Number(row.id))||Number(row.id)<1||typeof row.store_name!=='string')throw Error('商城商品格式无效');
+ if(Number(row.is_del||0)===1)throw Error('回收站商品不参与整理');
+ if(row.type!==undefined&&Number(row.type)!==0||row.pid!==undefined&&Number(row.pid)!==0)throw Error('当前仅整理平台主商品');
+ const tagKnown=row.store_label_id!==undefined&&row.store_label_id!==null;
+ if(detail&&!tagKnown)throw Error('商城详情缺少商品标签字段，未生成清单');
+ const tagRows=Array.isArray(row.store_label_id)?row.store_label_id:[];
+ const result={id:Number(row.id),title:row.store_name,image:typeof row.image==='string'?row.image:'',is_show:Number(row.is_show??1),category_ids:ids(row.cate_id??''),tag_ids:tagKnown?ids(row.store_label_id):null,tag_names:tagRows.filter(v=>v&&typeof v==='object'&&typeof v.label_name==='string').map(v=>v.label_name),tag_names_known:tagKnown&&(!ids(row.store_label_id).length||Array.isArray(row.store_label_id)&&tagRows.every(v=>v&&typeof v==='object'&&typeof v.label_name==='string'))};
+ return {...result,revision:classificationRevision(result)};
+}
 export function classificationClient(credentials,fetcher=fetch){
  let token;
- const request=async(path,body)=>{
-  token??=await fetchCrmebToken('crmeb-pro',credentials,fetcher);
+ const origin=mallOrigin(credentials?.url||'https://xlupw.com');
+ async function read(path,authenticated=true){
+  const access=authenticated?await(token??=fetchCrmebToken('crmeb-pro',credentials,fetcher)):null;
   let response,data;
-  try{
-   response=await fetcher(mallOrigin(credentials.url||'https://xlupw.com')+'/outapi/ops-classification/'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,'Authori-zation':'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),dispatcher:mallDispatcher,redirect:'error',signal:AbortSignal.timeout(15000)});
-   if(!response.ok)throw Error();
-   const text=await response.text();if(text.length>4e6)throw Error();data=JSON.parse(text);
-  }catch{const e=Error(body?'提交结果未确认，请读回核对；不要重复提交':'读取分类整理接口失败，请检查网络、专用接口安装和授权');e.uncertain=!!body;throw e;}
-  if(Number(data.status)!==200){const e=Error('商城分类整理接口拒绝请求，请检查接口授权、商品是否已变化及分类标签是否有效');e.rejected=true;throw e;}
-  return data.data;
+  try{response=await fetcher(origin+path,{method:'GET',headers:authenticated?{Authorization:'Bearer '+access,'Authori-zation':'Bearer '+access}:{},dispatcher:mallDispatcher,redirect:'error',signal:AbortSignal.timeout(15000)});if(!response.ok)throw Error();const text=await response.text();if(text.length>8e6)throw Error();data=JSON.parse(text);}catch{throw Error('商城官方只读接口未完成，请检查网络和读取权限');}
+  if(Number(data?.status)!==200)throw Error('商城官方只读接口拒绝请求，请检查商品列表或商品详情权限');return data;
+ }
+ const publicCatalog=createCatalogLoader(url=>read(new URL(url).pathname,false),'crmeb-pro',null,origin);
+ async function detail(id){if(!Number.isSafeInteger(id)||id<1)throw Error('商品ID无效');const data=(await read('/outapi/product/'+id)).data;const row=normalize(data?.productInfo??data,true);if(row.id!==id)throw Error('商城读回商品ID不符');return row;}
+ return {origin,async catalog(){const c=await publicCatalog();if(c.categoryError)throw Error(c.categoryError);return {version:2,mode:'official_readonly',categories:c.categories.map(r=>({id:r.id,pid:0,cate_name:r.label})),tags:CLASSIFICATION_TAGS.map(name=>({id:name,label_name:name})),notice:'分类来自商城前台可见分类；标签是整理建议，非商城标签字典，需在后台核对或创建。'};},detail,
+  async list(q){
+   const page=Number(q.page||1);if(!Number.isSafeInteger(page)||page<1||page>100000)throw Error('页码无效');
+   if(q.ids){const selected=ids(String(q.ids).trim().split(/[,，\s]+/).map(Number));if(!selected.length||selected.length>20)throw Error('按ID读取每次限1至20件商品');const rows=[];for(let i=0;i<selected.length;i+=3)rows.push(...await Promise.all(selected.slice(i,i+3).map(detail)));return {version:2,mode:'official_readonly',page:1,total:rows.length,products:rows};}
+   if(q.show==='0')throw Error('官方列表只提供上架商品；下架商品请按商品ID读取');
+   const data=(await read('/outapi/product/list?'+new URLSearchParams({page:String(page),limit:'50',store_name:String(q.q||'').slice(0,100)}))).data;
+   if(!data||!Array.isArray(data.list)||data.list.length>50)throw Error('商城官方商品列表格式无效');const total=Number(data.count??data.total);if(!Number.isSafeInteger(total)||total<0)throw Error('商城未返回有效商品总数');
+   return {version:2,mode:'official_readonly',page,total,products:data.list.map(row=>normalize(row))};
+  }
  };
- return {catalog:()=>request('catalog'),list:q=>request('products?'+new URLSearchParams(q)),detail:id=>request('product/'+id),write:(id,body)=>request('product/'+id,body)};
+}
+export function classificationCSV(plan){
+ const quote=v=>{let text=String(v??'');if(/^[\s]*[=+@-]|^[\t\r]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
+ const rows=[['商城商品ID','商品名称','原分类ID','原分类','目标分类ID','目标分类','原商品标签ID','原商品标签','标签操作','目标商品标签名称','核对提示']];
+ for(const i of plan.items)rows.push([i.id,i.title,i.before.category_ids.join(','),i.before.category_names.join(' / '),i.after.category_ids.join(','),i.after.category_names.join(' / '),i.before.tag_ids.join(','),i.before.tag_names.join(' / '),({keep:'保留',add:'追加建议',remove:'移除建议',replace:'替换建议'})[i.tag_mode],i.after.tag_names.join(' / '),i.warning]);
+ return '\uFEFF'+rows.map(r=>r.map(quote).join(',')).join('\r\n');
 }
 export function mallClassification({db,connection,fetcher=fetch,audit=()=>{}}){
- db.exec(`CREATE TABLE IF NOT EXISTS classification_plans(id TEXT PRIMARY KEY,owner TEXT NOT NULL,mall TEXT NOT NULL,origin TEXT NOT NULL,state TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS classification_items(plan TEXT NOT NULL,product_id INTEGER NOT NULL,title TEXT NOT NULL,before_data TEXT NOT NULL,after_data TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',message TEXT NOT NULL DEFAULT '',updated INTEGER NOT NULL,PRIMARY KEY(plan,product_id));`);
- let busy=null,stopping=false;
- const client=(owner,mall)=>{if(typeof mall!=='string'||!mall)throw Error('请选择商城连接');const c=connection(owner,mall);if(c.system!=='crmeb-pro')throw Error('当前仅支持CRMEB会员商城，请核对小蓝优品的连接');return {origin:mallOrigin(c.credentials?.url||'https://xlupw.com'),api:classificationClient(c.credentials,fetcher)};};
- const planFor=(owner,id)=>{const p=db.prepare('SELECT * FROM classification_plans WHERE id=? AND owner=?').get(id,owner);if(!p)throw Error('整理记录不存在或不属于当前工作空间');return p;};
- function view(owner,id){const p=planFor(owner,id);return {...p,items:db.prepare('SELECT * FROM classification_items WHERE plan=? ORDER BY product_id').all(id).map(i=>({id:i.product_id,title:i.title,before:JSON.parse(i.before_data),after:JSON.parse(i.after_data),state:i.state,message:i.message}))};}
- function save(owner,mall,origin,items){
-  const id=randomUUID(),now=Date.now();db.exec('BEGIN IMMEDIATE');try{
-   db.prepare('INSERT INTO classification_plans VALUES(?,?,?,?,?,?,?)').run(id,owner,mall,origin,'draft',now,now);
-   for(const i of items)db.prepare('INSERT INTO classification_items(plan,product_id,title,before_data,after_data,updated) VALUES(?,?,?,?,?,?)').run(id,i.id,i.title.slice(0,300),JSON.stringify(i.before),JSON.stringify(i.after),now);
-   audit(owner,'classification.preview',id);db.exec('COMMIT');
-  }catch(e){db.exec('ROLLBACK');throw e;}return view(owner,id);
- }
- async function catalog(owner,mall){const {api}=client(owner,mall),c=await api.catalog();if(c?.version!==1||!Array.isArray(c.categories)||!Array.isArray(c.tags)||c.categories.length>10000||c.tags.length>10000)throw Error('商城分类整理接口版本或字典格式无效');return c;}
- async function list(owner,mall,q){const page=Number(q.page||1);if(!Number.isSafeInteger(page)||page<1||page>100000)throw Error('页码无效');const {api}=client(owner,mall),data=await api.list({page:String(page),q:String(q.q||'').slice(0,100),show:['0','1'].includes(q.show)?q.show:''});if(data?.version!==1||!Array.isArray(data.products)||data.products.length>50)throw Error('商城商品列表格式无效');return {...data,products:data.products.map(r=>{if(!Number.isSafeInteger(r.id)||r.id<1||typeof r.title!=='string')throw Error('商品格式无效');return {...r,...fields(r),revision:classificationRevision(r)};})};}
+ db.exec('CREATE TABLE IF NOT EXISTS classification_sheets(id TEXT PRIMARY KEY,owner TEXT NOT NULL,mall TEXT NOT NULL,created INTEGER NOT NULL,data TEXT NOT NULL)');
+ const client=(owner,id)=>{if(typeof id!=='string'||!id)throw Error('请选择商城连接');const c=connection(owner,id);if(c.system!=='crmeb-pro')throw Error('当前只支持CRMEB会员商城，请核对连接');return classificationClient(c.credentials,fetcher);};
+ const view=(owner,id)=>{const r=db.prepare('SELECT * FROM classification_sheets WHERE owner=? AND id=?').get(owner,id);if(!r)throw Error('整理清单不存在或不属于当前工作空间');return {id:r.id,mall:r.mall,created:r.created,mode:'official_readonly',state:'worksheet',...JSON.parse(r.data)};};
  async function preview(owner,input){
-  if(!input||typeof input.mall!=='string'||!Array.isArray(input.products)||!input.products.length||input.products.length>50||new Set(input.products.map(r=>r.id)).size!==input.products.length)throw Error('请选择1至50个不同商品');
-  const categories=input.category_ids==null?null:ids(input.category_ids),tags=ids(input.tag_ids||[]),mode=input.tag_mode||'keep';
-  if(categories&&!categories.length)throw Error('分类不能为空');if(!['keep','add','remove','replace'].includes(mode))throw Error('标签操作无效');if(!categories&&mode==='keep')throw Error('请设置分类或标签修改');
-  const {api,origin}=client(owner,input.mall),dict=await api.catalog();if(dict?.version!==1)throw Error('专用接口版本无效');
-  if(categories?.some(id=>!dict.categories.some(c=>Number(c.id)===id))||tags.some(id=>!dict.tags.some(t=>Number(t.id)===id)))throw Error('分类或商品标签不存在，请刷新');
-  if(input.products.some(p=>!Number.isSafeInteger(p.id)||p.id<1))throw Error('商品ID无效');
-  const snapshot=await api.list({ids:input.products.map(p=>p.id).join(',')});
-  if(snapshot?.version!==1||!Array.isArray(snapshot.products)||snapshot.products.length>50)throw Error('商城批量商品快照无效');
-  const items=[];
-  for(const selected of input.products){
-   if(!Number.isSafeInteger(selected.id)||selected.id<1)throw Error('商品ID无效');
-   const row=snapshot.products.find(r=>r.id===selected.id);if(row?.id!==selected.id||classificationRevision(row)!==selected.revision)throw Error('商品分类标签已变化，请重新读取后预览');
-   const before=fields(row),after={category_ids:categories||before.category_ids,tag_ids:mode==='keep'?before.tag_ids:mode==='replace'?tags:mode==='add'?ids([...before.tag_ids,...tags]):before.tag_ids.filter(id=>!tags.includes(id))};
-   if(!after.category_ids.length)throw Error('商品缺少分类，请先选择分类');
-   if(!equal(before,after))items.push({id:row.id,title:row.title,before,after});
+  if(!input||!Array.isArray(input.products)||!input.products.length||input.products.length>50||new Set(input.products.map(r=>r.id)).size!==input.products.length||input.products.some(r=>!Number.isSafeInteger(r.id)||r.id<1))throw Error('请选择1至50件不同商品');
+  const api=client(owner,input.mall),catalog=await api.catalog(),categories=input.category_ids==null?null:ids(input.category_ids),mode=input.tag_mode||'keep';
+  if(categories&&!categories.length)throw Error('分类不能为空');if(!['keep','add','remove','replace'].includes(mode)||!categories&&mode==='keep')throw Error('请选择分类或标签整理方式');
+  if(categories?.some(id=>!catalog.categories.some(c=>c.id===id)))throw Error('目标分类未在商城可见分类中，请刷新或到后台核对');
+  const tags=input.tag_names??[];if(!Array.isArray(tags)||tags.length>50||tags.some(t=>typeof t!=='string'||!t.trim()||t.length>40||/[\u0000-\u001f]/.test(t)))throw Error('标签名称无效');
+  const wanted=[...new Set(tags.map(t=>t.trim()))],items=[];const names=ids=>ids.map(id=>catalog.categories.find(c=>c.id===id)?.cate_name||'#'+id+'（后台核对）');
+  const selected=[];for(let i=0;i<input.products.length;i+=3)selected.push(...await Promise.all(input.products.slice(i,i+3).map(r=>api.detail(r.id))));
+  for(const row of selected){
+   if(!row.tag_names_known&&['add','remove'].includes(mode))throw Error('商品 '+row.id+' 的原标签名称不完整，不能准确追加或移除，请在后台核对');
+   const before={category_ids:row.category_ids,category_names:names(row.category_ids),tag_ids:row.tag_ids,tag_names:row.tag_names};
+   const after={category_ids:categories||before.category_ids,category_names:names(categories||before.category_ids),tag_names:mode==='keep'?before.tag_names:mode==='replace'?wanted:mode==='add'?[...new Set([...before.tag_names,...wanted])]:before.tag_names.filter(t=>!wanted.includes(t))};
+   items.push({id:row.id,title:row.title,before,after,tag_mode:mode,warning:!row.tag_names_known?'原标签名称不完整，以原标签ID和商城后台为准；标签建议需核实产品资料':'标签建议需核实产品资料；此清单不会写入商城'});
   }
-  if(!items.length)throw Error('所选商品无需修改');return save(owner,input.mall,origin,items);
+  const id=randomUUID(),created=Date.now();db.prepare('INSERT INTO classification_sheets VALUES(?,?,?,?,?)').run(id,owner,input.mall,created,JSON.stringify({items,origin:api.origin}));audit(owner,'classification.worksheet',id);return view(owner,id);
  }
- function enqueue(owner,id){const p=planFor(owner,id);if(p.state!=='draft')return view(owner,id);if(p.created<Date.now()-30*60000)throw Error('预览已过期，请重新预览');
-  db.exec('BEGIN IMMEDIATE');try{
-   const collision=db.prepare("SELECT 1 FROM classification_items i JOIN classification_plans p ON p.id=i.plan WHERE p.owner=? AND p.mall=? AND p.state IN ('queued','running') AND i.product_id IN (SELECT product_id FROM classification_items WHERE plan=?) LIMIT 1").get(owner,p.mall,id);
-   if(collision)throw Error('商品已有整理任务，请先等待并核对');
-   db.prepare("UPDATE classification_plans SET state='queued',updated=? WHERE id=? AND state='draft'").run(Date.now(),id);audit(owner,'classification.queued',id);db.exec('COMMIT');
-  }catch(e){db.exec('ROLLBACK');throw e;}return view(owner,id);
- }
- function mark(plan,id,state,message){db.prepare('UPDATE classification_items SET state=?,message=?,updated=? WHERE plan=? AND product_id=?').run(state,message.slice(0,300),Date.now(),plan,id);db.prepare('UPDATE classification_plans SET updated=? WHERE id=?').run(Date.now(),plan);}
- async function verify(owner,id,productId){const p=planFor(owner,id),i=db.prepare('SELECT * FROM classification_items WHERE plan=? AND product_id=?').get(id,productId);if(!i||!['unknown','not_applied','conflict'].includes(i.state))throw Error('此记录无需核对');const {api,origin}=client(owner,p.mall);if(origin!==p.origin)throw Error('商城地址已变化，停止核对');const row=await api.detail(productId);if(row.id!==productId)throw Error('读回商品ID不符');
-  mark(id,productId,equal(row,JSON.parse(i.after_data))?'succeeded':equal(row,JSON.parse(i.before_data))?'not_applied':'conflict','已只读核对；未重复写入');return view(owner,id);
- }
- async function rollback(owner,id){const p=planFor(owner,id),{api,origin}=client(owner,p.mall);if(origin!==p.origin)throw Error('商城地址已变化');const items=[];
-  const successful=db.prepare("SELECT * FROM classification_items WHERE plan=? AND state='succeeded'").all(id);if(!successful.length)throw Error('没有可回退的成功记录');
-  const snapshot=await api.list({ids:successful.map(i=>i.product_id).join(',')});if(snapshot?.version!==1||!Array.isArray(snapshot.products))throw Error('商城批量商品快照无效');
-  for(const i of successful){
-   const row=snapshot.products.find(r=>r.id===i.product_id),expected=JSON.parse(i.after_data),original=JSON.parse(i.before_data);if(row?.id!==i.product_id||!equal(row,expected))throw Error('商品已被其他人修改，不能回退，请重新整理');if(!original.category_ids.length)throw Error('原商品没有分类，无法直接回退，请重新整理');items.push({id:i.product_id,title:i.title,before:expected,after:original});
-  }if(!items.length)throw Error('没有可回退的成功记录');return save(owner,p.mall,p.origin,items);
- }
- async function runOne(){
-  // A dead worker may have completed a write. Never automatically resend it.
-  const expired=db.prepare("SELECT plan,product_id FROM classification_items WHERE state='running' AND updated<?").all(Date.now()-120000);
-  for(const i of expired)mark(i.plan,i.product_id,'unknown','Worker执行中断，请只读核对结果');
-  const p=db.prepare("SELECT * FROM classification_plans WHERE state IN ('queued','running') ORDER BY created LIMIT 1").get();if(!p)return;
-  db.prepare("UPDATE classification_plans SET state='running' WHERE id=?").run(p.id);
-  const i=db.prepare("SELECT * FROM classification_items WHERE plan=? AND state='pending' ORDER BY product_id LIMIT 1").get(p.id);
-  if(!i){if(!db.prepare("SELECT 1 FROM classification_items WHERE plan=? AND state='running'").get(p.id))db.prepare("UPDATE classification_plans SET state='done',updated=? WHERE id=?").run(Date.now(),p.id);return;}
-  if(!db.prepare("UPDATE classification_items SET state='running',updated=? WHERE plan=? AND product_id=? AND state='pending'").run(Date.now(),p.id,i.product_id).changes)return;
-  let sent=false;
-  try{const {api,origin}=client(p.owner,p.mall);if(origin!==p.origin)throw Error('商城地址已变化，任务停止');const row=await api.detail(i.product_id),before=JSON.parse(i.before_data),after=JSON.parse(i.after_data);if(row.id!==i.product_id)throw Error('读回商品ID不符');
-   if(equal(row,after)){mark(p.id,i.product_id,'succeeded','读回确认分类标签已一致');return;}
-   if(!equal(row,before)){mark(p.id,i.product_id,'conflict','商品分类或标签已变化，请重新预览');return;}
-   sent=true;await api.write(i.product_id,{before,after});const actual=await api.detail(i.product_id);if(actual.id!==i.product_id||!equal(actual,after))throw Error('读回未确认，请核对');mark(p.id,i.product_id,'succeeded','分类及标签已更新并读回确认');audit(p.owner,'classification.succeeded',p.id+':'+i.product_id);
-  }catch(e){mark(p.id,i.product_id,sent&&!e.rejected?'unknown':'conflict',e.message);}
- }
- return {catalog,list,preview,view,enqueue,verify,rollback,history:owner=>db.prepare('SELECT id,mall,state,created FROM classification_plans WHERE owner=? ORDER BY created DESC LIMIT 30').all(owner),tick(){if(stopping||busy)return busy||Promise.resolve();busy=runOne().finally(()=>{busy=null;});return busy;},async stop(){stopping=true;await busy;}};
+ const blocked=()=>{throw Error('当前为官方只读整理模式，不同步商城；请导出清单后使用商城后台批量分类和商品标签功能');};
+ return {catalog:async(owner,id)=>client(owner,id).catalog(),list:async(owner,id,q)=>client(owner,id).list(q),preview,view,export:(owner,id)=>classificationCSV(view(owner,id)),history:owner=>db.prepare("SELECT id,mall,created,'worksheet' state FROM classification_sheets WHERE owner=? ORDER BY created DESC LIMIT 30").all(owner),enqueue:blocked,verify:blocked,rollback:blocked,tick:()=>Promise.resolve(),stop:()=>Promise.resolve()};
 }

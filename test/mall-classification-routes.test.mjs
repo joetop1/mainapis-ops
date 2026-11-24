@@ -18,6 +18,7 @@ test('商城整理路由要求会话、CSRF、审核权限；所有者隔离，�
   assert.equal((await call('/api/team/members','POST',{sub:'bob',role:'editor'})).status,200);
   assert.equal((await call('/api/mall-classification/preview','POST',{},'bob')).status,403);
   assert.equal((await call('/api/mall-classification/history','GET',{},'bob')).status,200);
+  for(const action of ['submit','verify','rollback']){const r=await call('/api/mall-classification/plans/00000000-0000-4000-8000-000000000001/'+action,'POST',{});assert.equal(r.status,409);assert.match(r.raw,/只读/);}
   assert.equal((await call('/api/mall-classification/plans/00000000-0000-4000-8000-000000000001')).status,400);
   const asset=await call('/mall-classification.js');assert.equal(asset.status,200);assert.match(asset.raw,/setupMallClassification/);
   const html=await readFile('public/index.html','utf8'),app=await readFile('public/app.js','utf8');assert.match(html,/data-page="classification"/);assert.match(html,/id="classificationPlan"/);assert.match(app,/classificationPanel.open/);

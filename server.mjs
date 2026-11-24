@@ -469,13 +469,12 @@ const handleRequest=async(req,res)=>{
       if(path===base+'/products'&&req.method==='GET')return json(res,200,await classification.list(owner,q.get('mall'),Object.fromEntries(q)));
       if(path===base+'/history'&&req.method==='GET')return json(res,200,{plans:classification.history(owner)});
       if(path===base+'/preview'&&req.method==='POST')return json(res,201,await classification.preview(owner,await body(req)));
-      const route=path.match(/^\/api\/mall-classification\/plans\/([a-f0-9-]{36})(?:\/(submit|verify|rollback))?$/);
+      const route=path.match(/^\/api\/mall-classification\/plans\/([a-f0-9-]{36})(?:\/(submit|verify|rollback|export))?$/);
       if(route){
         const [,id,action]=route;
         if(!action&&req.method==='GET')return json(res,200,classification.view(owner,id));
-        if(req.method==='POST'&&action==='submit'){if(!durable)throw Error('请先启用OPS持久化Worker再同步商城');return json(res,202,classification.enqueue(owner,id));}
-        if(req.method==='POST'&&action==='verify'){const b=await body(req);return json(res,200,await classification.verify(owner,id,b.product_id));}
-        if(req.method==='POST'&&action==='rollback')return json(res,201,await classification.rollback(owner,id));
+        if(action==='export'&&req.method==='GET'){const csv=classification.export(owner,id);res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="classification-'+id+'.csv"','Cache-Control':'no-store'});return res.end(csv);}
+        if(req.method==='POST'&&['submit','verify','rollback'].includes(action))return json(res,409,{error:'当前为官方只读整理模式，请导出清单后在商城后台操作；OPS不写入商城'});
       }
       return json(res,404,{error:'整理接口不存在'});
     }
@@ -829,8 +828,7 @@ export function startPublicationWorker(){
  if(!durable||demo||process.env.OPS_WORKER_PAUSED==='true')throw Error('Worker需要正式模式、启用OPS_DURABLE_QUEUE且未暂停');
  const worker=queueWorker({queue:tasks,dispatch,onError:()=>console.error('publication_worker_failed')});
  const poll=()=>{try{billing.reconcilePending();}catch{console.error('billing_reconcile_pending');}return worker.tick().catch(()=>console.error('publication_worker_failed'));};
- const classificationTick=setInterval(()=>classification.tick().catch(()=>console.error('classification_worker_failed')),2000);
  const supplierTick=setInterval(()=>supplierImport.tick().catch(()=>console.error('supplier_parse_failed')),2000);
  const tick=setInterval(poll,2000),heartbeat=setInterval(()=>{try{worker.heartbeat();}catch{console.error('worker_heartbeat_failed');}},5000);poll();
- return {async stop(){clearInterval(classificationTick);await classification.stop();clearInterval(supplierTick);clearInterval(tick);clearInterval(heartbeat);await worker.stop();}};
+ return {async stop(){await classification.stop();clearInterval(supplierTick);clearInterval(tick);clearInterval(heartbeat);await worker.stop();}};
 }
