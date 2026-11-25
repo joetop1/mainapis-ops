@@ -2,6 +2,7 @@
 import sys,json,zipfile,xml.etree.ElementTree as E,posixpath,re,hashlib,os
 from supplier_grid import workbook_grid,coordinate
 from supplier_capacity import capacity_products
+from supplier_variant_blocks import variant_blocks
 N={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','d':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
 # Detect header-based catalogs; only explicit title rows become products.
 def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=None,image_ranges=None):
@@ -10,7 +11,7 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
  aliases={
   'title':('品名','产品名称','商品名称','商品名'), 'model':('型号','产品型号','规格','规格型号','容量'),
   'cost':('批发价','供货价','采购价','成本价'), 'price':('实控售价','零售价','建议零售价','建议售价','日常售价','销售价','售价','市场价'),
-  'barcode':('条形码','条码','商品条码','产品条码','颜色/编号'), 'images':('产品图片','商品图片','图片'),
+  'barcode':('条形码','条码','商品条码','产品条码','颜色/编号','颜色'), 'images':('产品图片','商品图片','图片'),
   'category':('系列','分类','产品系列','产品分类'), 'packaging':('箱规','装箱数','装箱数量'),
   'description':('功能','产品功能','卖点','描述','产品描述'), 'date':('上市时间','上市日期'),
   'position':('定位','产品定位'), 'series_info':('系列特点','系列说明'),
@@ -76,12 +77,15 @@ def table_products(cells,pictures,merge_refs,sheet_name,date1904=False,mapping=N
   if not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?',raw):return None
   amount=Decimal(raw.replace(',','')); rounded=amount.quantize(Decimal('0.01'))
   return float(rounded) if 0<=amount<=99999999 and abs(amount-rounded)<=Decimal('0.000000001') else None
- if mapping is None:
+ variant_results=variant_blocks(cells,pictures,headers,sheet_name,money,normalize,image_ranges) if mapping is None else {}
+ if mapping is None and not variant_results:
   paired=capacity_products(cells,pictures,headers,sheet_name,money,normalize,value,image_ranges)
   if paired is not None:return paired
  result=[];last=max((r for r,c in cells),default=0)+1
  row_numbers=sorted({r for r,c in cells})
  for index,(header,columns,labels) in enumerate(headers):
+  if header in variant_results:
+   result.append(variant_results[header]);continue
   end=headers[index+1][0] if index+1<len(headers) else last
   if mapping is not None and mapping.get('end_row') is not None:end=min(end,mapping['end_row'])
   block_rows=[r for r in row_numbers if header<r<end]
