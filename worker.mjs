@@ -1,3 +1,5 @@
+import {observeProcess} from './diagnostics.mjs';
+if(!process.argv.includes('--check'))observeProcess('worker');
 import {DatabaseSync} from 'node:sqlite';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';

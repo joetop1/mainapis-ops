@@ -70,7 +70,7 @@ test('发布提交立即闪动，回执后成功商城保持执行态，失败�
  const choices={querySelectorAll:selector=>selector.includes('data-import-images')?[]:selector.includes(':checked')?inputs.filter(i=>i.checked&&!i.disabled):inputs};
  const button={disabled:false,textContent:'提交',setAttribute(){},removeAttribute(){}},nodes={publishTargets:choices,publishSubmit:button,publishDialog:{},closePublish:{},publishResults:{}};
  const product={id:'p',revision:2,publications:[]};let requests=0,renders=0;
- const context=vm.createContext({$:selector=>nodes[selector.slice(1)]??(nodes[selector.slice(1)]={}),clearDialogFeedback(){},mallFor:id=>({type:'crmeb-pro',name:id}),confirmBilling:async()=>1,publicationProgress:activity,render:()=>renders++,load:()=>refresh.promise,toast(){},esc:String,api:()=>{requests++;return request.promise;}});
+ const context=vm.createContext({crypto:{randomUUID:()=> 'test-request-123456'},$:selector=>nodes[selector.slice(1)]??(nodes[selector.slice(1)]={}),clearDialogFeedback(){},mallFor:id=>({type:'crmeb-pro',name:id}),confirmBilling:async()=>1,publicationProgress:activity,render:()=>renders++,load:()=>refresh.promise,toast(){},esc:String,api:()=>{requests++;return request.promise;}});
  context.state={products:[product]};context.publishing=product;
  vm.runInContext('var publishBusy=false,publishUncertain=false,publishResults=new Map(),stateRequest=0;',context);
  vm.runInContext(app.slice(app.indexOf("$('#publishForm').onsubmit="),app.indexOf("$('#refresh').onclick=")),context);

@@ -1,5 +1,5 @@
 import {setupMallClassification} from './mall-classification.js';
-import {replaceProduct,openMergedProduct,publicationActivity} from './product-flow.js';
+import {replaceProduct,openMergedProduct,publicationActivity,recoverPublicationReceipt} from './product-flow.js';
 import {splitSupplierParameters} from './supplier-parameters.js';
 import {setupCampaign} from './campaign.js';
 import {createCatalogRecents} from './catalog-recents.js';
@@ -670,9 +670,9 @@ $('#publishForm').onsubmit=async event=>{
   controls.forEach(({input})=>input.disabled=true);
   publicationProgress.start(product.id,destinations.map(d=>d.connection_id),product.publications);render();
   const billing_revision=await confirmBilling('publish',destinations.length,destinations.some(d=>d.import_images));
-  let result;
-  try{result=await api('/api/products/'+product.id+'/publish','POST',{revision:product.revision,destinations,billing_revision});}
-  catch(error){if(error.httpStatus&&error.httpStatus<500)throw error;uncertain=true;throw Error('提交结果未确认，请先刷新发布任务列表核对，避免重复提交。'+error.message);}
+  let result;const request_id=crypto.randomUUID();
+  try{result=await api('/api/products/'+product.id+'/publish','POST',{revision:product.revision,destinations,billing_revision,request_id});}
+  catch(error){if(error.httpStatus&&error.httpStatus<500)throw error;button.textContent='正在核对提交结果…';result=await recoverPublicationReceipt({api,productId:product.id,requestId:request_id,destinations});if(!result){uncertain=true;throw Error('自动核对尚未找到完整回执，请查看发布记录，勿重复提交。'+error.message);}}
   if(!Array.isArray(result.results)||result.results.length!==destinations.length||new Set(result.results.map(r=>r.connection_id)).size!==destinations.length||result.results.some(r=>!destinations.some(d=>d.connection_id===r.connection_id)||typeof r.ok!=='boolean'||r.ok&&typeof r.id!=='string')){
    uncertain=true;throw Error('提交回执不完整，请先核对发布任务列表，未自动重试。');
   }
@@ -680,7 +680,7 @@ $('#publishForm').onsubmit=async event=>{
   for(const row of result.results){
    publishResults.set(row.connection_id,row);
    if(!row.ok)continue;
-   if(current){current.publications=(current.publications||[]).filter(r=>r.mall_connection_id!==row.connection_id);current.publications.push({mall_connection_id:row.connection_id,target:row.target,revision:product.revision,status:'dispatching',can_republish:false,message:'任务已创建，等待后台执行'});}
+   if(current){current.publications=(current.publications||[]).filter(r=>r.mall_connection_id!==row.connection_id);current.publications.push({mall_connection_id:row.connection_id,target:row.target,revision:product.revision,status:row.status||'dispatching',can_republish:false,message:'任务已创建，请查看后台执行进度'});}
    const input=checked.find(x=>x.value===row.connection_id);if(input)input.checked=false;
   }
   stateRequest++;publicationProgress.clear(product.id);render();
