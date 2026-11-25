@@ -95,6 +95,8 @@ export function openStore(path) {
   if(!db.prepare('PRAGMA table_info(jobs)').all().some(row=>row.name==='mall_connection_id'))db.exec("ALTER TABLE jobs ADD COLUMN mall_connection_id TEXT NOT NULL DEFAULT ''");
   const index=db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='jobs_active'").get();
   if(!index?.sql.includes('mall_connection_id'))db.exec("DROP INDEX IF EXISTS jobs_active; CREATE UNIQUE INDEX jobs_active ON jobs(product_id,revision,target,mall_connection_id) WHERE status IN ('dispatching','accepted','succeeded','unknown','awaiting_review','verifying')");
+  db.exec(`CREATE INDEX IF NOT EXISTS products_owner_updated ON products(owner,updated DESC);
+  CREATE INDEX IF NOT EXISTS jobs_owner_product ON jobs(owner,product_id);`);
   return db;
 }
 export const now=()=>new Date().toISOString();

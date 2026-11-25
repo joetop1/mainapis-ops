@@ -53,3 +53,21 @@ test('仅全部历史安全结束且未领取的失败任务允许重新发布',
  assert.equal(summary(),false);
  db.close();
 });
+
+test('大量商品历史只汇总最近1000件，仍保留旧版本成功并隔离其他空间',()=>{
+ const db=openStore(':memory:');try{
+ const product=db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)');
+ const job=db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,remote_id,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)');
+ db.exec('BEGIN');
+ for(let i=0;i<1002;i++){
+  const id='p'+i,stamp=String(i).padStart(5,'0');product.run(id,'alice','url'+i,'{}','draft',2,stamp,stamp);
+  job.run(id+'-old','alice',id,1,'tigshop','succeeded','t','remote'+i,'1','1');
+  job.run(id+'-new','alice',id,2,'tigshop','failed','t','','2','2');
+ }
+ product.run('foreign','bob','foreign','{}','draft',1,'99999','99999');job.run('foreign-job','bob','foreign',1,'tigshop','succeeded','t','private','3','3');
+ db.exec('COMMIT');
+ const summary=productPublications(db,'alice');assert.equal(summary.size,1000);assert(!summary.has('p0'));assert(!summary.has('p1'));assert(!summary.has('foreign'));
+ for(const id of ['p2','p500','p1001']){assert.equal(summary.get(id)[0].remote_id,'remote'+id.slice(1));assert.equal(summary.get(id)[0].can_republish,false);}
+ assert.equal(productPublications(db,'bob').get('foreign')[0].remote_id,'private');
+ }finally{db.close();}
+});
