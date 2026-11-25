@@ -1,5 +1,5 @@
 import {setupMallClassification} from './mall-classification.js';
-import {replaceProduct,openMergedProduct,publicationActivity,recoverPublicationReceipt} from './product-flow.js';
+import {replaceProduct,openMergedProduct,publicationActivity,recoverPublicationReceipt,publicationChoiceProgress} from './product-flow.js';
 import {splitSupplierParameters} from './supplier-parameters.js';
 import {setupCampaign} from './campaign.js';
 import {createCatalogRecents} from './catalog-recents.js';
@@ -275,6 +275,7 @@ for(const form of document.querySelectorAll('[data-mall-profile]'))form.onsubmit
 };
 function renderStats(){document.querySelector('.stats').classList.toggle('hidden',!['products','jobs'].includes(page));for(const card of dashboardCards(page,state,jobView)){$('#'+card.id).textContent=card.value;$('#'+card.id+'Label').textContent=card.label;$('#'+card.id+'Hint').textContent=card.hint;}}
 function render(){
+ syncPublishChoices();
  for(const id of mergeSelected)if(!state.products.some(p=>p.id===id))mergeSelected.delete(id);updateMergeSelection();
  const role=state.team?.role||'admin';
  const canPublish=role!=='editor';
@@ -652,8 +653,20 @@ function openPublish(product){
  const mappings=productMallMappings(product),rows=mallRows().filter(m=>m.configured);
  const available=new Set(imageStorageAvailability.filter(x=>x.available).map(x=>x.id));
  $('#publishTargets').innerHTML=rows.map(m=>{const mapping=mappings.find(x=>x.catalog_connection_id===m.id&&x.catalog_target===m.type),record=product.publications?.find(x=>x.mall_connection_id===m.id||!x.mall_connection_id&&x.target===m.type&&m.legacy),legacy=product.mall_mappings===undefined&&!product.category_id,ready=!!mapping?.category_id||legacy,locked=!!record&&record.can_republish!==true,reason=record?.source==='manual_link'?'已关联商城商品 '+record.remote_id+'，跳过重复发布':locked?'已有'+(labels[record.status]||'发布')+'任务，请在任务列表核对或重试':ready?(mapping?.category||product.category||'兼容旧分类'):'尚未设置分类，请编辑商品';
- return '<div class="publish-choice"><input data-publish-mall type="checkbox" value="'+esc(m.id)+'" '+(ready&&!locked?'checked':'disabled')+'><span><strong>'+esc(m.name)+'</strong><small>'+esc(m.system+' · '+reason)+'</small><label class="image-transfer-choice"><input data-import-images="'+esc(m.id)+'" type="checkbox" '+(available.has(m.id)&&ready&&!locked?'':'disabled')+'>转存图片到OPS存储'+(available.has(m.id)?'（默认关闭）':'（未配置或域名未授权）')+'</label></span></div>';}).join('')||'<p class="hint">请先配置商城连接。</p>';
- $('#publishSubmit').disabled=!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;$('#publishDialog').showModal();refreshPublishQuote();
+ return '<div class="publish-choice" data-publish-choice="'+esc(m.id)+'"><input data-publish-mall type="checkbox" value="'+esc(m.id)+'" '+(ready&&!locked?'checked':'disabled')+'><span><strong>'+esc(m.name)+'</strong><small>'+esc(m.system+' · '+reason)+'</small><label class="image-transfer-choice"><input data-import-images="'+esc(m.id)+'" type="checkbox" '+(available.has(m.id)&&ready&&!locked?'':'disabled')+'>转存图片到OPS存储'+(available.has(m.id)?'（默认关闭）':'（未配置或域名未授权）')+'</label><small class="publish-choice-status" role="status" aria-live="polite"></small></span></div>';}).join('')||'<p class="hint">请先配置商城连接。</p>';
+ $('#publishSubmit').disabled=!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;$('#publishDialog').showModal();syncPublishChoices();refreshPublishQuote();
+}
+function syncPublishChoices(){
+ if(!publishing||!$('#publishDialog').open)return;
+ const product=state.products.find(p=>p.id===publishing.id)||publishing;
+ for(const choice of $('#publishTargets').querySelectorAll('[data-publish-choice]')){
+  const id=choice.dataset.publishChoice,mall=mallFor(id),result=publishResults.get(id);
+  const record=publicationProgress.record(product.id,id,product.publications?.find(r=>r.mall_connection_id===id||!r.mall_connection_id&&r.target===mall?.type&&mall?.legacy));
+  const progress=publicationChoiceProgress(record,result);
+  choice.dataset.progress=progress.state;choice.setAttribute('aria-busy',String(progress.state==='running'));
+  const status=choice.querySelector('.publish-choice-status');status.textContent=progress.text;
+  if(result?.ok&&record?.job_id===result.id&&record?.status==='succeeded'&&!result.announced){result.announced=true;toast((mall?.name||'商城')+' · 发布成功');}
+ }
 }
 $('#publishTargets').onchange=()=>{if(publishBusy)return;refreshPublishQuote();clearDialogFeedback($('#publishDialog'));$('#publishSubmit').disabled=publishUncertain||!$('#publishTargets').querySelectorAll('input[data-publish-mall]:checked:not(:disabled)').length;};
 $('#publishForm').onsubmit=async event=>{
@@ -668,6 +681,7 @@ $('#publishForm').onsubmit=async event=>{
   const destinations=checked.map(input=>({connection_id:input.value,target:mallFor(input.value)?.type,import_images:!![...$('#publishTargets').querySelectorAll('[data-import-images]')].find(x=>x.dataset.importImages===input.value)?.checked}));
   publishBusy=true;started=true;$('#closePublish').disabled=true;button.textContent='正在提交…';button.setAttribute('aria-busy','true');
   controls.forEach(({input})=>input.disabled=true);
+  for(const d of destinations)publishResults.delete(d.connection_id);
   publicationProgress.start(product.id,destinations.map(d=>d.connection_id),product.publications);render();
   const billing_revision=await confirmBilling('publish',destinations.length,destinations.some(d=>d.import_images));
   let result;const request_id=crypto.randomUUID();
@@ -680,11 +694,11 @@ $('#publishForm').onsubmit=async event=>{
   for(const row of result.results){
    publishResults.set(row.connection_id,row);
    if(!row.ok)continue;
-   if(current){current.publications=(current.publications||[]).filter(r=>r.mall_connection_id!==row.connection_id);current.publications.push({mall_connection_id:row.connection_id,target:row.target,revision:product.revision,status:row.status||'dispatching',can_republish:false,message:'任务已创建，请查看后台执行进度'});}
+   if(current){current.publications=(current.publications||[]).filter(r=>r.mall_connection_id!==row.connection_id);current.publications.push({job_id:row.id,mall_connection_id:row.connection_id,target:row.target,revision:product.revision,status:row.status||'dispatching',can_republish:false,message:'任务已创建，请查看后台执行进度'});}
    const input=checked.find(x=>x.value===row.connection_id);if(input)input.checked=false;
   }
   stateRequest++;publicationProgress.clear(product.id);render();
-  $('#publishResults').innerHTML=[...publishResults.values()].map(row=>'<p class="dialog-feedback '+(row.ok?'':'is-error')+'"><strong>'+esc(mallFor(row.connection_id)?.name||row.target)+'</strong> · '+esc(row.ok?'任务已创建，请在发布任务查看执行结果':row.error)+'</p>').join('');
+  $('#publishResults').replaceChildren();syncPublishChoices();
   void load().catch(()=>toast('任务已创建，进度刷新失败，请手动刷新发布记录。',{error:true}));
  }catch(error){
   if(started){if(uncertain)publicationProgress.uncertain(product.id);else publicationProgress.clear(product.id);render();}

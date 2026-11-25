@@ -12,7 +12,7 @@ export function productPublications(db,owner){
  WHERE j.owner=?
  ) WHERE position=1`).all(owner,owner);
  const result=new Map();
- for(const row of rows){const entries=result.get(row.product_id)||[];const {publication_blocked,verify_job_id,message,job_id,retired,...publication}=row;entries.push({...publication,...(!retired&&row.status==='succeeded'&&row.remote_id&&row.mall_connection_id?{job_id}:{}),...(retired?{retired:true}:{}),...(verify_job_id?{verify_job_id}:{}),...(message?{message}:{}),can_republish:publication_blocked===0});result.set(row.product_id,entries);}
+ for(const row of rows){const entries=result.get(row.product_id)||[];const {publication_blocked,verify_job_id,message,job_id,retired,...publication}=row;entries.push({...publication,...(job_id?{job_id}:{}),...(retired?{retired:true}:{}),...(verify_job_id?{verify_job_id}:{}),...(message?{message}:{}),can_republish:publication_blocked===0});result.set(row.product_id,entries);}
  const links=db.prepare(`SELECT l.* FROM product_mall_links l
  JOIN (SELECT id FROM products WHERE owner=? ORDER BY updated DESC LIMIT 1000) p ON p.id=l.product_id
 `).all(owner);

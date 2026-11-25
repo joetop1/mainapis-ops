@@ -38,3 +38,14 @@ export async function recoverPublicationReceipt({api,productId,requestId,destina
  }
  return null;
 }
+
+export function publicationChoiceProgress(record,result){
+ if(result?.ok===false)return {state:'failed',text:'提交失败：'+(result.error||'请检查配置后重试')};
+ if(result?.ok&&record?.previous===undefined&&record?.job_id!==result.id)record={status:result.status||'dispatching'};
+ const status=record?.status;
+ if(status==='succeeded')return {state:'succeeded',text:record.source==='manual_link'?'已关联商城商品':'发布成功'};
+ if(status==='failed')return {state:'failed',text:'发布失败：'+(record.message||'请查看发布记录')};
+ if(['unknown','awaiting_review'].includes(status))return {state:'review',text:status==='unknown'?'提交结果待核对，请查看发布记录':'等待核对商城商品，请查看发布记录'};
+ const text={submitting:'正在提交…',dispatching:'任务已创建，等待执行…',accepted:'正在发布…',verifying:'正在核对商城商品…'}[status];
+ return text?{state:'running',text}:{state:'',text:''};
+}
