@@ -42,3 +42,21 @@ test('商城单字标识持久保存且隔离连接，非法标识不修改名�
   m.rename('alice',a.id,'改名');assert.equal(m.get('alice',a.id).badge,'蓝');m.rename('alice',a.id,'改名','');assert.equal(m.get('alice',a.id).badge,'');
  }finally{db.close();}
 });
+
+test('初始化完成后连接读取可在只读模式运行，不取得SQLite写锁',()=>{
+ const db=openStore(':memory:');try{
+  const malls=mallConnections(db);malls.ensure('alice');
+  db.exec('PRAGMA query_only=ON');
+  for(let n=0;n<10;n++){assert.equal(malls.list('alice').length,5);for(const system of Object.keys(MALL_SYSTEMS))assert.equal(malls.get('alice',null,system).system,system);}
+ }finally{db.close();}
+});
+test('不缓存迁移完成状态：后续旧任务仍绑定，事务回滚后可重新初始化',()=>{
+ const db=openStore(':memory:');try{
+  const malls=mallConnections(db);malls.ensure('alice');
+  db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)').run('p','alice','https://example.com/p','{}','draft',1,'now','now');
+  db.prepare('INSERT INTO jobs(id,owner,product_id,revision,target,status,token,created,updated) VALUES(?,?,?,?,?,?,?,?,?)').run('later','alice','p',1,'tigshop','unknown','token','now','now');
+  malls.ensure('alice');assert.equal(db.prepare('SELECT mall_connection_id FROM jobs WHERE id=?').get('later').mall_connection_id,malls.get('alice',null,'tigshop').id);
+  db.exec('BEGIN');malls.ensure('bob');db.exec('ROLLBACK');
+  assert.equal(malls.list('bob').length,5);
+ }finally{db.close();}
+});

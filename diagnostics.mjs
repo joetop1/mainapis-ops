@@ -2,12 +2,16 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 const requests=new AsyncLocalStorage();
 export function markPhase(phase){const context=requests.getStore();if(context)context.phase=phase;}
 import {randomUUID} from 'node:crypto';
+import {monitorEventLoopDelay} from 'node:perf_hooks';
+export function logEvent(event,fields={}){console.log(JSON.stringify({event,...requests.getStore(),...fields}));}
 import {errorMonitor} from 'node:events';
 export function logError(event,error,context={}){
  const clean=value=>String(value??'').replace(/https?:\/\/[^\s)]+/g,'[remote URL]').replace(/(bearer\s+|(?:token|secret|password|authorization|api[_-]?key)["'\s:=]+)[^\s,"'}]+/gi,'$1[redacted]').slice(0,12000);
  console.error(JSON.stringify({event,...requests.getStore(),...context,name:clean(error?.name||'Error'),message:clean(error?.message||error),stack:clean(error?.stack)}));
 }
 export function observeProcess(role){
+ const delay=monitorEventLoopDelay({resolution:20});delay.enable();
+ const timer=setInterval(()=>{const max_ms=Math.round(delay.max/1e6);if(max_ms>=250)logEvent('event_loop_delayed',{role,max_ms,mean_ms:Math.round(delay.mean/1e6)});delay.reset();},10000);timer.unref();
  const boot_id=randomUUID();console.log(JSON.stringify({event:'process_started',role,boot_id,pid:process.pid,node:process.version}));
  // Monitor without suppressing Node's default fatal exception behavior.
  process.on('uncaughtExceptionMonitor',(error,origin)=>logError('process_fatal',error,{role,boot_id,origin}));
