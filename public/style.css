@@ -384,11 +384,12 @@ aside nav #onboardingNav{color:#d6efb7;margin-top:10px}
 .classification-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;padding:20px 0}#classification small{display:block;color:var(--muted,#78877e);margin-top:6px}#classification .actions{flex-wrap:wrap}#classification{padding:24px}#classification select[multiple]{width:100%}
 
 /* Indeterminate progress reflects server stages, never a fabricated percentage. */
-.publish-choice[data-publish-choice]{position:relative;overflow:hidden;isolation:isolate;transition:background-color .25s,border-color .25s}
+.publish-choice[data-publish-choice]{--publish-progress-fill:#cadfce;position:relative;overflow:hidden;isolation:isolate;transition:background-color .25s,border-color .25s}
 .publish-choice[data-publish-choice]>input,.publish-choice[data-publish-choice]>span{position:relative;z-index:1}
 .publish-choice[data-progress="running"]{background:#edf5ed;color:#315a40;border-color:#a9cbb0}
-.publish-choice[data-progress="running"]::before{content:"";position:absolute;inset:0;z-index:0;background:linear-gradient(90deg,transparent,rgba(79,145,97,.22),transparent);transform:translateX(-100%);animation:publish-choice-flow 2s linear infinite;pointer-events:none}
-.publish-choice[data-progress="succeeded"]{background:#e7f4e9;color:#235b38;border-color:#8fc49c}
+.publish-choice[data-progress="running"]::before{content:"";position:absolute;inset:0;z-index:0;background:linear-gradient(90deg,transparent,var(--publish-progress-fill),transparent);transform:translateX(-100%);animation:publish-choice-flow 2s linear infinite;pointer-events:none}
+.publish-choice[data-progress="succeeded"]{background:var(--publish-progress-fill);color:#204e31;border-color:#8fc49c}
+.publish-choice[data-progress="succeeded"] small{color:inherit}
 .publish-choice[data-progress="failed"]{background:#fff0eb;color:#923f2b;border-color:#e0b5a7}
 .publish-choice[data-progress="review"]{background:#fff8e6;color:#806121;border-color:#dfcb93}
 .publish-choice-status:empty{display:none}.publish-choice .publish-choice-status{font-weight:600;color:inherit;margin-top:10px}

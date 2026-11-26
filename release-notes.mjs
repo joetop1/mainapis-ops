@@ -1,5 +1,6 @@
 // User-facing release notes. Keep newest first and update alongside package.json.
 export const RELEASE_NOTES=[
+ {version:'0.26.8',title:'发布成功卡片整框着色',changes:['发布成功后商城卡片整框填充流动动效的较深绿色，停止动画并保留成功文字。']},
  {version:'0.26.7',title:'修复货盘解析模块打包',changes:['Docker镜像包含全部货盘Python解析模块，修复新增颜色型号解析模块缺失。','镜像构建时检查解析器模块加载，缺少依赖时阻止生成镜像。']},
  {version:'0.26.6',title:'颜色与型号混排货盘',changes:['重复商品块中的中英文名合并，颜色、型号、条码分别配对，不再把卖点拆成商品。','各颜色保留独立价格和来源，按商品块分配图片，配对歧义拦截并保留人工确认。']},
  {version:'0.26.5',title:'修复发布记录汇总慢查询',changes:['发布记录汇总改为一次读取商品集合并按索引筛选历史任务，避免重复扫描商品列表。','保留历史成功、待核对与重复发布保护，增加商品排序和任务归属索引。']},
